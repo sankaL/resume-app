@@ -1,7 +1,7 @@
 # Backend and Database Migration Runbook
 
 **Document status:** Baseline rollout guide  
-**Last updated:** 2026-04-06 21:08:42 EDT  
+**Last updated:** 2026-04-07 10:00:16 EDT
 **Schema source of truth:** `docs/database_schema.md`  
 **Product source of truth:** `docs/resume_builder_PRD_v3.md`
 
@@ -51,6 +51,7 @@ This runbook applies whenever backend or database work changes schema, compatibi
 - RLS policies still block cross-user access on every user-scoped table.
 - Application visible statuses, internal states, and failure reasons remain aligned with the PRD.
 - Existing base resumes, applications, drafts, and notifications still load correctly after any schema change.
+- Applications with blank and populated `job_posting_origin` values both behave correctly, including `other` handling and duplicate-review fallback.
 - Duplicate review, generation, regeneration, and export paths still preserve recoverable failure handling.
 - No migration or verification step stores sensitive resume content, job descriptions, or tokens in logs.
 
@@ -67,3 +68,14 @@ This runbook applies whenever backend or database work changes schema, compatibi
 - The current plan assumes a single current `resume_drafts` row per application.
 - Persistent PDF storage is out of scope for MVP.
 - Dedicated async job/progress tables are deferred until implementation chooses the worker strategy.
+
+## Current Additive Change Note: Job Posting Origin
+
+- Introduce `applications.job_posting_origin` as a nullable normalized field and `applications.job_posting_origin_other_text` as a nullable conditional companion field.
+- Deploy the additive schema before shipping any write path that persists the new origin values.
+- No mandatory backfill is required for existing applications; historical rows may keep `NULL` origin values until a user or future tooling supplies them.
+- Read paths and duplicate-review logic must stay compatible with mixed data while existing rows still have `NULL` origins.
+- Post-deploy verification must confirm:
+  - extraction can persist normalized origin values when known
+  - manual entry and later edits can save the dropdown value and the `other` label safely
+  - duplicate detection uses `job_posting_origin` when available and falls back to `job_title` + `company` when it is missing

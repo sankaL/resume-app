@@ -1,7 +1,7 @@
 # AI Resume Builder Database Schema
 
 **Document status:** Source of truth for the MVP database contract  
-**Last updated:** 2026-04-06 21:08:42 EDT  
+**Last updated:** 2026-04-07 10:00:16 EDT
 **Primary product source:** `docs/resume_builder_PRD_v3.md`  
 **Related rollout guide:** `docs/backend-database-migration-runbook.md`
 
@@ -23,6 +23,7 @@
 | `internal_state_enum` | `extraction_pending`, `extracting`, `manual_entry_required`, `duplicate_review_required`, `generation_pending`, `generating`, `resume_ready`, `regenerating_section`, `regenerating_full`, `export_in_progress` | Internal workflow state |
 | `failure_reason_enum` | `extraction_failed`, `generation_failed`, `regeneration_failed`, `export_failed` | Nullable failure classification |
 | `duplicate_resolution_status_enum` | `pending`, `dismissed`, `redirected` | Duplicate-review state |
+| `job_posting_origin_enum` | `linkedin`, `indeed`, `google_jobs`, `glassdoor`, `ziprecruiter`, `monster`, `dice`, `company_website`, `other` | Normalized job posting source. UI labels should present these as LinkedIn, Indeed, Google Jobs, Glassdoor, ZipRecruiter, Monster, Dice, Company Website, and Other. |
 | `notification_type_enum` | `info`, `success`, `warning`, `error` | In-app notification category |
 
 The backend owns transition rules between statuses and processing states. The database stores the current values but does not attempt to encode the full transition graph.
@@ -35,7 +36,7 @@ Backend write paths must validate these shapes before persisting them.
 |---|---|---|
 | `profiles.section_preferences` | Object map of section identifier to boolean, for example `{"summary": true, "professional_experience": true, "education": true, "skills": true}` | Default keys are the four MVP sections. Additional keys may exist for forward compatibility but are ignored unless the application supports them. |
 | `profiles.section_order` | Ordered JSON array of section identifiers, for example `["summary", "professional_experience", "education", "skills"]` | Must contain enabled sections in the order used for future generations. |
-| `applications.duplicate_match_fields` | Object with `matched_fields` array and `match_basis` string, for example `{"matched_fields": ["job_title", "company"], "match_basis": "combined_job_title_company"}` | Stores what caused the duplicate warning, not the full comparison payload. |
+| `applications.duplicate_match_fields` | Object with `matched_fields` array and `match_basis` string, for example `{"matched_fields": ["job_title", "company", "job_posting_origin"], "match_basis": "job_title_company_with_origin"}` | Stores what caused the duplicate warning, not the full comparison payload. `matched_fields` may omit `job_posting_origin` when the value is unknown on either side or was not used. |
 | `resume_drafts.generation_params` | Object with `page_length`, `aggressiveness`, and `additional_instructions`, for example `{"page_length": "1_page", "aggressiveness": "medium", "additional_instructions": null}` | `page_length` values: `1_page`, `2_page`, `3_page`. `aggressiveness` values: `low`, `medium`, `high`. |
 | `resume_drafts.sections_snapshot` | Object with `enabled_sections` and `section_order`, for example `{"enabled_sections": ["summary", "professional_experience", "education", "skills"], "section_order": ["summary", "professional_experience", "education", "skills"]}` | Snapshot taken at generation time so later preference changes do not rewrite old drafts implicitly. |
 
@@ -115,6 +116,8 @@ User-owned job application records and workflow state.
 | `job_title` | `text` | Yes | `null` | Nullable until extraction or manual entry succeeds. |
 | `company` | `text` | Yes | `null` | Nullable until extraction or manual entry succeeds. |
 | `job_description` | `text` | Yes | `null` | Nullable until extraction or manual entry succeeds. |
+| `job_posting_origin` | `job_posting_origin_enum` | Yes | `null` | Normalized posting source when extraction or user input can identify it. |
+| `job_posting_origin_other_text` | `text` | Yes | `null` | Free-text source label used only when `job_posting_origin = 'other'`. |
 | `base_resume_id` | `uuid` | Yes | `null` | Composite foreign key with `user_id` to `base_resumes (id, user_id)` and `ON DELETE SET NULL`. |
 | `visible_status` | `visible_status_enum` | No | `draft` | User-visible status. |
 | `internal_state` | `internal_state_enum` | No | `extraction_pending` | Internal workflow state. |
@@ -134,11 +137,15 @@ User-owned job application records and workflow state.
 - `UNIQUE (id, user_id)` to support same-user composite foreign keys.
 - `CHECK (btrim(job_url) <> '')`
 - `CHECK (duplicate_similarity_score IS NULL OR (duplicate_similarity_score >= 0 AND duplicate_similarity_score <= 100))`
+- `CHECK (job_posting_origin_other_text IS NULL OR btrim(job_posting_origin_other_text) <> '')`
+- Database or backend validation must enforce: `job_posting_origin_other_text` is required when `job_posting_origin = 'other'` and must be `NULL` for all other origin values.
 
 **Behavior notes**
 
 - `applied` must remain editable regardless of the primary visible status.
+- `job_posting_origin` may remain `NULL` after extraction succeeds if origin classification is unknown; the user may supply or edit it later.
 - Duplicate dismissal is stored on the application so the warning does not re-evaluate for that application after dismissal.
+- Duplicate detection must include normalized `job_posting_origin` when it is populated on both compared applications, and fall back to `job_title` + `company` matching when origin is missing on either side.
 - The backend must clear stale `failure_reason` values when a recoverable workflow succeeds.
 
 **RLS requirements**
@@ -262,5 +269,5 @@ Additional rules:
 - Use `timestamptz` for all timestamps.
 - Maintain `updated_at` automatically on write through a shared trigger or equivalent backend discipline.
 - Keep enum names and values aligned with the PRD status model; do not introduce alternate status labels.
-- Preserve `job_title`, `company`, and `job_description` as nullable until extraction or manual entry succeeds.
+- Preserve `job_title`, `company`, `job_description`, and `job_posting_origin` as nullable until extraction or manual entry succeeds, while allowing `job_posting_origin` to remain `NULL` when the source cannot be classified yet.
 - Do not add persistent PDF storage columns or tables for MVP.

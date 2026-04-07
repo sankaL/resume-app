@@ -9,7 +9,7 @@
 
 Build a private, invite-only web application that helps users generate ATS-friendly resumes tailored to specific job postings.
 
-A user logs in, creates a job application from a job link, and the system attempts to extract the job details asynchronously. The user then selects a base resume, chooses generation settings, and the system produces a tailored resume draft in Markdown. The user can review, edit, regenerate sections, regenerate the full resume, and export a PDF.
+A user logs in, creates a job application from a job link, and the system attempts to extract the job details and posting origin asynchronously. The user then selects a base resume, chooses generation settings, and the system produces a tailored resume draft in Markdown. The user can review, edit, regenerate sections, regenerate the full resume, and export a PDF.
 
 This is an MVP. The focus is a clean, reliable workflow with strong user feedback during async processing, clear attention states, and a single ATS-safe PDF output format.
 
@@ -93,7 +93,7 @@ The app must provide meaningful loading, progress, success, error, and attention
 3. User clicks **New Application**
 4. User pastes a job link
 5. System creates a draft application and starts async extraction
-6. If extraction succeeds, the system runs duplicate detection automatically
+6. If extraction succeeds, the system runs duplicate detection automatically, considering job posting origin when available
 7. User resolves any duplicate warning
 8. User selects a base resume and generation settings
 9. System generates a tailored Markdown resume
@@ -212,7 +212,21 @@ The landing page shows a list of job applications for the logged-in user.
 - Job title
 - Company
 - Full job description
+- Job posting origin
 - Source URL
+
+**Normalized job posting origin options (MVP):**
+- LinkedIn
+- Indeed
+- Google Jobs
+- Glassdoor
+- ZipRecruiter
+- Monster
+- Dice
+- Company Website
+- Other
+
+Automatic extraction should map known posting domains into these normalized values when confidence is sufficient. If the user selects **Other**, the UI must also collect a short free-text label for the source.
 
 **Extraction implementation:** Playwright headless browser or equivalent. See §9 for timeout requirements.
 
@@ -235,9 +249,13 @@ Extraction failure is a high-priority failure state.
 - Job title
 - Company
 - Job description
+- Job posting origin (dropdown)
+- Other job board / source label (required only when origin is `Other`)
 - Notes (optional)
 
 **Retry:** Users must be able to retry extraction from the UI at any point.
+
+If extraction succeeds for the core job details but cannot classify the posting origin confidently, leave the origin blank and allow the user to provide or edit it later from the application detail page.
 
 **After manual entry:** Duplicate detection runs automatically.
 
@@ -249,8 +267,12 @@ Duplicate detection runs automatically after either:
 - Successful automatic extraction, or
 - Successful manual job detail entry
 
+If `job_posting_origin` was unknown during the initial duplicate check and the user later saves it before dismissing duplicate review, duplicate detection should run again using the updated origin.
+
 **Matching logic:**
-- Fuzzy match on combined `job_title` + `company` string
+- Fuzzy match on combined normalized `job_title` + `company` string
+- Include normalized `job_posting_origin` as an additional match field when it is populated on both the current application and the candidate application
+- Missing origin must not block duplicate evaluation; when origin is unknown on either side, fall back to `job_title` + `company` matching and surface only the fields that actually matched
 - Recommended similarity threshold: **≥ 85%** (tunable via config, not hardcoded)
 - Library recommendation: `rapidfuzz` (Python)
 
@@ -391,6 +413,7 @@ The main working page for a single application.
 **Job information area:**
 - Job title
 - Company
+- Job posting origin (editable dropdown; when `Other` is selected, require a short free-text label)
 - Primary status badge
 - Applied toggle
 - Job URL (clickable)
@@ -600,6 +623,8 @@ All emails must include a direct link to the relevant application.
 | job_title | string | Extracted or manually entered |
 | company | string | Extracted or manually entered |
 | job_description | text | Extracted or manually entered |
+| job_posting_origin | enum | Normalized posting source; extracted when possible and user-editable later. `linkedin`, `indeed`, `google_jobs`, `glassdoor`, `ziprecruiter`, `monster`, `dice`, `company_website`, `other`; nullable |
+| job_posting_origin_other_text | string | nullable; required when `job_posting_origin = other` |
 | base_resume_id | UUID FK | Base resume used for generation |
 | visible_status | enum | `draft`, `needs_action`, `in_progress`, `complete` |
 | internal_state | enum | See §8 |
@@ -706,6 +731,7 @@ The MVP is successful if a user can:
 - [ ] Log in to an invite-only app with email and password
 - [ ] Create a new application from a job link
 - [ ] Receive automatic extraction or be routed to manual entry on failure
+- [ ] See job posting origin auto-populated when it can be extracted and supply or edit it manually when needed
 - [ ] See duplicate overlap warnings with similarity score, matched fields, and a link to the existing application
 - [ ] Dismiss a duplicate warning permanently (does not re-evaluate on regeneration)
 - [ ] Select a base resume and generation settings before generating

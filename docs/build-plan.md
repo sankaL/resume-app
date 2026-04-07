@@ -1,7 +1,7 @@
 # AI Resume Builder Build Plan
 
 **Document status:** Active roadmap  
-**Last updated:** 2026-04-06 21:28:15 EDT  
+**Last updated:** 2026-04-07 10:05:06 EDT  
 **Implementation status:** Planning complete; implementation not started  
 **Primary product source:** `docs/resume_builder_PRD_v3.md`  
 **Database contract:** `docs/database_schema.md`
@@ -30,6 +30,83 @@ This roadmap assumes a greenfield implementation. The current repository contain
 | Phase 3 | Planned | Generation, validation, assembly, notifications, and application workspace |
 | Phase 4 | Planned | Editing, regeneration, and PDF export |
 | Phase 5 | Planned | Hardening, recovery, and end-to-end MVP acceptance |
+
+## Task Tracking
+
+These tables track implementation-sized tasks seeded from the phase roadmap below. The phase sections remain the planning source of truth.
+
+### Phase 0 Tasks
+
+| Task ID | Task | Type | Status | Date updated | Comments |
+|---|---|---|---|---|---|
+| P0-T01 | Scaffold the committed frontend, backend, and agents stack foundations | Infra | TODO | 2026-04-07 | |
+| P0-T02 | Dockerize the local frontend, backend, agents, and Supabase dev stack with Makefile orchestration | Infra | TODO | 2026-04-07 | |
+| P0-T03 | Build the invite-only login surface and protected frontend route shell | FE | TODO | 2026-04-07 | |
+| P0-T04 | Implement backend auth middleware and per-request user resolution from Supabase JWTs | BE | TODO | 2026-04-07 | |
+| P0-T05 | Create the initial schema, enums, and owner-scoped RLS policies from the schema doc | BE | TODO | 2026-04-07 | |
+| P0-T06 | Centralize shared status constants and workflow contract types across app layers | Other | TODO | 2026-04-07 | |
+
+### Phase 1 Tasks
+
+| Task ID | Task | Type | Status | Date updated | Comments |
+|---|---|---|---|---|---|
+| P1-T01 | Build the applications dashboard with loading, search, filter, sort, and inline applied toggle support | FE | TODO | 2026-04-07 | |
+| P1-T02 | Implement new application creation from URL-only submission and draft record setup | BE | TODO | 2026-04-07 | |
+| P1-T03 | Orchestrate async job extraction with progress, retry handling, and bounded recovery behavior | BE | TODO | 2026-04-07 | |
+| P1-T04 | Build the manual entry fallback flow with job posting origin selection and editing for extraction failures | FE | TODO | 2026-04-07 | |
+| P1-T05 | Add duplicate detection using job posting origin when available, plus persisted warning and dismissal tracking | BE | TODO | 2026-04-07 | |
+| P1-T06 | Deliver in-app and email notifications for extraction problems and manual-entry-required states | BE | TODO | 2026-04-07 | |
+
+### Phase 2 Tasks
+
+| Task ID | Task | Type | Status | Date updated | Comments |
+|---|---|---|---|---|---|
+| P2-T01 | Implement base resume CRUD persistence, default selection, and user-scoped APIs | BE | TODO | 2026-04-07 | |
+| P2-T02 | Build base resume, profile, and section preference management screens | FE | TODO | 2026-04-07 | |
+| P2-T03 | Add resume ingestion for file upload and structured form input with Markdown output | BE | TODO | 2026-04-07 | |
+| P2-T04 | Persist and apply user personal information, section enablement, and section order preferences | BE | TODO | 2026-04-07 | |
+| P2-T05 | Create the pre-generation configuration surface for length, aggressiveness, instructions, and resume selection | FE | TODO | 2026-04-07 | |
+
+### Phase 3 Tasks
+
+| Task ID | Task | Type | Status | Date updated | Comments |
+|---|---|---|---|---|---|
+| P3-T01 | Build the application detail page as the primary resume workspace with preview and status context | FE | TODO | 2026-04-07 | |
+| P3-T02 | Implement section-based resume generation through LangChain and OpenRouter with model fallback handling | AI | TODO | 2026-04-07 | |
+| P3-T03 | Add validation for hallucinations, required sections, ordering, and ATS-safety before draft assembly | AI | TODO | 2026-04-07 | |
+| P3-T04 | Assemble final Markdown using profile data and ordered enabled sections, then persist the current draft | BE | TODO | 2026-04-07 | |
+| P3-T05 | Update statuses and send in-app and email notifications for generation outcomes and attention states | BE | TODO | 2026-04-07 | |
+| P3-T06 | Preserve applied flag independence from the primary application status throughout the workspace flow | BE | TODO | 2026-04-07 | |
+
+### Phase 4 Tasks
+
+| Task ID | Task | Type | Status | Date updated | Comments |
+|---|---|---|---|---|---|
+| P4-T01 | Add Markdown edit mode with persistent saves and a preview or edit mode switch | FE | TODO | 2026-04-07 | |
+| P4-T02 | Implement single-section regeneration with required instructions and validator enforcement | AI | TODO | 2026-04-07 | |
+| P4-T03 | Implement full regeneration with prefilled prior settings and overwrite of the current draft | AI | TODO | 2026-04-07 | |
+| P4-T04 | Build on-demand PDF export from the latest draft content without persistent PDF storage | BE | TODO | 2026-04-07 | |
+| P4-T05 | Return status to In Progress after edits or regeneration and handle regen or export notifications | BE | TODO | 2026-04-07 | |
+
+### Phase 5 Tasks
+
+| Task ID | Task | Type | Status | Date updated | Comments |
+|---|---|---|---|---|---|
+| P5-T01 | Enforce timeout boundaries, bounded retries, stop conditions, and cleanup across async workflows | BE | TODO | 2026-04-07 | |
+| P5-T02 | Add regression coverage for status mapping, user scoping, duplicate dismissal, and export freshness | Other | TODO | 2026-04-07 | |
+| P5-T03 | Validate recoverable failure paths for extraction, manual entry, generation, regeneration, and export | Other | TODO | 2026-04-07 | |
+| P5-T04 | Verify structured logging remains sanitized and free of sensitive user content in production paths | Infra | TODO | 2026-04-07 | |
+| P5-T05 | Run MVP acceptance verification and align supporting docs, schema guidance, and migration runbook updates | Docs | TODO | 2026-04-07 | |
+
+### Bug Fixes
+
+| Task ID | Task | Type | Status | Date updated | Comments |
+|---|---|---|---|---|---|
+
+### Ad-hoc
+
+| Task ID | Task | Type | Status | Date updated | Comments |
+|---|---|---|---|---|---|
 
 ## Phase 0 — Foundation, Containerization, Auth Boundary, and Schema
 
@@ -96,8 +173,9 @@ This roadmap assumes a greenfield implementation. The current repository contain
 - Build the applications dashboard with loading, empty-state, search, filter, sort, and inline `applied` toggle support.
 - Implement the New Application flow with URL-only submission.
 - Create draft applications immediately, then launch async job extraction with progress feedback.
-- Support extraction success, extraction failure, retry extraction, and manual entry fallback.
-- Run duplicate detection after extraction success or manual entry completion.
+- Support extraction success, extraction failure, retry extraction, and manual entry fallback, including normalized job posting origin capture.
+- Allow job posting origin to be auto-populated when extractable, edited later from the application detail view, and manually selected during manual entry.
+- Run duplicate detection after extraction success or manual entry completion, using job posting origin when it is available.
 - Persist duplicate warning details, show the matching application link, and allow permanent dismissal for the new application.
 
 **Dependencies**
@@ -114,7 +192,7 @@ This roadmap assumes a greenfield implementation. The current repository contain
 
 - Dashboard list and detail navigation for applications.
 - Application creation endpoint and extraction job orchestration.
-- Manual entry form and retry extraction control.
+- Manual entry form and retry extraction control, including the job posting origin dropdown and conditional `Other` label.
 - Duplicate warning UI with persisted resolution state.
 - In-app and email notifications for extraction problems, including manual-entry-required cases.
 
@@ -122,6 +200,7 @@ This roadmap assumes a greenfield implementation. The current repository contain
 
 - A user can create a new application from a job link.
 - Extraction either populates the application or routes the user into a recoverable manual-entry path.
+- Job posting origin is saved automatically when extractable and can be added or corrected manually without breaking the workflow.
 - Duplicate review blocks generation until resolved or dismissed.
 - Dashboard badges reflect unresolved duplicate and action-required states.
 
@@ -129,6 +208,7 @@ This roadmap assumes a greenfield implementation. The current repository contain
 
 - Create a new application from a job link.
 - Receive automatic extraction or be routed to manual entry on failure.
+- Capture job posting origin automatically when possible and allow manual selection later when needed.
 - See duplicate overlap warnings with similarity score, matched fields, and a link to the existing application.
 - Dismiss a duplicate warning permanently.
 
@@ -300,6 +380,7 @@ This roadmap assumes a greenfield implementation. The current repository contain
 | Log in to an invite-only app with email and password | Phase 0 |
 | Create a new application from a job link | Phase 1 |
 | Receive automatic extraction or be routed to manual entry on failure | Phase 1 |
+| Capture job posting origin automatically when possible and allow manual selection later when needed | Phase 1 |
 | See duplicate overlap warnings with similarity score, matched fields, and a link to the existing application | Phase 1 |
 | Dismiss a duplicate warning permanently | Phase 1 |
 | Select a base resume and generation settings before generating | Phase 2 |
