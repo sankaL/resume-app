@@ -1,7 +1,7 @@
 # AI Resume Builder Build Plan
 
 **Document status:** Active roadmap  
-**Last updated:** 2026-04-06 21:08:42 EDT  
+**Last updated:** 2026-04-06 21:28:15 EDT  
 **Implementation status:** Planning complete; implementation not started  
 **Primary product source:** `docs/resume_builder_PRD_v3.md`  
 **Database contract:** `docs/database_schema.md`
@@ -15,6 +15,8 @@ This roadmap assumes a greenfield implementation. The current repository contain
 - Store all base resumes and generated drafts as Markdown.
 - Keep `applied` separate from the primary application status.
 - Treat `docs/database_schema.md` as the schema source of truth.
+- Local development and testing must run through a Dockerized, Makefile-managed stack.
+- Dev mode must use local Supabase services; production must connect to the hosted Supabase instance directly.
 - Defer dedicated async job/progress tables until the background worker strategy is chosen during implementation.
 - Keep a single current draft per application for MVP. No resume version-history UI or schema is planned.
 
@@ -22,22 +24,25 @@ This roadmap assumes a greenfield implementation. The current repository contain
 
 | Phase | Status | Outcome |
 |---|---|---|
-| Phase 0 | Planned | Foundation, auth boundary, schema, and shared workflow contract |
+| Phase 0 | Planned | Foundation, containerized local stack, auth boundary, schema, and shared workflow contract |
 | Phase 1 | Planned | Application intake, extraction, manual fallback, and duplicate review |
 | Phase 2 | Planned | Base resumes, profile data, section preferences, and generation setup |
 | Phase 3 | Planned | Generation, validation, assembly, notifications, and application workspace |
 | Phase 4 | Planned | Editing, regeneration, and PDF export |
 | Phase 5 | Planned | Hardening, recovery, and end-to-end MVP acceptance |
 
-## Phase 0 — Foundation, Auth Boundary, and Schema
+## Phase 0 — Foundation, Containerization, Auth Boundary, and Schema
 
 **Scope**
 
 - Scaffold the committed stack: React + Vite + Tailwind CSS + `shadcn`, FastAPI, Supabase, and prompt-layer assets under `agents/`.
+- Dockerize the local development stack with separate containers for frontend, backend, agents, and local Supabase services.
+- Add a dedicated dev-mode environment switch that points the app at the local Dockerized stack for testing and keeps production on the hosted Supabase instance.
 - Implement the invite-only login surface with Supabase email/password auth.
 - Establish protected frontend routes and a protected backend API boundary.
 - Create the initial Postgres schema, enums, and RLS policies from `docs/database_schema.md`.
 - Centralize the PRD status vocabulary so frontend, backend, and background work use the same visible statuses, internal states, and failure reasons.
+- Add a repository-level Makefile as the single entrypoint for local development and testing workflows.
 
 **Dependencies**
 
@@ -49,6 +54,7 @@ This roadmap assumes a greenfield implementation. The current repository contain
 - Select the background job strategy with persistence appropriate for Railway.
 - Select the real-time progress delivery model for long-running extraction and generation work.
 - Confirm the OpenRouter primary/fallback model integration path through LangChain.
+- Decide whether the local Supabase stack is managed via the official Supabase CLI containers or an equivalent Docker Compose orchestration owned by the repo.
 
 **Deliverables**
 
@@ -56,6 +62,9 @@ This roadmap assumes a greenfield implementation. The current repository contain
 - Backend auth middleware and per-request user resolution from Supabase JWTs.
 - Initial database migration set with RLS enabled on all user-scoped tables.
 - Shared status constants/types used across frontend and backend.
+- Docker assets for the frontend container, backend container, agents container, and local Supabase-backed dev stack.
+- A Makefile with the local development and test orchestration targets required to boot, stop, reset, and verify the Dockerized stack from one entrypoint.
+- Local scripts referenced by the Makefile for repeatable container startup, teardown, health checking, and local test preparation where those flows would otherwise become ad-hoc shell commands.
 
 **Exit Criteria**
 
@@ -63,10 +72,22 @@ This roadmap assumes a greenfield implementation. The current repository contain
 - Unauthenticated requests are rejected everywhere except the login surface.
 - No auth tokens are stored in browser `localStorage`.
 - All user tables exist with owner-scoped RLS policies.
+- A developer can start the full local stack through the Makefile and get frontend, backend, agents, and local Supabase services running together.
+- Local dev mode does not connect to production Supabase Auth or the production Supabase database.
+- Production configuration is documented to use the hosted Supabase instance directly rather than local containers.
 
 **PRD Acceptance Coverage**
 
 - Log in to an invite-only app with email and password.
+
+**Phase 0 Local Stack Requirements**
+
+- Frontend runs in its own container.
+- Backend runs in its own container.
+- Agents orchestration runs in its own container.
+- Local Supabase services run in Docker for development and test environments only.
+- The Makefile is the source of truth for local stack lifecycle tasks instead of ad-hoc startup commands.
+- The Makefile should cover, at minimum, stack boot, stack shutdown, stack reset, logs, health verification, and local test preparation tasks.
 
 ## Phase 1 — Application Intake, Extraction, and Duplicate Review
 
