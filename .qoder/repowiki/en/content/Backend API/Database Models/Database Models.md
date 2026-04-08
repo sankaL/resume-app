@@ -11,10 +11,19 @@
 - [20260407_000002_phase_1a_blocked_recovery_extension.sql](file://supabase/migrations/20260407_000002_phase_1a_blocked_recovery_extension.sql)
 - [20260407_000004_phase_2_base_resumes.sql](file://supabase/migrations/20260407_000004_phase_2_base_resumes.sql)
 - [20260407_000005_phase_3_generation.sql](file://supabase/migrations/20260407_000005_phase_3_generation.sql)
+- [20260407_000006_phase_4_generation_failure_reasons.sql](file://supabase/migrations/20260407_000006_phase_4_generation_failure_reasons.sql)
 - [00-auth-schema.sql](file://supabase/initdb/00-auth-schema.sql)
 - [application_manager.py](file://backend/app/services/application_manager.py)
 - [base_resumes.py](file://backend/app/services/base_resumes.py)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Added comprehensive documentation for the new resume drafts table and its role in AI-generated content management
+- Updated applications table documentation to include generation-related columns and failure reason storage
+- Added coverage of export tracking capabilities for resume drafts
+- Documented new generation failure reason enum values and their handling
+- Enhanced service layer integration showing how draft content is managed during generation workflows
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -83,7 +92,7 @@ SRes --> RP
 - [notifications.py:1-61](file://backend/app/db/notifications.py#L1-L61)
 
 ## Core Components
-This section defines each model’s fields, types, constraints, and relationships.
+This section defines each model's fields, types, constraints, and relationships.
 
 - Profiles
   - Purpose: User account, preferences, and authentication context.
@@ -100,14 +109,14 @@ This section defines each model’s fields, types, constraints, and relationship
   - RLS: Per-operation policies (select/insert/update/delete).
 
 - Applications
-  - Purpose: Job application tracking with status, duplication detection, and export metadata.
+  - Purpose: Job application tracking with status, duplication detection, export metadata, and generation failure details.
   - Fields: id (UUID, PK), user_id (UUID, FK to auth.users), job_url (text), job_title/company/description (text), extracted_reference_id (text), job_posting_origin (enum), job_posting_origin_other_text (text), base_resume_id (UUID, FK to base_resumes), visible_status/internal_state/failure_reason (enums), applied (bool), duplicate fields (score, match fields, resolution status, matched application id), notes (text), exported_at (timestamptz), timestamps.
   - Constraints: Non-blank job_url; duplicate similarity bounds; mutual exclusivity for origin/other text; composite unique (id,user_id); triggers update updated_at on change.
   - Indexes: Composite (user_id, updated_at desc), (user_id, visible_status, updated_at desc), (user_id, duplicate_resolution_status); GIN trigram search on job_title/company; unresolved duplicates filtered index; triggers on auth.user changes.
   - RLS: Owner-all policy.
 
 - Resume Drafts
-  - Purpose: AI-generated content and editing state per application.
+  - Purpose: AI-generated content and editing state per application with export tracking.
   - Fields: id (UUID, PK), application_id (UUID, FK to applications), user_id (UUID, FK to auth.users), content_md (text), generation_params/sections_snapshot (JSONB), last_generated_at/last_exported_at (timestamptz), timestamps.
   - Constraints: Non-blank content; unique (application_id); triggers update updated_at on change.
   - Indexes: Unique (application_id); triggers on auth.user changes.
@@ -125,6 +134,7 @@ This section defines each model’s fields, types, constraints, and relationship
 - [20260407_000002_phase_1a_blocked_recovery_extension.sql:1-16](file://supabase/migrations/20260407_000002_phase_1a_blocked_recovery_extension.sql#L1-L16)
 - [20260407_000004_phase_2_base_resumes.sql:1-158](file://supabase/migrations/20260407_000004_phase_2_base_resumes.sql#L1-L158)
 - [20260407_000005_phase_3_generation.sql:1-11](file://supabase/migrations/20260407_000005_phase_3_generation.sql#L1-L11)
+- [20260407_000006_phase_4_generation_failure_reasons.sql:1-7](file://supabase/migrations/20260407_000006_phase_4_generation_failure_reasons.sql#L1-L7)
 - [profiles.py:14-36](file://backend/app/db/profiles.py#L14-L36)
 - [base_resumes.py:14-29](file://backend/app/db/base_resumes.py#L14-L29)
 - [applications.py:14-61](file://backend/app/db/applications.py#L14-L61)
@@ -255,7 +265,7 @@ NotificationRepository ..> ApplicationRecord : "optional FK (application_id,user
 - [base_resumes.py:14-29](file://backend/app/db/base_resumes.py#L14-L29)
 
 ### Applications Model
-- Purpose: Track job posting intake, extraction, generation, and export lifecycle.
+- Purpose: Track job posting intake, extraction, generation, and export lifecycle with comprehensive failure tracking.
 - Key fields:
   - id: UUID PK.
   - user_id: UUID FK to auth.users with cascade delete.
@@ -267,6 +277,7 @@ NotificationRepository ..> ApplicationRecord : "optional FK (application_id,user
   - applied: boolean.
   - duplicate fields: score, match fields, resolution status, matched application id.
   - notes/exported_at: text/timestamp.
+  - generation_failure_details: JSONB for storing detailed generation failure information.
   - Timestamps: created_at/updated_at with triggers.
 - Constraints and indexes:
   - Non-blank job_url; duplicate similarity bounds; mutual exclusivity for origin/other text.
@@ -275,14 +286,17 @@ NotificationRepository ..> ApplicationRecord : "optional FK (application_id,user
   - Triggers on auth.users insert/update to keep profiles in sync.
 - RLS: Owner-all policy.
 
+**Updated** Added generation_failure_details JSONB column for storing detailed failure information and new failure reason enum values for generation timeouts and cancellations.
+
 **Section sources**
 - [20260407_000001_phase_0_foundation.sql:120-175](file://supabase/migrations/20260407_000001_phase_0_foundation.sql#L120-L175)
 - [20260407_000002_phase_1a_blocked_recovery_extension.sql:12-13](file://supabase/migrations/20260407_000002_phase_1a_blocked_recovery_extension.sql#L12-L13)
 - [20260407_000005_phase_3_generation.sql:7-8](file://supabase/migrations/20260407_000005_phase_3_generation.sql#L7-L8)
+- [20260407_000006_phase_4_generation_failure_reasons.sql:3-4](file://supabase/migrations/20260407_000006_phase_4_generation_failure_reasons.sql#L3-L4)
 - [applications.py:14-61](file://backend/app/db/applications.py#L14-L61)
 
 ### Resume Drafts Model
-- Purpose: Store AI-generated content and editing state per application.
+- Purpose: Store AI-generated content and editing state per application with comprehensive export tracking.
 - Key fields:
   - id: UUID PK.
   - application_id: UUID FK to applications(id,user_id) with cascade delete.
@@ -296,6 +310,8 @@ NotificationRepository ..> ApplicationRecord : "optional FK (application_id,user
   - Non-blank content check.
   - Indexes: unique (application_id).
 - RLS: Per-operation policies.
+
+**Updated** Enhanced with export tracking capabilities through last_exported_at field and improved draft management during generation workflows.
 
 **Section sources**
 - [20260407_000001_phase_0_foundation.sql:176-198](file://supabase/migrations/20260407_000001_phase_0_foundation.sql#L176-L198)
@@ -395,12 +411,14 @@ Service-->>Client : "ApplicationDetailPayload"
   - JSON serialization for JSONB fields.
   - ON CONFLICT WHERE clause to scope uniqueness by user_id.
 
+**Updated** Enhanced with export tracking capabilities allowing applications to mark when drafts are exported.
+
 **Section sources**
 - [resume_drafts.py:50-170](file://backend/app/db/resume_drafts.py#L50-L170)
 
 ### NotificationRepository
 - Responsibilities:
-  - Clear action_required for a user’s application.
+  - Clear action_required for a user's application.
   - Create notifications with typed enum.
 - Notable patterns:
   - Enum cast for notification_type.
@@ -414,9 +432,12 @@ Service-->>Client : "ApplicationDetailPayload"
   - Handling worker callbacks to update internal_state and failure_reason.
   - Triggering generation with base resume content and user profile preferences.
   - Managing resume drafts and notifications during generation.
+  - Processing generation failure details and updating application records.
 - BaseResumeService:
   - Lists, creates, updates, deletes base resumes.
   - Sets default resume and validates constraints.
+
+**Updated** Enhanced with comprehensive generation failure handling including timeout and cancellation scenarios, and improved draft management during generation workflows.
 
 **Section sources**
 - [application_manager.py:143-800](file://backend/app/services/application_manager.py#L143-L800)
@@ -462,8 +483,6 @@ RN["NotificationRepository"] --> N
 - RLS
   - Policies restrict access to user-owned rows; composite indexes on user_id support efficient filtering.
 
-[No sources needed since this section provides general guidance]
-
 ## Troubleshooting Guide
 - Foreign key violations
   - Ensure base_resume_id references (id,user_id) in base_resumes.
@@ -478,11 +497,16 @@ RN["NotificationRepository"] --> N
   - Confirm auth.uid() equals user_id for the targeted row.
 - Extension token issues
   - Verify unique index on extension_token_hash is respected; ensure token is cleared when disconnected.
+- Generation failure tracking
+  - Ensure generation_failure_details JSONB is properly formatted when storing failure information.
+  - Verify new failure reason enum values are correctly handled in application updates.
 
 **Section sources**
 - [20260407_000001_phase_0_foundation.sql:107-156](file://supabase/migrations/20260407_000001_phase_0_foundation.sql#L107-L156)
 - [20260407_000001_phase_0_foundation.sql:187-219](file://supabase/migrations/20260407_000001_phase_0_foundation.sql#L187-L219)
 - [20260407_000002_phase_1a_blocked_recovery_extension.sql:8-10](file://supabase/migrations/20260407_000002_phase_1a_blocked_recovery_extension.sql#L8-L10)
+- [20260407_000005_phase_3_generation.sql:7-8](file://supabase/migrations/20260407_000005_phase_3_generation.sql#L7-L8)
+- [20260407_000006_phase_4_generation_failure_reasons.sql:3-4](file://supabase/migrations/20260407_000006_phase_4_generation_failure_reasons.sql#L3-L4)
 
 ## Conclusion
-The database models are designed around clear ownership semantics with per-user isolation via RLS and composite foreign keys to maintain referential integrity. Repositories encapsulate SQL operations with dynamic casting and safe query construction. Services coordinate complex workflows across models, leveraging enums, JSONB, and indexes for performance and flexibility.
+The database models are designed around clear ownership semantics with per-user isolation via RLS and composite foreign keys to maintain referential integrity. Repositories encapsulate SQL operations with dynamic casting and safe query construction. Services coordinate complex workflows across models, leveraging enums, JSONB, and indexes for performance and flexibility. The addition of comprehensive resume draft management and generation failure tracking enhances the system's ability to handle AI-generated content workflows with robust error handling and export capabilities.

@@ -58,6 +58,56 @@ function isGenerationProgressActive(progress: ExtractionProgress | null) {
   );
 }
 
+function deriveVisibleStatus(
+  fallbackStatus: ApplicationDetail["visible_status"],
+  internalState: string,
+  failureReason: string | null,
+): ApplicationDetail["visible_status"] {
+  if (failureReason) {
+    return "needs_action";
+  }
+  if (internalState === "resume_ready") {
+    return "in_progress";
+  }
+  if (ACTIVE_GENERATION_STATES.includes(internalState) || internalState === "generation_pending") {
+    return "draft";
+  }
+  return fallbackStatus;
+}
+
+function applyTerminalGenerationProgress(
+  current: ApplicationDetail,
+  progress: ExtractionProgress,
+): ApplicationDetail {
+  const isRegeneration = ["regenerating_full", "regenerating_section"].includes(current.internal_state);
+  const failureReason =
+    progress.terminal_error_code === "generation_timeout" || progress.terminal_error_code === "generation_cancelled"
+      ? progress.terminal_error_code
+      : progress.terminal_error_code
+        ? (isRegeneration ? "regeneration_failed" : "generation_failed")
+        : null;
+  const internalState =
+    progress.state === "resume_ready" && !progress.terminal_error_code
+      ? "resume_ready"
+      : isRegeneration
+        ? "resume_ready"
+        : "generation_pending";
+
+  return {
+    ...current,
+    internal_state: internalState,
+    visible_status: deriveVisibleStatus(current.visible_status, internalState, failureReason),
+    failure_reason: failureReason,
+    generation_failure_details: failureReason
+      ? {
+          message: progress.message,
+          validation_errors: current.generation_failure_details?.validation_errors ?? null,
+        }
+      : null,
+    has_action_required_notification: failureReason ? true : current.has_action_required_notification,
+  };
+}
+
 export function ApplicationDetailPage() {
   const navigate = useNavigate();
   const { applicationId } = useParams<{ applicationId: string }>();
@@ -118,6 +168,14 @@ export function ApplicationDetailPage() {
       setIsCancelling(false);
       setShowOptimisticProgress(false);
     }
+  }
+
+  function applyTerminalGenerationFallback(nextProgress: ExtractionProgress) {
+    setDetail((current) => (current ? applyTerminalGenerationProgress(current, nextProgress) : current));
+    setIsGenerating(false);
+    setIsRegenerating(false);
+    setIsCancelling(false);
+    setShowOptimisticProgress(false);
   }
 
   useEffect(() => {
@@ -202,11 +260,23 @@ export function ApplicationDetailPage() {
         const stillGenerating = isGenerationProgressActive(nextProgress);
         if (!stillGenerating) {
           if (isCancelled) return;
-          const response = await fetchApplicationDetail(applicationId);
-          if (!isCancelled) {
-            applyDetailState(response);
-            // Refresh draft on completion
-            void fetchDraft(applicationId).then(setDraft).catch(() => {});
+          try {
+            const response = await fetchApplicationDetail(applicationId);
+            if (!isCancelled) {
+              applyDetailState(response);
+              if (nextProgress.state === "resume_ready" && !nextProgress.terminal_error_code) {
+                void fetchDraft(applicationId).then(setDraft).catch(() => {});
+              }
+              setError(null);
+            }
+          } catch (requestError) {
+            if (isCancelled) return;
+            applyTerminalGenerationFallback(nextProgress);
+            setError(
+              requestError instanceof Error
+                ? requestError.message
+                : "Generation finished, but the application could not be refreshed.",
+            );
           }
         }
       } catch {

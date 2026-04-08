@@ -158,11 +158,11 @@ Async operations must enforce timeouts to prevent silent hangs. These are the re
 | Operation | Timeout |
 |---|---|
 | Playwright extraction | 30 seconds |
-| Full resume generation (all sections) | 90 seconds |
+| Full resume generation (all sections) | 90 seconds without progress, with a 5 minute maximum wall-clock window |
 | Single section regeneration | 45 seconds |
 | PDF export | 20 seconds |
 
-On timeout, the operation is treated as a failure and follows the failure handling path defined for that operation. Engineers may tune these values during implementation, but must have explicit timeouts in place. "Reasonable for MVP" is not sufficient — every async operation must have a defined failure boundary.
+On timeout, the operation is treated as a failure and follows the failure handling path defined for that operation. For full generation, successful section progress should extend the remaining processing window until the 5 minute cap is reached, but the workflow must still fail once it stalls for 90 seconds without progress. Engineers may tune these values during implementation, but must have explicit timeouts in place. "Reasonable for MVP" is not sufficient — every async operation must have a defined failure boundary.
 
 ---
 

@@ -3,444 +3,349 @@
 <cite>
 **Referenced Files in This Document**
 - [pdf_export.py](file://backend/app/services/pdf_export.py)
+- [applications.py](file://backend/app/api/applications.py)
 - [application_manager.py](file://backend/app/services/application_manager.py)
 - [resume_drafts.py](file://backend/app/db/resume_drafts.py)
-- [profiles.py](file://backend/app/db/profiles.py)
-- [applications.py](file://backend/app/db/applications.py)
-- [workflow.py](file://backend/app/services/workflow.py)
-- [validation.py](file://agents/validation.py)
-- [assembly.py](file://agents/assembly.py)
-- [generation.py](file://agents/generation.py)
-- [base_resumes.py](file://backend/app/services/base_resumes.py)
-- [base_resumes.py (API)](file://backend/app/api/base_resumes.py)
+- [api.ts](file://frontend/src/lib/api.ts)
+- [ApplicationDetailPage.tsx](file://frontend/src/routes/ApplicationDetailPage.tsx)
+- [phase-3-4-generation-editing-export.md](file://docs/task-output/2026-04-07-phase-3-4-generation-editing-export.md)
+- [config.py](file://backend/app/core/config.py)
 </cite>
 
 ## Table of Contents
 1. [Introduction](#introduction)
-2. [Project Structure](#project-structure)
+2. [System Architecture](#system-architecture)
 3. [Core Components](#core-components)
-4. [Architecture Overview](#architecture-overview)
-5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Dependency Analysis](#dependency-analysis)
+4. [PDF Generation Pipeline](#pdf-generation-pipeline)
+5. [Frontend Integration](#frontend-integration)
+6. [Error Handling and Timeout Management](#error-handling-and-timeout-management)
 7. [Performance Considerations](#performance-considerations)
-8. [Troubleshooting Guide](#troubleshooting-guide)
-9. [Conclusion](#conclusion)
+8. [Configuration and Dependencies](#configuration-and-dependencies)
+9. [Troubleshooting Guide](#troubleshooting-guide)
+10. [Conclusion](#conclusion)
 
 ## Introduction
-This document describes the PDF Export Service that generates ATS-compliant resume PDFs from markdown content. It explains the end-to-end pipeline using WeasyPrint, the content transformation process, styling integration, and layout optimization. It also documents integration with resume drafts and generation parameters, quality and compression considerations, and troubleshooting common formatting issues. The service ensures compatibility with Applicant Tracking Systems (ATS) by enforcing strict content and styling rules.
 
-## Project Structure
-The PDF export pipeline spans several backend services and agents:
-- PDF generation service: transforms markdown to HTML and renders PDF via WeasyPrint.
-- Application manager: orchestrates export within the application workflow.
-- Data repositories: persist resume drafts and application state.
-- Validation agent: enforces ATS safety and content grounding.
-- Assembly agent: composes final markdown with personal info and ordered sections.
-- Generation agent: produces tailored sections respecting ATS constraints.
-- Base resumes service/API: manages user-defined base resumes used as source material.
+The PDF Export Service is a critical component of the AI Resume Builder application that converts Markdown-based resume drafts into ATS (Applicant Tracking System)-friendly PDF documents. This service enables users to download professional-quality PDF resumes directly from their browser, supporting the complete workflow from AI-generated content to downloadable formats.
+
+The service operates on-demand, generating fresh PDFs from the latest draft content stored in the database. It implements strict ATS safety standards, ensuring compatibility with automated hiring systems while maintaining professional presentation quality.
+
+## System Architecture
+
+The PDF Export Service follows a layered architecture pattern with clear separation of concerns:
 
 ```mermaid
 graph TB
-subgraph "Agents"
-GEN["Generation Agent<br/>generation.py"]
-VAL["Validation Agent<br/>validation.py"]
-ASM["Assembly Agent<br/>assembly.py"]
+subgraph "Frontend Layer"
+FE_API[Frontend API Client]
+FE_UI[Application Detail Page]
 end
-subgraph "Backend Services"
-AM["Application Manager<br/>application_manager.py"]
-PEX["PDF Export Service<br/>pdf_export.py"]
-BR_API["Base Resumes API<br/>base_resumes.py (API)"]
-BR_SVC["Base Resumes Service<br/>base_resumes.py"]
+subgraph "Backend API Layer"
+API_ROUTER[FastAPI Router]
+API_HANDLER[Export Endpoint Handler]
 end
-subgraph "Repositories"
-RD["Resume Drafts Repo<br/>resume_drafts.py"]
-PR["Profiles Repo<br/>profiles.py"]
-AR["Applications Repo<br/>applications.py"]
+subgraph "Service Layer"
+APP_SERVICE[Application Manager Service]
+PDF_SERVICE[PDF Export Service]
 end
-subgraph "External"
-WP["WeasyPrint"]
+subgraph "Data Layer"
+DRAFT_REPO[Resume Draft Repository]
+PROFILE_REPO[Profile Repository]
 end
-GEN --> VAL
-VAL --> ASM
-ASM --> AM
-AM --> RD
-AM --> PR
-AM --> AR
-AM --> PEX
-PEX --> WP
-BR_API --> BR_SVC
-BR_SVC --> AM
+subgraph "External Dependencies"
+WEASYPRINT[WeasyPrint Library]
+MARKDOWN[Markdown Parser]
+DATABASE[(PostgreSQL Database)]
+end
+FE_UI --> FE_API
+FE_API --> API_ROUTER
+API_ROUTER --> API_HANDLER
+API_HANDLER --> APP_SERVICE
+APP_SERVICE --> DRAFT_REPO
+APP_SERVICE --> PROFILE_REPO
+APP_SERVICE --> PDF_SERVICE
+PDF_SERVICE --> WEASYPRINT
+PDF_SERVICE --> MARKDOWN
+DRAFT_REPO --> DATABASE
+PROFILE_REPO --> DATABASE
 ```
 
 **Diagram sources**
+- [applications.py:658-678](file://backend/app/api/applications.py#L658-L678)
+- [application_manager.py:1204-1283](file://backend/app/services/application_manager.py#L1204-L1283)
 - [pdf_export.py:78-96](file://backend/app/services/pdf_export.py#L78-L96)
-- [application_manager.py:1080-1148](file://backend/app/services/application_manager.py#L1080-L1148)
-- [resume_drafts.py:14-118](file://backend/app/db/resume_drafts.py#L14-L118)
-- [profiles.py:14-68](file://backend/app/db/profiles.py#L14-L68)
-- [applications.py:34-60](file://backend/app/db/applications.py#L34-L60)
-- [validation.py:231-292](file://agents/validation.py#L231-L292)
-- [assembly.py:12-26](file://agents/assembly.py#L12-L26)
-- [generation.py:88-112](file://agents/generation.py#L88-L112)
-- [base_resumes.py (API): 17-242:17-242](file://backend/app/api/base_resumes.py#L17-L242)
-- [base_resumes.py:32-154](file://backend/app/services/base_resumes.py#L32-L154)
-
-**Section sources**
-- [pdf_export.py:14-96](file://backend/app/services/pdf_export.py#L14-L96)
-- [application_manager.py:1080-1148](file://backend/app/services/application_manager.py#L1080-L1148)
-- [resume_drafts.py:14-118](file://backend/app/db/resume_drafts.py#L14-L118)
-- [profiles.py:14-68](file://backend/app/db/profiles.py#L14-L68)
-- [applications.py:34-60](file://backend/app/db/applications.py#L34-L60)
-- [validation.py:231-292](file://agents/validation.py#L231-L292)
-- [assembly.py:12-26](file://agents/assembly.py#L12-L26)
-- [generation.py:88-112](file://agents/generation.py#L88-L112)
-- [base_resumes.py (API): 17-242:17-242](file://backend/app/api/base_resumes.py#L17-L242)
-- [base_resumes.py:32-154](file://backend/app/services/base_resumes.py#L32-L154)
 
 ## Core Components
-- PDF Export Service
-  - Converts markdown to an ATS-safe HTML document and renders a PDF using WeasyPrint.
-  - Uses a thread pool executor to keep the event loop unblocked and enforces a timeout.
-  - Builds a personal header from profile data and applies a fixed, ATS-friendly stylesheet.
-- Application Manager
-  - Coordinates export within the application workflow, constructs filenames, and updates application state and notifications upon success or failure.
-- Resume Drafts Repository
-  - Stores markdown content, generation parameters, and timestamps for drafts.
-- Profiles Repository
-  - Supplies personal info (name, email, phone, address) used in the resume header.
-- Applications Repository
-  - Tracks application state, failure reasons, and export timestamps.
-- Validation Agent
-  - Ensures generated content is grounded in the base resume, maintains correct section order, and enforces ATS safety (no tables/images).
-- Assembly Agent
-  - Composes final markdown with a personal header and ordered sections.
-- Generation Agent
-  - Produces tailored sections respecting ATS constraints and target page-length guidance.
-- Base Resumes Service/API
-  - Manages user-defined base resumes used as source material for generation.
-
-**Section sources**
-- [pdf_export.py:14-96](file://backend/app/services/pdf_export.py#L14-L96)
-- [application_manager.py:1080-1148](file://backend/app/services/application_manager.py#L1080-L1148)
-- [resume_drafts.py:14-118](file://backend/app/db/resume_drafts.py#L14-L118)
-- [profiles.py:14-68](file://backend/app/db/profiles.py#L14-L68)
-- [applications.py:34-60](file://backend/app/db/applications.py#L34-L60)
-- [validation.py:231-292](file://agents/validation.py#L231-L292)
-- [assembly.py:12-26](file://agents/assembly.py#L12-L26)
-- [generation.py:88-112](file://agents/generation.py#L88-L112)
-- [base_resumes.py (API): 17-242:17-242](file://backend/app/api/base_resumes.py#L17-L242)
-- [base_resumes.py:32-154](file://backend/app/services/base_resumes.py#L32-L154)
-
-## Architecture Overview
-The PDF export pipeline integrates generation, validation, assembly, and export orchestration:
-
-```mermaid
-sequenceDiagram
-participant Client as "Client"
-participant AM as "Application Manager"
-participant RD as "Resume Drafts Repo"
-participant PR as "Profiles Repo"
-participant PEX as "PDF Export Service"
-participant WP as "WeasyPrint"
-Client->>AM : Request export
-AM->>RD : Fetch draft (markdown content)
-AM->>PR : Fetch profile (personal info)
-AM->>PEX : generate_pdf(markdown, personal_info)
-PEX->>PEX : Build HTML (ATS-safe CSS)
-PEX->>WP : write_pdf()
-WP-->>PEX : PDF bytes
-PEX-->>AM : PDF bytes
-AM->>AM : Update application state and notifications
-AM-->>Client : Export result
-```
-
-**Diagram sources**
-- [application_manager.py:1080-1148](file://backend/app/services/application_manager.py#L1080-L1148)
-- [resume_drafts.py:50-60](file://backend/app/db/resume_drafts.py#L50-L60)
-- [profiles.py:47-68](file://backend/app/db/profiles.py#L47-L68)
-- [pdf_export.py:78-96](file://backend/app/services/pdf_export.py#L78-L96)
-
-## Detailed Component Analysis
 
 ### PDF Export Service
-- Responsibilities
-  - Build an HTML document from markdown with an ATS-safe stylesheet.
-  - Optionally include a centered personal header derived from profile data.
-  - Render PDF using WeasyPrint in a thread pool executor with a timeout.
-- Key behaviors
-  - Deferred import of WeasyPrint to avoid module load failures in environments lacking native libraries.
-  - Timeout enforcement to prevent long-running conversions.
-  - Fixed font family, sizes, and margins optimized for print and ATS parsing.
-- Styling integration
-  - Serif fonts, modest font sizes, and minimal spacing to reduce layout variance.
-  - No tables, images, or decorative elements to maintain ATS compliance.
-- Layout optimization
-  - Standard heading levels and paragraph spacing improve readability and ATS parsing.
-  - Margins configured for standard page layout.
 
-```mermaid
-flowchart TD
-Start(["Call generate_pdf"]) --> BuildHTML["Build HTML from markdown<br/>+ personal header (optional)"]
-BuildHTML --> Render["Render PDF via WeasyPrint<br/>in thread pool executor"]
-Render --> Timeout{"Timeout exceeded?"}
-Timeout --> |Yes| RaiseTimeout["Raise asyncio.TimeoutError"]
-Timeout --> |No| ReturnBytes["Return PDF bytes"]
-RaiseTimeout --> End(["Exit"])
-ReturnBytes --> End
-```
+The PDF Export Service is implemented as a standalone service responsible for converting Markdown content to PDF format. It features:
 
-**Diagram sources**
-- [pdf_export.py:78-96](file://backend/app/services/pdf_export.py#L78-L96)
-- [pdf_export.py:14-68](file://backend/app/services/pdf_export.py#L14-L68)
+- **ATS-Safe Rendering**: Uses clean typography and CSS that passes ATS screening
+- **Thread Pool Execution**: Non-blocking operation using asyncio with timeout protection
+- **Deferred Library Loading**: WeasyPrint import is deferred to handle development environment constraints
+- **Personal Information Integration**: Automatically includes user profile data in PDF headers
 
 **Section sources**
 - [pdf_export.py:14-96](file://backend/app/services/pdf_export.py#L14-L96)
 
-### Application Manager Export Workflow
-- Responsibilities
-  - Fetch profile and draft, construct filename, and call the PDF export service.
-  - Handle timeouts and exceptions, update application state, and notify users.
-- Integration points
-  - Reads personal info from profile and markdown content from draft.
-  - Updates application exported_at timestamp and internal state on success.
-- Notifications and emails
-  - Emits success/error notifications and attempts to send an email on failure.
+### Application Manager Service
+
+The Application Manager coordinates the complete PDF export workflow:
+
+- **Draft Validation**: Ensures a valid draft exists before export
+- **Profile Integration**: Retrieves user personal information for PDF headers
+- **Status Management**: Updates application state and timestamps upon successful export
+- **Error Recovery**: Handles export failures gracefully with notifications and state rollback
+
+**Section sources**
+- [application_manager.py:1204-1283](file://backend/app/services/application_manager.py#L1204-L1283)
+
+### API Integration
+
+The FastAPI router provides the HTTP interface for PDF exports:
+
+- **Authentication**: Requires authenticated user context
+- **Authorization**: Validates user ownership of the application
+- **Response Handling**: Returns binary PDF content with appropriate headers
+- **Error Mapping**: Converts service exceptions to HTTP responses
+
+**Section sources**
+- [applications.py:658-678](file://backend/app/api/applications.py#L658-L678)
+
+## PDF Generation Pipeline
+
+The PDF generation process follows a multi-stage pipeline designed for reliability and performance:
 
 ```mermaid
 sequenceDiagram
-participant AM as "Application Manager"
-participant PR as "Profiles Repo"
-participant RD as "Resume Drafts Repo"
-participant PEX as "PDF Export Service"
-participant AR as "Applications Repo"
-participant NR as "Notifications Repo"
-AM->>PR : fetch_profile(user_id)
-PR-->>AM : ProfileRecord
-AM->>RD : fetch_draft(user_id, application_id)
-RD-->>AM : ResumeDraftRecord
-AM->>PEX : generate_pdf(content_md, personal_info)
-alt Success
-PEX-->>AM : PDF bytes
-AM->>AR : update_application(..., exported_at, internal_state)
-AM->>NR : create_notification(success)
-else Timeout or Error
-PEX-->>AM : Exception
-AM->>AR : update_application(..., failure_reason)
-AM->>NR : create_notification(error)
-end
+participant Client as "Browser Client"
+participant API as "Export Endpoint"
+participant Service as "Application Manager"
+participant Draft as "Draft Repository"
+participant Profile as "Profile Repository"
+participant PDF as "PDF Service"
+participant Weasy as "WeasyPrint"
+Client->>API : GET /api/applications/{id}/export-pdf
+API->>Service : export_pdf(user_id, application_id)
+Service->>Draft : fetch_draft(user_id, application_id)
+Draft-->>Service : ResumeDraftRecord
+Service->>Profile : fetch_profile(user_id)
+Profile-->>Service : ProfileData
+Service->>PDF : generate_pdf(markdown_content, personal_info)
+PDF->>PDF : _build_html(markdown_content, personal_info)
+PDF->>Weasy : HTML(string=html).write_pdf()
+Weasy-->>PDF : PDF Bytes
+PDF-->>Service : PDF Bytes
+Service->>Service : Update application state
+Service-->>API : (pdf_bytes, filename)
+API-->>Client : Binary PDF Response
+Note over Client,Weasy : PDF generation completes in ~20 seconds max
 ```
 
 **Diagram sources**
-- [application_manager.py:1080-1148](file://backend/app/services/application_manager.py#L1080-L1148)
-- [profiles.py:47-68](file://backend/app/db/profiles.py#L47-L68)
-- [resume_drafts.py:50-60](file://backend/app/db/resume_drafts.py#L50-L60)
-- [applications.py:270-308](file://backend/app/db/applications.py#L270-L308)
-
-**Section sources**
-- [application_manager.py:1080-1148](file://backend/app/services/application_manager.py#L1080-L1148)
-- [applications.py:270-308](file://backend/app/db/applications.py#L270-L308)
-
-### Content Transformation and ATS Safety
-- Generation agent
-  - Produces sections tailored to a job description while staying grounded in the base resume.
-  - Enforces ATS-safe Markdown (no tables/images).
-- Validation agent
-  - Detects hallucinations by comparing generated content to the base resume.
-  - Verifies required sections and correct ordering.
-  - Enforces ATS safety rules and auto-applies minor formatting fixes.
-- Assembly agent
-  - Composes final markdown with a personal header and ordered sections.
-  - Ensures personal info comes from the profile, not LLM generation.
-
-```mermaid
-flowchart TD
-Start(["Start generation"]) --> Gen["Generate sections<br/>generation.py"]
-Gen --> Val["Validate content<br/>validation.py"]
-Val --> Valid{"Valid?"}
-Valid --> |No| FixOrAbort["Report errors and abort"]
-Valid --> |Yes| Assemble["Assemble final markdown<br/>assembly.py"]
-Assemble --> Export["Export to PDF<br/>pdf_export.py"]
-Export --> Done(["Complete"])
-```
-
-**Diagram sources**
-- [generation.py:88-112](file://agents/generation.py#L88-L112)
-- [validation.py:231-292](file://agents/validation.py#L231-L292)
-- [assembly.py:12-26](file://agents/assembly.py#L12-L26)
+- [application_manager.py:1204-1283](file://backend/app/services/application_manager.py#L1204-L1283)
 - [pdf_export.py:78-96](file://backend/app/services/pdf_export.py#L78-L96)
 
-**Section sources**
-- [generation.py:88-112](file://agents/generation.py#L88-L112)
-- [validation.py:231-292](file://agents/validation.py#L231-L292)
-- [assembly.py:12-26](file://agents/assembly.py#L12-L26)
+### HTML Generation Process
 
-### Data Models and Repositories
-- ResumeDraftRecord
-  - Stores markdown content, generation parameters, sections snapshot, and timestamps.
-- ProfileRecord
-  - Provides personal info used in the resume header.
-- ApplicationRecord
-  - Tracks application state, failure reasons, and export timestamps.
+The service converts Markdown to HTML using a two-stage process:
 
-```mermaid
-erDiagram
-RESUME_DRAFTS {
-uuid id PK
-uuid application_id
-uuid user_id
-text content_md
-jsonb generation_params
-jsonb sections_snapshot
-timestamptz last_generated_at
-timestamptz last_exported_at
-timestamptz updated_at
-}
-PROFILES {
-uuid id PK
-text email
-text name
-text phone
-text address
-uuid default_base_resume_id
-jsonb section_preferences
-jsonb section_order
-timestamptz created_at
-timestamptz updated_at
-}
-APPLICATIONS {
-uuid id PK
-uuid user_id
-text job_url
-text job_title
-text company
-text job_description
-uuid base_resume_id
-text base_resume_name
-text visible_status
-text internal_state
-text failure_reason
-bool applied
-float8 duplicate_similarity_score
-jsonb duplicate_match_fields
-text duplicate_resolution_status
-text notes
-timestamptz exported_at
-timestamptz created_at
-timestamptz updated_at
-bool has_action_required_notification
-}
-PROFILES ||--o{ APPLICATIONS : "owns"
-PROFILES ||--o{ RESUME_DRAFTS : "owns"
-APPLICATIONS ||--o{ RESUME_DRAFTS : "references"
-```
-
-**Diagram sources**
-- [resume_drafts.py:14-24](file://backend/app/db/resume_drafts.py#L14-L24)
-- [profiles.py:14-24](file://backend/app/db/profiles.py#L14-L24)
-- [applications.py:34-60](file://backend/app/db/applications.py#L34-L60)
+1. **Header Block Creation**: Personal information is formatted into a centered header
+2. **Content Processing**: Markdown is converted to HTML with ATS-safe extensions
+3. **CSS Integration**: Clean, professional styling optimized for ATS systems
 
 **Section sources**
-- [resume_drafts.py:14-118](file://backend/app/db/resume_drafts.py#L14-L118)
-- [profiles.py:14-68](file://backend/app/db/profiles.py#L14-L68)
-- [applications.py:34-60](file://backend/app/db/applications.py#L34-L60)
+- [pdf_export.py:14-68](file://backend/app/services/pdf_export.py#L14-L68)
 
-### Base Resumes Management
-- API endpoints support creating, uploading, listing, updating, deleting, and setting default base resumes.
-- Upload endpoint supports optional LLM cleanup of parsed PDF content.
-- Service enforces ownership and default resume association.
+### PDF Conversion Process
 
-```mermaid
-sequenceDiagram
-participant Client as "Client"
-participant API as "Base Resumes API"
-participant SVC as "Base Resumes Service"
-participant Repo as "Base Resume Repo"
-participant Prof as "Profile Repo"
-Client->>API : POST /upload (PDF)
-API->>SVC : create_resume(name, content_md)
-SVC->>Repo : create_resume(...)
-Repo-->>SVC : Record
-SVC-->>API : Detail with is_default flag
-API-->>Client : 201 Created
-```
+The conversion from HTML to PDF utilizes WeasyPrint with specific optimizations:
 
-**Diagram sources**
-- [base_resumes.py (API): 111-169:111-169](file://backend/app/api/base_resumes.py#L111-L169)
-- [base_resumes.py:55-73](file://backend/app/services/base_resumes.py#L55-L73)
+- **Font Selection**: Georgia and Times New Roman for professional appearance
+- **Spacing Control**: Precise margin and line height settings
+- **ATS Compliance**: No tables, images, or decorative elements
+- **Timeout Protection**: 20-second maximum execution time
 
 **Section sources**
-- [base_resumes.py (API): 17-242:17-242](file://backend/app/api/base_resumes.py#L17-L242)
-- [base_resumes.py:32-154](file://backend/app/services/base_resumes.py#L32-L154)
+- [pdf_export.py:71-96](file://backend/app/services/pdf_export.py#L71-L96)
 
-## Dependency Analysis
-- Coupling and cohesion
-  - PDF Export Service is cohesive around HTML-to-PDF conversion and has low coupling to external systems.
-  - Application Manager orchestrates multiple repositories and services, increasing coupling but centralizing workflow logic.
-- External dependencies
-  - WeasyPrint is used for PDF rendering; import is deferred to avoid environment-specific failures.
-  - Validation agent depends on OpenAI-compatible LLM for structured output.
-- Potential circular dependencies
-  - No evident circular imports among the analyzed modules.
+## Frontend Integration
 
-```mermaid
-graph LR
-AM["application_manager.py"] --> PEX["pdf_export.py"]
-AM --> RD["resume_drafts.py"]
-AM --> PR["profiles.py"]
-AM --> AR["applications.py"]
-PEX --> MD["markdown"]
-PEX --> WP["weasyprint"]
-VAL["validation.py"] --> LLM["OpenAI-compatible LLM"]
-GEN["generation.py"] --> LLM
-ASM["assembly.py"] --> AM
-```
+The frontend provides seamless PDF export functionality through React components:
 
-**Diagram sources**
-- [application_manager.py:1080-1148](file://backend/app/services/application_manager.py#L1080-L1148)
-- [pdf_export.py:71-75](file://backend/app/services/pdf_export.py#L71-L75)
-- [validation.py:89-95](file://agents/validation.py#L89-L95)
-- [generation.py:341-348](file://agents/generation.py#L341-L348)
+### API Integration
+
+The frontend communicates with the backend through a dedicated API function:
+
+- **Authentication**: Automatic bearer token inclusion
+- **Error Handling**: Comprehensive error catching and user feedback
+- **Blob Processing**: Direct binary response handling for PDF downloads
 
 **Section sources**
-- [pdf_export.py:71-75](file://backend/app/services/pdf_export.py#L71-L75)
-- [application_manager.py:1080-1148](file://backend/app/services/application_manager.py#L1080-L1148)
-- [validation.py:89-95](file://agents/validation.py#L89-L95)
-- [generation.py:341-348](file://agents/generation.py#L341-L348)
+- [api.ts:474-494](file://frontend/src/lib/api.ts#L474-L494)
+
+### User Interface
+
+The Application Detail Page features:
+
+- **Export Button**: Prominent button triggering PDF generation
+- **Loading States**: Visual feedback during export processing
+- **Error Display**: Clear error messaging for failed exports
+- **Automatic Refresh**: Post-export state refresh to show completion
+
+**Section sources**
+- [ApplicationDetailPage.tsx:637-672](file://frontend/src/routes/ApplicationDetailPage.tsx#L637-L672)
+
+## Error Handling and Timeout Management
+
+The PDF Export Service implements comprehensive error handling strategies:
+
+### Timeout Management
+
+- **Hard Timeout**: 20-second maximum execution time for PDF generation
+- **Async Safety**: Non-blocking operation prevents server thread starvation
+- **Graceful Degradation**: Timeout errors are caught and handled appropriately
+
+### Error Categories
+
+- **Missing Draft**: Prevents export attempts without generated content
+- **Export Failures**: Comprehensive error logging and user notification
+- **Database Issues**: Proper exception mapping to HTTP responses
+- **Authentication Errors**: Unauthorized access prevention
+
+**Section sources**
+- [application_manager.py:1235-1252](file://backend/app/services/application_manager.py#L1235-L1252)
+- [application_manager.py:1285-1318](file://backend/app/services/application_manager.py#L1285-L1318)
 
 ## Performance Considerations
-- Concurrency and blocking
-  - PDF generation runs in a thread pool executor to avoid blocking the event loop.
-  - A timeout is enforced to prevent long-running conversions from stalling the service.
-- Rendering cost
-  - WeasyPrint rendering cost scales with content length and complexity; prefer ATS-safe, minimal markup.
-- File size optimization
-  - The current implementation does not apply PDF compression or optimization; consider adding compression options if needed.
-- Network latency
-  - Validation agent relies on external LLM calls; timeouts and fallback models mitigate latency risks.
 
-[No sources needed since this section provides general guidance]
+### Thread Pool Optimization
 
-## Troubleshooting Guide
-- PDF export timeout
-  - Symptom: asyncio.TimeoutError during export.
-  - Resolution: Retry export; ensure content is concise and free of heavy formatting.
-  - Related code: timeout enforcement and exception handling.
-- Export failure with generic error
-  - Symptom: ValueError raised after catching non-timeout exceptions.
-  - Resolution: Inspect logs for underlying causes; confirm WeasyPrint availability and environment readiness.
-- ATS formatting issues
-  - Symptom: ATS parsing problems due to unsupported elements.
-  - Resolution: Avoid tables and images; stick to headings, paragraphs, and bullet lists.
-- Validation failures
-  - Symptom: Validation errors indicating hallucinations, missing sections, wrong order, or ATS violations.
-  - Resolution: Regenerate sections to ground claims in the base resume; ensure required sections are present and ordered correctly.
-- Filename and state updates
-  - Symptom: Application not transitioning to expected state after export.
-  - Resolution: Confirm exported_at timestamp and internal_state updates occur on success; verify notifications are created.
+The service leverages Python's asyncio with thread pool executors to maintain responsiveness:
+
+- **Non-blocking Conversion**: WeasyPrint runs in separate threads
+- **Event Loop Safety**: Main event loop remains responsive during PDF generation
+- **Resource Management**: Proper cleanup of thread resources
+
+### Memory Management
+
+- **Streaming Responses**: PDF bytes streamed directly to client
+- **Temporary Processing**: No persistent PDF storage on server
+- **Efficient Caching**: Settings and configuration cached via LRU cache
+
+### Scalability Factors
+
+- **Horizontal Scaling**: Stateless service supports multiple instances
+- **Database Efficiency**: Minimal database queries for export operations
+- **Network Optimization**: Direct binary transfer reduces overhead
+
+## Configuration and Dependencies
+
+### External Dependencies
+
+The service requires specific external libraries:
+
+- **WeasyPrint**: Core PDF generation engine
+- **Markdown**: Content processing and conversion
+- **Asyncio**: Non-blocking operation support
+
+### Environment Configuration
+
+Key configuration parameters:
+
+- **PDF_EXPORT_TIMEOUT_SECONDS**: 20-second timeout threshold
+- **Database Connections**: PostgreSQL connectivity for draft retrieval
+- **Profile Integration**: User data availability for PDF headers
 
 **Section sources**
-- [application_manager.py:1100-1117](file://backend/app/services/application_manager.py#L1100-L1117)
 - [pdf_export.py:11](file://backend/app/services/pdf_export.py#L11)
-- [validation.py:231-292](file://agents/validation.py#L231-L292)
+- [config.py:71-74](file://backend/app/core/config.py#L71-L74)
+
+### Database Schema Integration
+
+The service interacts with the resume drafts table:
+
+- **Content Retrieval**: Fetches latest Markdown content for export
+- **Timestamp Updates**: Records export completion times
+- **Application Context**: Links exports to specific application instances
+
+**Section sources**
+- [resume_drafts.py:50-60](file://backend/app/db/resume_drafts.py#L50-L60)
+- [resume_drafts.py:154-169](file://backend/app/db/resume_drafts.py#L154-L169)
+
+## Troubleshooting Guide
+
+### Common Issues and Solutions
+
+#### PDF Generation Failures
+
+**Symptoms**: Export requests timeout or fail with generic errors
+**Causes**: 
+- WeasyPrint library installation issues
+- Excessive content complexity
+- Memory constraints
+
+**Solutions**:
+- Verify WeasyPrint installation in deployment environment
+- Simplify complex Markdown formatting
+- Monitor server resource utilization
+
+#### Authentication Problems
+
+**Symptoms**: 401/403 errors on export attempts
+**Causes**:
+- Expired or invalid authentication tokens
+- User account access restrictions
+- Session timeout issues
+
+**Solutions**:
+- Re-authenticate user session
+- Verify user permissions for the application
+- Check authentication middleware configuration
+
+#### Content Issues
+
+**Symptoms**: Empty or malformed PDF output
+**Causes**:
+- Missing draft content
+- Corrupted Markdown formatting
+- Profile data inconsistencies
+
+**Solutions**:
+- Ensure draft generation completed successfully
+- Validate Markdown syntax and structure
+- Check profile information completeness
+
+### Monitoring and Debugging
+
+#### Logging Strategy
+
+The service implements comprehensive logging:
+
+- **Operation Tracking**: Export attempts and completions
+- **Error Details**: Specific failure reasons and stack traces
+- **Performance Metrics**: Generation timing and resource usage
+
+#### Health Checks
+
+Regular monitoring should verify:
+- Database connectivity for draft retrieval
+- External library availability (WeasyPrint)
+- API endpoint accessibility
+- Response time metrics
+
+**Section sources**
+- [application_manager.py:1246-1252](file://backend/app/services/application_manager.py#L1246-L1252)
 
 ## Conclusion
-The PDF Export Service provides a robust, ATS-compliant pipeline for generating resumes from markdown content. By combining generation, validation, and assembly with a controlled HTML-to-PDF transformation, it ensures reliable exports suitable for ATS systems. The service’s timeout and asynchronous design help maintain responsiveness, while the repository-driven workflow keeps state consistent across the application lifecycle. For future enhancements, consider adding PDF compression options and expanding styling customization while preserving ATS safety.
+
+The PDF Export Service represents a robust, production-ready solution for converting AI-generated resume content into professional PDF documents. Its design emphasizes reliability, performance, and user experience through:
+
+- **ATS Compliance**: Ensures compatibility with automated hiring systems
+- **Non-blocking Operations**: Maintains server responsiveness under load
+- **Comprehensive Error Handling**: Provides graceful degradation and user feedback
+- **Clean Architecture**: Separation of concerns enables maintainability and testing
+- **Frontend Integration**: Seamless user experience with proper state management
+
+The service successfully bridges the gap between AI-powered content generation and practical job application submission, providing users with professional-quality PDF resumes on demand while maintaining system stability and performance.

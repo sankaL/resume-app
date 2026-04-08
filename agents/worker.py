@@ -49,7 +49,7 @@ REFERENCE_PATTERNS = (
     re.compile(r"/jobs/(?:view/)?([0-9]{4,})", re.I),
     re.compile(r"/job/([A-Za-z0-9_-]{6,})", re.I),
 )
-FULL_GENERATION_TIMEOUT_SECONDS = 90.0
+FULL_GENERATION_MAX_TIMEOUT_SECONDS = 300.0
 SECTION_REGENERATION_TIMEOUT_SECONDS = 45.0
 
 
@@ -827,7 +827,7 @@ async def run_generation_job(
                 base_url=settings.openrouter_base_url,
                 on_progress=on_generation_progress,
             ),
-            timeout=FULL_GENERATION_TIMEOUT_SECONDS,
+            timeout=FULL_GENERATION_MAX_TIMEOUT_SECONDS,
         )
 
         generated_sections = gen_result["sections"]
@@ -1063,7 +1063,7 @@ async def run_regeneration_job(
                     base_url=settings.openrouter_base_url,
                     on_progress=on_regen_progress,
                 ),
-                timeout=FULL_GENERATION_TIMEOUT_SECONDS,
+                timeout=FULL_GENERATION_MAX_TIMEOUT_SECONDS,
             )
             generated_sections = gen_result["sections"]
 

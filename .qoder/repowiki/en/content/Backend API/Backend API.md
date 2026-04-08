@@ -26,17 +26,26 @@
 - [backend/app/services/workflow.py](file://backend/app/services/workflow.py)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Added comprehensive documentation for new generation workflow API endpoints
+- Documented trigger-generation, trigger-regeneration, trigger-section-regeneration, and cancel-generation endpoints
+- Enhanced draft management documentation with save-draft endpoint
+- Added detailed workflow examples and state machine documentation
+- Updated API reference with new generation endpoints and request/response schemas
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
 3. [Core Components](#core-components)
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Dependency Analysis](#dependency-analysis)
-7. [Performance Considerations](#performance-considerations)
-8. [Troubleshooting Guide](#troubleshooting-guide)
-9. [Conclusion](#conclusion)
-10. [Appendices](#appendices)
+6. [Generation Workflow API Endpoints](#generation-workflow-api-endpoints)
+7. [Dependency Analysis](#dependency-analysis)
+8. [Performance Considerations](#performance-considerations)
+9. [Troubleshooting Guide](#troubleshooting-guide)
+10. [Conclusion](#conclusion)
+11. [Appendices](#appendices)
 
 ## Introduction
 This document describes the backend API for a FastAPI-based server that powers an AI-driven resume builder. It covers application structure, router organization, middleware and CORS configuration, authentication and authorization via Supabase JWT verification, and the service-layer architecture. It also documents the database models and repositories, and provides a comprehensive API reference grouped by functional domains: session management, application lifecycle, profile management, base resume management, extension integration, and internal worker callbacks.
@@ -76,6 +85,7 @@ subgraph "Repositories"
 RA["applications.py<br/>ApplicationRepository"]
 RB["base_resumes.py<br/>BaseResumeRepository"]
 RP["profiles.py<br/>ProfileRepository"]
+RD["resume_drafts.py<br/>ResumeDraftRepository"]
 end
 M --> R1
 M --> R2
@@ -90,6 +100,7 @@ R6 --> SA
 SA --> RA
 SA --> RB
 SA --> RP
+SA --> RD
 SA --> SJ
 SA --> SP
 SA --> SE
@@ -105,15 +116,16 @@ R5 --> RP
 - [backend/app/main.py:1-36](file://backend/app/main.py#L1-L36)
 - [backend/app/api/session.py:1-45](file://backend/app/api/session.py#L1-L45)
 - [backend/app/api/profiles.py:1-113](file://backend/app/api/profiles.py#L1-L113)
-- [backend/app/api/applications.py:1-661](file://backend/app/api/applications.py#L1-L661)
+- [backend/app/api/applications.py:1-678](file://backend/app/api/applications.py#L1-L678)
 - [backend/app/api/base_resumes.py:1-242](file://backend/app/api/base_resumes.py#L1-L242)
 - [backend/app/api/extension.py:1-141](file://backend/app/api/extension.py#L1-L141)
 - [backend/app/api/internal_worker.py:1-71](file://backend/app/api/internal_worker.py#L1-L71)
-- [backend/app/services/application_manager.py:1-800](file://backend/app/services/application_manager.py#L1-L800)
+- [backend/app/services/application_manager.py:1-1827](file://backend/app/services/application_manager.py#L1-L1827)
 - [backend/app/services/base_resumes.py:1-154](file://backend/app/services/base_resumes.py#L1-L154)
 - [backend/app/db/applications.py:1-328](file://backend/app/db/applications.py#L1-L328)
 - [backend/app/db/base_resumes.py:1-184](file://backend/app/db/base_resumes.py#L1-L184)
 - [backend/app/db/profiles.py:1-225](file://backend/app/db/profiles.py#L1-L225)
+- [backend/app/db/resume_drafts.py](file://backend/app/db/resume_drafts.py)
 
 **Section sources**
 - [backend/app/main.py:1-36](file://backend/app/main.py#L1-L36)
@@ -145,7 +157,7 @@ API["FastAPI App"]
 MW["CORS Middleware"]
 Routers["Routers (/api/*)"]
 Services["Services (ApplicationService, BaseResumeService, ...)"]
-Repos["Repositories (ApplicationRepository, BaseResumeRepository, ProfileRepository)"]
+Repos["Repositories (ApplicationRepository, BaseResumeRepository, ProfileRepository, ResumeDraftRepository)"]
 DB[("PostgreSQL")]
 Redis[("Redis")]
 Ext["External APIs (OpenRouter, Email)"]
@@ -161,14 +173,15 @@ Services --> Ext
 
 **Diagram sources**
 - [backend/app/main.py:14-36](file://backend/app/main.py#L14-L36)
-- [backend/app/api/applications.py:1-661](file://backend/app/api/applications.py#L1-L661)
+- [backend/app/api/applications.py:1-678](file://backend/app/api/applications.py#L1-L678)
 - [backend/app/api/base_resumes.py:1-242](file://backend/app/api/base_resumes.py#L1-L242)
 - [backend/app/api/extension.py:1-141](file://backend/app/api/extension.py#L1-L141)
 - [backend/app/api/internal_worker.py:1-71](file://backend/app/api/internal_worker.py#L1-L71)
-- [backend/app/services/application_manager.py:143-800](file://backend/app/services/application_manager.py#L143-L800)
+- [backend/app/services/application_manager.py:143-1827](file://backend/app/services/application_manager.py#L143-L1827)
 - [backend/app/db/applications.py:123-328](file://backend/app/db/applications.py#L123-L328)
 - [backend/app/db/base_resumes.py:31-184](file://backend/app/db/base_resumes.py#L31-L184)
 - [backend/app/db/profiles.py:38-225](file://backend/app/db/profiles.py#L38-L225)
+- [backend/app/db/resume_drafts.py](file://backend/app/db/resume_drafts.py)
 
 ## Detailed Component Analysis
 
@@ -261,8 +274,8 @@ Additional flows:
 - Export returns PDF bytes with appropriate headers.
 
 **Section sources**
-- [backend/app/api/applications.py:1-661](file://backend/app/api/applications.py#L1-L661)
-- [backend/app/services/application_manager.py:513-719](file://backend/app/services/application_manager.py#L513-L719)
+- [backend/app/api/applications.py:1-678](file://backend/app/api/applications.py#L1-L678)
+- [backend/app/services/application_manager.py:513-1152](file://backend/app/services/application_manager.py#L513-L1152)
 - [backend/app/services/pdf_export.py](file://backend/app/services/pdf_export.py)
 
 ### Profile Management
@@ -401,6 +414,190 @@ Router-->>Worker : {"status" : "accepted"}
 - [backend/app/api/internal_worker.py:1-71](file://backend/app/api/internal_worker.py#L1-L71)
 - [backend/app/services/application_manager.py:455-512](file://backend/app/services/application_manager.py#L455-L512)
 
+## Generation Workflow API Endpoints
+
+### Overview
+The generation workflow API provides comprehensive endpoints for managing resume generation, regeneration, and cancellation. The workflow supports three distinct modes: initial generation, full regeneration, and section-specific regeneration, each with different validation requirements and state transitions.
+
+### State Machine
+The generation workflow operates through several states that represent different phases of the generation process:
+
+```mermaid
+stateDiagram-v2
+[*] --> generation_pending
+generation_pending --> generating : trigger_generation
+generating --> resume_ready : success
+generating --> generation_failed : failure
+generation_failed --> generation_pending : retry
+resume_ready --> regenerating_full : trigger_full_regeneration
+resume_ready --> regenerating_section : trigger_section_regeneration
+regenerating_full --> resume_ready : success
+regenerating_full --> regeneration_failed : failure
+regeneration_failed --> resume_ready : retry
+regenerating_section --> resume_ready : success
+regenerating_section --> regeneration_failed : failure
+regeneration_failed --> resume_ready : retry
+generating --> generation_cancelled : cancel_generation
+regenerating_full --> generation_cancelled : cancel_generation
+regenerating_section --> generation_cancelled : cancel_generation
+```
+
+**Diagram sources**
+- [backend/app/services/application_manager.py:453-649](file://backend/app/services/application_manager.py#L453-L649)
+- [backend/app/services/application_manager.py:856-1152](file://backend/app/services/application_manager.py#L856-L1152)
+
+### Trigger Generation Endpoint
+Starts the initial resume generation process for a new application.
+
+- Endpoint: POST /api/applications/{application_id}/generate
+- Authentication: Requires valid Supabase access token
+- Request Body: GenerateResumeRequest
+- Response: ApplicationDetail (202 Accepted)
+- Validation Requirements:
+  - Application must be in generation_pending or resume_ready state
+  - Job title and description must be present
+  - No unresolved duplicates allowed
+  - Base resume must exist and belong to the user
+  - Profile must exist for personal information
+
+**Section sources**
+- [backend/app/api/applications.py:560-580](file://backend/app/api/applications.py#L560-L580)
+- [backend/app/services/application_manager.py:642-731](file://backend/app/services/application_manager.py#L642-L731)
+
+### Trigger Full Regeneration Endpoint
+Regenerates the entire resume using the current draft as a starting point.
+
+- Endpoint: POST /api/applications/{application_id}/regenerate
+- Authentication: Requires valid Supabase access token
+- Request Body: FullRegenerationRequest
+- Response: ApplicationDetail (202 Accepted)
+- Validation Requirements:
+  - Application must be in resume_ready state
+  - Existing draft must exist
+  - Job title and description must be present
+  - Base resume must be linked to the application
+
+**Section sources**
+- [backend/app/api/applications.py:582-601](file://backend/app/api/applications.py#L582-L601)
+- [backend/app/services/application_manager.py:856-949](file://backend/app/services/application_manager.py#L856-L949)
+
+### Trigger Section Regeneration Endpoint
+Regenerates a specific section of the resume with custom instructions.
+
+- Endpoint: POST /api/applications/{application_id}/regenerate-section
+- Authentication: Requires valid Supabase access token
+- Request Body: SectionRegenerationRequest
+- Response: ApplicationDetail (202 Accepted)
+- Validation Requirements:
+  - Application must be in resume_ready state
+  - Existing draft must exist
+  - Instructions must be provided and non-blank
+  - Job title and description must be present
+  - Base resume must be linked to the application
+
+**Section sources**
+- [backend/app/api/applications.py:603-621](file://backend/app/api/applications.py#L603-L621)
+- [backend/app/services/application_manager.py:950-1040](file://backend/app/services/application_manager.py#L950-L1040)
+
+### Cancel Generation Endpoint
+Cancels an active generation or regeneration process.
+
+- Endpoint: POST /api/applications/{application_id}/cancel-generation
+- Authentication: Requires valid Supabase access token
+- Response: ApplicationDetail
+- Validation Requirements:
+  - Must have active generation in progress
+  - Determines target state based on workflow type
+
+**Section sources**
+- [backend/app/api/applications.py:623-638](file://backend/app/api/applications.py#L623-L638)
+- [backend/app/services/application_manager.py:453-491](file://backend/app/services/application_manager.py#L453-L491)
+
+### Draft Management Endpoints
+Manage draft content during generation workflows.
+
+- GET /api/applications/{application_id}/draft: Retrieves current draft content
+- PUT /api/applications/{application_id}/draft: Saves edited draft content
+
+**Section sources**
+- [backend/app/api/applications.py:542-558](file://backend/app/api/applications.py#L542-L558)
+- [backend/app/api/applications.py:640-656](file://backend/app/api/applications.py#L640-L656)
+- [backend/app/services/application_manager.py:1154-1202](file://backend/app/services/application_manager.py#L1154-L1202)
+
+### Generation Workflow Examples
+
+#### Initial Generation Flow
+```mermaid
+sequenceDiagram
+participant Client as "Client"
+participant API as "applications.py"
+participant Service as "application_manager.py"
+participant Queue as "jobs.py"
+participant Progress as "progress.py"
+Client->>API : POST /api/applications/{id}/generate
+API->>Service : trigger_generation(base_resume_id, settings)
+Service->>Service : Validate application state
+Service->>Queue : enqueue_generation(job)
+Service->>Progress : set progress (generation_pending)
+Service->>Service : update application (generating)
+Service-->>API : ApplicationDetail
+API-->>Client : 202 Accepted
+Note over Queue,Progress : Worker processes generation
+Queue->>Service : generation-callback (started)
+Service->>Progress : set progress (generating)
+Queue->>Service : generation-callback (succeeded)
+Service->>Service : upsert draft
+Service->>Progress : set progress (resume_ready)
+```
+
+#### Full Regeneration Flow
+```mermaid
+sequenceDiagram
+participant Client as "Client"
+participant API as "applications.py"
+participant Service as "application_manager.py"
+participant Queue as "jobs.py"
+participant Draft as "resume_drafts.py"
+Client->>API : POST /api/applications/{id}/regenerate
+API->>Service : trigger_full_regeneration(settings)
+Service->>Service : Validate draft exists
+Service->>Queue : enqueue_regeneration(full)
+Service->>Progress : set progress (regenerating_full)
+Service->>Service : update application (regenerating_full)
+Service-->>API : ApplicationDetail
+API-->>Client : 202 Accepted
+Note over Queue,Progress : Worker processes regeneration
+Queue->>Service : regeneration-callback (succeeded)
+Service->>Draft : upsert draft (updated content)
+Service->>Progress : set progress (resume_ready)
+```
+
+#### Section Regeneration Flow
+```mermaid
+sequenceDiagram
+participant Client as "Client"
+participant API as "applications.py"
+participant Service as "application_manager.py"
+participant Queue as "jobs.py"
+Client->>API : POST /api/applications/{id}/regenerate-section
+API->>Service : trigger_section_regeneration(section, instructions)
+Service->>Service : Validate draft and instructions
+Service->>Queue : enqueue_regeneration(section)
+Service->>Progress : set progress (regenerating_section)
+Service->>Service : update application (regenerating_section)
+Service-->>API : ApplicationDetail
+API-->>Client : 202 Accepted
+Note over Queue,Progress : Worker processes section regeneration
+Queue->>Service : regeneration-callback (succeeded)
+Service->>Progress : set progress (resume_ready)
+```
+
+**Diagram sources**
+- [backend/app/api/applications.py:560-638](file://backend/app/api/applications.py#L560-L638)
+- [backend/app/services/application_manager.py:642-1152](file://backend/app/services/application_manager.py#L642-L1152)
+- [backend/app/services/jobs.py](file://backend/app/services/jobs.py)
+- [backend/app/services/progress.py](file://backend/app/services/progress.py)
+
 ## Dependency Analysis
 - Router-to-service coupling: Each router depends on a dedicated service via FastAPI Depends, promoting separation of concerns.
 - Service-to-repository coupling: Services depend on repositories for persistence and on external services (queues, progress store, email).
@@ -418,6 +615,7 @@ Internal["internal_worker.py"] --> Sec
 AppSvc --> DBApps["db/applications.py"]
 AppSvc --> DBBR["db/base_resumes.py"]
 AppSvc --> DBPro["db/profiles.py"]
+AppSvc --> DBDraft["db/resume_drafts.py"]
 AppSvc --> Jobs["services/jobs.py"]
 AppSvc --> Progress["services/progress.py"]
 AppSvc --> Email["services/email.py"]
@@ -430,22 +628,23 @@ BRSvc --> DBPro
 **Diagram sources**
 - [backend/app/api/session.py:1-45](file://backend/app/api/session.py#L1-L45)
 - [backend/app/api/profiles.py:1-113](file://backend/app/api/profiles.py#L1-L113)
-- [backend/app/api/applications.py:1-661](file://backend/app/api/applications.py#L1-L661)
+- [backend/app/api/applications.py:1-678](file://backend/app/api/applications.py#L1-L678)
 - [backend/app/api/base_resumes.py:1-242](file://backend/app/api/base_resumes.py#L1-L242)
 - [backend/app/api/extension.py:1-141](file://backend/app/api/extension.py#L1-L141)
 - [backend/app/api/internal_worker.py:1-71](file://backend/app/api/internal_worker.py#L1-L71)
-- [backend/app/services/application_manager.py:1-800](file://backend/app/services/application_manager.py#L1-L800)
+- [backend/app/services/application_manager.py:1-1827](file://backend/app/services/application_manager.py#L1-L1827)
 - [backend/app/services/base_resumes.py:1-154](file://backend/app/services/base_resumes.py#L1-L154)
 - [backend/app/db/applications.py:1-328](file://backend/app/db/applications.py#L1-L328)
 - [backend/app/db/base_resumes.py:1-184](file://backend/app/db/base_resumes.py#L1-L184)
 - [backend/app/db/profiles.py:1-225](file://backend/app/db/profiles.py#L1-L225)
+- [backend/app/db/resume_drafts.py](file://backend/app/db/resume_drafts.py)
 
 **Section sources**
-- [backend/app/api/applications.py:1-661](file://backend/app/api/applications.py#L1-L661)
+- [backend/app/api/applications.py:1-678](file://backend/app/api/applications.py#L1-L678)
 - [backend/app/api/base_resumes.py:1-242](file://backend/app/api/base_resumes.py#L1-L242)
 - [backend/app/api/extension.py:1-141](file://backend/app/api/extension.py#L1-L141)
 - [backend/app/api/internal_worker.py:1-71](file://backend/app/api/internal_worker.py#L1-L71)
-- [backend/app/services/application_manager.py:1-800](file://backend/app/services/application_manager.py#L1-L800)
+- [backend/app/services/application_manager.py:1-1827](file://backend/app/services/application_manager.py#L1-L1827)
 - [backend/app/services/base_resumes.py:1-154](file://backend/app/services/base_resumes.py#L1-L154)
 
 ## Performance Considerations
@@ -454,8 +653,6 @@ BRSvc --> DBPro
 - Validation and normalization: Input sanitization reduces downstream processing errors and retries.
 - PDF parsing and LLM cleanup: Optional LLM cleanup is opt-in to balance latency and quality.
 - Caching: Settings are cached via LRU cache to reduce repeated reads.
-
-[No sources needed since this section provides general guidance]
 
 ## Troubleshooting Guide
 Common issues and resolutions:
@@ -484,8 +681,6 @@ Operational checks:
 
 ## Conclusion
 The backend provides a robust, modular API for managing job applications, base resumes, user profiles, and extension integration, with clear separation between routers, services, and repositories. Supabase JWT verification secures endpoints, while asynchronous job queues and Redis-backed progress tracking deliver responsive UX. The design supports future extensions with clear boundaries and consistent error handling.
-
-[No sources needed since this section summarizes without analyzing specific files]
 
 ## Appendices
 
@@ -546,6 +741,8 @@ The backend provides a robust, modular API for managing job applications, base r
 - POST /api/applications/{application_id}/regenerate-section
   - Body: SectionRegenerationRequest
   - Response: ApplicationDetail (202)
+- POST /api/applications/{application_id}/cancel-generation
+  - Response: ApplicationDetail
 - PUT /api/applications/{application_id}/draft
   - Body: SaveDraftRequest
   - Response: ResumeDraftResponse
@@ -553,7 +750,7 @@ The backend provides a robust, modular API for managing job applications, base r
   - Response: application/pdf attachment
 
 **Section sources**
-- [backend/app/api/applications.py:369-661](file://backend/app/api/applications.py#L369-L661)
+- [backend/app/api/applications.py:369-678](file://backend/app/api/applications.py#L369-L678)
 
 ### API Reference: Base Resumes
 - GET /api/base-resumes
@@ -610,6 +807,7 @@ The application uses typed Pydantic models for records returned by repositories.
 - Applications: job_url, job_title, company, job_description, extracted_reference_id, job_posting_origin, base_resume_id, visibility and internal states, failure reasons, duplicates, notes, exported_at, timestamps.
 - Base Resumes: name, content_md, user_id, timestamps.
 - Profiles: user identity, contact info, default_base_resume_id, section_preferences, section_order, extension token hashes and timestamps.
+- Resume Drafts: application_id, content_md, generation_params, sections_snapshot, timestamps.
 
 ```mermaid
 erDiagram
@@ -658,8 +856,20 @@ timestamptz extension_token_last_used_at
 timestamptz created_at
 timestamptz updated_at
 }
+RESUME_DRAFTS {
+uuid id PK
+uuid application_id FK
+uuid user_id FK
+text content_md
+jsonb generation_params
+jsonb sections_snapshot
+timestamptz last_generated_at
+timestamptz last_exported_at
+timestamptz updated_at
+}
 APPLICATIONS }o--|| BASE_RESUMES : "links via base_resume_id"
 APPLICATIONS }o--|| PROFILES : "owned by user_id"
+APPLICATIONS }o--o{ RESUME_DRAFTS : "contains"
 PROFILES }o--|| BASE_RESUMES : "default selection"
 ```
 
@@ -667,11 +877,13 @@ PROFILES }o--|| BASE_RESUMES : "default selection"
 - [backend/app/db/applications.py:14-61](file://backend/app/db/applications.py#L14-L61)
 - [backend/app/db/base_resumes.py:14-29](file://backend/app/db/base_resumes.py#L14-L29)
 - [backend/app/db/profiles.py:14-36](file://backend/app/db/profiles.py#L14-L36)
+- [backend/app/db/resume_drafts.py](file://backend/app/db/resume_drafts.py)
 
 **Section sources**
 - [backend/app/db/applications.py:1-328](file://backend/app/db/applications.py#L1-L328)
 - [backend/app/db/base_resumes.py:1-184](file://backend/app/db/base_resumes.py#L1-L184)
 - [backend/app/db/profiles.py:1-225](file://backend/app/db/profiles.py#L1-L225)
+- [backend/app/db/resume_drafts.py](file://backend/app/db/resume_drafts.py)
 
 ### Authentication and Authorization
 - JWT verification: Supabase JWKS or shared secret; audience/issuer configurable.
@@ -700,5 +912,3 @@ PROFILES }o--|| BASE_RESUMES : "default selection"
 - Redis progress store: Efficient progress tracking without DB contention.
 - Input normalization: Reduce variability and downstream processing overhead.
 - Optional LLM cleanup: Controlled via request parameter to balance quality and latency.
-
-[No sources needed since this section provides general guidance]

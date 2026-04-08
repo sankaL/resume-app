@@ -11,6 +11,8 @@
 - [ExtensionPage.tsx](file://frontend/src/routes/ExtensionPage.tsx)
 - [ProfilePage.tsx](file://frontend/src/routes/ProfilePage.tsx)
 - [LoginPage.tsx](file://frontend/src/routes/LoginPage.tsx)
+- [MarkdownPreview.tsx](file://frontend/src/components/MarkdownPreview.tsx)
+- [StatusBadge.tsx](file://frontend/src/components/StatusBadge.tsx)
 - [button.tsx](file://frontend/src/components/ui/button.tsx)
 - [card.tsx](file://frontend/src/components/ui/card.tsx)
 - [input.tsx](file://frontend/src/components/ui/input.tsx)
@@ -19,6 +21,7 @@
 - [supabase.ts](file://frontend/src/lib/supabase.ts)
 - [env.ts](file://frontend/src/lib/env.ts)
 - [utils.ts](file://frontend/src/lib/utils.ts)
+- [application-options.ts](file://frontend/src/lib/application-options.ts)
 - [package.json](file://frontend/package.json)
 - [vite.config.ts](file://frontend/vite.config.ts)
 - [tailwind.config.ts](file://frontend/tailwind.config.ts)
@@ -50,7 +53,7 @@ This document describes the React 19-based frontend application for the AI Resum
 ## Project Structure
 The frontend is a Vite-powered React application configured with TypeScript and Tailwind CSS. It uses React Router DOM for client-side routing and @supabase/supabase-js for authentication and session persistence. The application is organized into:
 - Routes: Page-level components under src/routes
-- Components: Reusable UI primitives under src/components/ui
+- Components: Reusable UI primitives under src/components/ui and specialized components like MarkdownPreview
 - Library: API clients, environment configuration, and utilities under src/lib
 - Public assets: Chrome extension code under frontend/public/chrome-extension
 
@@ -65,10 +68,12 @@ D --> G["ExtensionPage.tsx"]
 D --> H["ProfilePage.tsx"]
 B --> I["LoginPage.tsx"]
 D --> J["button.tsx / card.tsx / input.tsx / label.tsx"]
-K["api.ts<br/>Authenticated HTTP client"] --> L["supabase.ts<br/>Supabase client"]
+K["api.ts<br/>Enhanced API client with resume generation"] --> L["supabase.ts<br/>Supabase client"]
 M["env.ts<br/>Environment variables"] --> K
 N["tailwind.config.ts<br/>Theme and colors"] --> O["index.css<br/>Global styles"]
 P["vite.config.ts<br/>Aliases and test setup"] --> Q["package.json<br/>Dependencies and scripts"]
+R["MarkdownPreview.tsx<br/>Markdown rendering component"] --> S["ReactMarkdown + GFM"]
+T["application-options.ts<br/>Constants for UI options"] --> U["Generation settings"]
 ```
 
 **Diagram sources**
@@ -77,18 +82,20 @@ P["vite.config.ts<br/>Aliases and test setup"] --> Q["package.json<br/>Dependenc
 - [ProtectedRoute.tsx:1-44](file://frontend/src/routes/ProtectedRoute.tsx#L1-L44)
 - [AppShell.tsx:1-89](file://frontend/src/routes/AppShell.tsx#L1-L89)
 - [ApplicationsDashboardPage.tsx:1-264](file://frontend/src/routes/ApplicationsDashboardPage.tsx#L1-L264)
-- [ApplicationDetailPage.tsx:1-1101](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L1101)
+- [ApplicationDetailPage.tsx:1-1289](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L1289)
 - [ExtensionPage.tsx:1-200](file://frontend/src/routes/ExtensionPage.tsx#L1-L200)
 - [ProfilePage.tsx:1-264](file://frontend/src/routes/ProfilePage.tsx#L1-L264)
 - [LoginPage.tsx:1-111](file://frontend/src/routes/LoginPage.tsx#L1-L111)
+- [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
 - [button.tsx:1-23](file://frontend/src/components/ui/button.tsx#L1-L23)
 - [card.tsx](file://frontend/src/components/ui/card.tsx)
 - [input.tsx](file://frontend/src/components/ui/input.tsx)
 - [label.tsx](file://frontend/src/components/ui/label.tsx)
-- [api.ts:1-489](file://frontend/src/lib/api.ts#L1-L489)
+- [api.ts:1-495](file://frontend/src/lib/api.ts#L1-L495)
 - [supabase.ts:1-26](file://frontend/src/lib/supabase.ts#L1-L26)
 - [env.ts](file://frontend/src/lib/env.ts)
 - [utils.ts](file://frontend/src/lib/utils.ts)
+- [application-options.ts:1-31](file://frontend/src/lib/application-options.ts#L1-L31)
 - [tailwind.config.ts:1-25](file://frontend/tailwind.config.ts#L1-L25)
 - [vite.config.ts:1-24](file://frontend/vite.config.ts#L1-L24)
 - [package.json:1-38](file://frontend/package.json#L1-L38)
@@ -105,29 +112,33 @@ P["vite.config.ts<br/>Aliases and test setup"] --> Q["package.json<br/>Dependenc
 - ProtectedRoute: Guards protected routes using Supabase auth state.
 - UI primitives: Button, Card, Input, Label provide consistent styling and behavior.
 - Pages: Dashboard, Application Detail, Extension, Profile, Login.
+- **Enhanced ApplicationDetailPage**: Comprehensive resume generation UI with draft preview/editing, section-specific regeneration, and PDF export.
+- **MarkdownPreview**: Dedicated component for rendering markdown content with GitHub Flavored Markdown support.
 
 Key patterns:
 - Centralized API client with bearer token injection via Supabase session.
 - Deferred UI updates using useDeferredValue for search performance.
 - Controlled forms with optimistic UI updates and rollback on errors.
 - Polling for long-running operations (extraction and generation progress).
+- **Enhanced state management**: Complex state handling for resume drafts, edit modes, and regeneration workflows.
 
 **Section sources**
 - [AppShell.tsx:1-89](file://frontend/src/routes/AppShell.tsx#L1-L89)
 - [ProtectedRoute.tsx:1-44](file://frontend/src/routes/ProtectedRoute.tsx#L1-L44)
 - [button.tsx:1-23](file://frontend/src/components/ui/button.tsx#L1-L23)
 - [ApplicationsDashboardPage.tsx:1-264](file://frontend/src/routes/ApplicationsDashboardPage.tsx#L1-L264)
-- [ApplicationDetailPage.tsx:1-1101](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L1101)
+- [ApplicationDetailPage.tsx:1-1289](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L1289)
 - [ExtensionPage.tsx:1-200](file://frontend/src/routes/ExtensionPage.tsx#L1-L200)
 - [ProfilePage.tsx:1-264](file://frontend/src/routes/ProfilePage.tsx#L1-L264)
-- [api.ts:177-238](file://frontend/src/lib/api.ts#L177-L238)
+- [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
+- [api.ts:414-495](file://frontend/src/lib/api.ts#L414-L495)
 
 ## Architecture Overview
 The frontend follows a layered architecture:
-- Presentation layer: React components and pages
+- Presentation layer: React components and pages with enhanced resume generation capabilities
 - Routing layer: React Router DOM with nested routes and guards
 - State layer: React hooks for local component state; Supabase for auth session
-- Data layer: API module wraps authenticated requests to the backend
+- Data layer: Enhanced API module with comprehensive resume generation endpoints
 - Infrastructure: Tailwind CSS for styling, Vite for build tooling
 
 ```mermaid
@@ -135,6 +146,7 @@ graph TB
 subgraph "Presentation"
 R["Routes and Pages"]
 U["UI Components"]
+MP["MarkdownPreview Component"]
 end
 subgraph "Routing"
 RR["React Router DOM"]
@@ -143,7 +155,7 @@ subgraph "State"
 SR["Supabase Auth"]
 end
 subgraph "Data"
-AC["Authenticated Client (api.ts)"]
+AC["Enhanced API Client (api.ts)"]
 BE["Backend API"]
 end
 subgraph "Infrastructure"
@@ -152,6 +164,7 @@ VT["Vite Build"]
 end
 R --> RR
 U --> TW
+MP --> R
 RR --> SR
 R --> AC
 AC --> BE
@@ -162,7 +175,8 @@ VT --> R
 **Diagram sources**
 - [App.tsx:1-36](file://frontend/src/App.tsx#L1-L36)
 - [ProtectedRoute.tsx:1-44](file://frontend/src/routes/ProtectedRoute.tsx#L1-L44)
-- [api.ts:177-238](file://frontend/src/lib/api.ts#L177-L238)
+- [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
+- [api.ts:414-495](file://frontend/src/lib/api.ts#L414-L495)
 - [supabase.ts:1-26](file://frontend/src/lib/supabase.ts#L1-L26)
 - [tailwind.config.ts:1-25](file://frontend/tailwind.config.ts#L1-L25)
 - [vite.config.ts:1-24](file://frontend/vite.config.ts#L1-L24)
@@ -260,7 +274,9 @@ Error --> |Yes| Continue["Show updated state"]
 ### Application Detail
 - Loads application detail and progress, polls for extraction/generation updates.
 - Handles manual entry, retry extraction, duplicate review, and generation controls.
-- Manages resume draft editing and PDF export.
+- **Enhanced**: Manages comprehensive resume draft editing with preview/edit modes, section-specific regeneration, and PDF export.
+
+**Updated** Enhanced with comprehensive resume generation UI, draft preview/editing capabilities, section-specific regeneration controls, and PDF export functionality.
 
 ```mermaid
 sequenceDiagram
@@ -283,16 +299,66 @@ Page->>API : "triggerGeneration/settings"
 API->>BE : "POST /api/applications/ : id/generate"
 BE-->>API : "Updated ApplicationDetail"
 API-->>Page : "Refresh detail and draft"
+Page->>API : "fetchDraft(id)"
+API->>BE : "GET /api/applications/ : id/draft"
+BE-->>API : "ResumeDraft"
+API-->>Page : "Set draft state"
+Page->>API : "saveDraft(id, content)"
+API->>BE : "PUT /api/applications/ : id/draft"
+BE-->>API : "Updated ResumeDraft"
+API-->>Page : "Refresh draft"
+Page->>API : "exportPdf(id)"
+API->>BE : "GET /api/applications/ : id/export-pdf"
+BE-->>API : "Blob"
+API-->>Page : "Download PDF"
 ```
 
 **Diagram sources**
 - [ApplicationDetailPage.tsx:88-152](file://frontend/src/routes/ApplicationDetailPage.tsx#L88-L152)
-- [api.ts:255-300](file://frontend/src/lib/api.ts#L255-L300)
-- [api.ts:414-427](file://frontend/src/lib/api.ts#L414-L427)
+- [api.ts:414-495](file://frontend/src/lib/api.ts#L414-L495)
+- [api.ts:429-441](file://frontend/src/lib/api.ts#L429-L441)
+- [api.ts:474-494](file://frontend/src/lib/api.ts#L474-L494)
 
 **Section sources**
-- [ApplicationDetailPage.tsx:1-1101](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L1101)
-- [api.ts:414-488](file://frontend/src/lib/api.ts#L414-L488)
+- [ApplicationDetailPage.tsx:1-1289](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L1289)
+- [api.ts:414-495](file://frontend/src/lib/api.ts#L414-L495)
+
+### Resume Generation and Draft Management
+- **Draft Preview Mode**: Renders markdown content using the new MarkdownPreview component with GitHub Flavored Markdown support.
+- **Edit Mode**: Allows direct markdown editing with syntax highlighting and real-time preview.
+- **Section-specific Regeneration**: Dropdown selection for specific resume sections (summary, professional experience, education, skills, certifications, projects) with instruction-based regeneration.
+- **Full Regeneration**: Complete resume regeneration with current settings.
+- **PDF Export**: Direct PDF generation and download with automatic detail refresh.
+
+```mermaid
+flowchart TD
+Draft["Resume Draft"] --> Preview["Preview Mode"]
+Draft --> Edit["Edit Mode"]
+Preview --> Markdown["MarkdownPreview Component"]
+Edit --> DirectEdit["Direct Markdown Editing"]
+Markdown --> RegenControls["Regeneration Controls"]
+DirectEdit --> SaveDraft["Save Draft"]
+RegenControls --> SectionSelect["Section Selection"]
+RegenControls --> FullRegen["Full Regeneration"]
+SectionSelect --> SectionRegen["Section Regeneration"]
+FullRegen --> RegenResult["Updated Draft"]
+SectionRegen --> RegenResult
+SaveDraft --> RegenResult
+RegenResult --> Export["PDF Export"]
+Export --> Download["Download PDF"]
+```
+
+**Diagram sources**
+- [ApplicationDetailPage.tsx:1149-1283](file://frontend/src/routes/ApplicationDetailPage.tsx#L1149-L1283)
+- [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
+- [api.ts:429-441](file://frontend/src/lib/api.ts#L429-L441)
+- [api.ts:443-466](file://frontend/src/lib/api.ts#L443-L466)
+- [api.ts:474-494](file://frontend/src/lib/api.ts#L474-L494)
+
+**Section sources**
+- [ApplicationDetailPage.tsx:1149-1283](file://frontend/src/routes/ApplicationDetailPage.tsx#L1149-L1283)
+- [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
+- [api.ts:429-494](file://frontend/src/lib/api.ts#L429-L494)
 
 ### Chrome Extension Integration
 - ExtensionPage manages connection lifecycle: issue token, revoke token, and listen for bridge messages.
@@ -351,6 +417,7 @@ Web->>Ext : "postMessage REVOKE_EXTENSION_TOKEN {appUrl}"
 - Tailwind CSS with custom theme tokens for colors, fonts, and shadows.
 - Utility-first classes applied directly in components for rapid iteration.
 - Responsive breakpoints and spacing scales ensure consistent layouts across devices.
+- **Enhanced**: Custom prose styling for markdown preview with controlled typography and spacing.
 
 **Section sources**
 - [tailwind.config.ts:1-25](file://frontend/tailwind.config.ts#L1-L25)
@@ -358,12 +425,14 @@ Web->>Ext : "postMessage REVOKE_EXTENSION_TOKEN {appUrl}"
 - [card.tsx](file://frontend/src/components/ui/card.tsx)
 - [input.tsx](file://frontend/src/components/ui/input.tsx)
 - [label.tsx](file://frontend/src/components/ui/label.tsx)
+- [MarkdownPreview.tsx:9-14](file://frontend/src/components/MarkdownPreview.tsx#L9-L14)
 
 ## Dependency Analysis
 - React 19 and React Router DOM power the UI and routing.
 - @supabase/supabase-js handles authentication and session persistence.
 - Tailwind CSS provides styling; Vite builds the app and aliases paths.
 - The API module centralizes authenticated requests and error handling.
+- **Enhanced**: New dependencies for markdown rendering and processing.
 
 ```mermaid
 graph LR
@@ -375,6 +444,8 @@ API --> Backend["Backend API"]
 Tailwind["tailwindcss@^3.4.17"] --> Styles["tailwind.config.ts"]
 Vite["vite@^6.2.4"] --> Build["vite.config.ts"]
 Types["typescript@^5.8.3"] --> TSConfig["tsconfig.app.json"]
+Markdown["react-markdown@^9.0.1"] --> MP["MarkdownPreview.tsx"]
+GFM["remark-gfm@^4.0.0"] --> MP
 ```
 
 **Diagram sources**
@@ -383,6 +454,7 @@ Types["typescript@^5.8.3"] --> TSConfig["tsconfig.app.json"]
 - [supabase.ts:1-2](file://frontend/src/lib/supabase.ts#L1-L2)
 - [tailwind.config.ts:1-25](file://frontend/tailwind.config.ts#L1-L25)
 - [vite.config.ts:1-24](file://frontend/vite.config.ts#L1-L24)
+- [MarkdownPreview.tsx:1-2](file://frontend/src/components/MarkdownPreview.tsx#L1-L2)
 
 **Section sources**
 - [package.json:1-38](file://frontend/package.json#L1-L38)
@@ -394,6 +466,7 @@ Types["typescript@^5.8.3"] --> TSConfig["tsconfig.app.json"]
 - Optimistic UI updates followed by server sync improve perceived responsiveness.
 - Polling intervals are conservative (every 2 seconds) to balance UX and resource usage.
 - Tailwind JIT compilation and minimal CSS reduce bundle size.
+- **Enhanced**: Debounced autosave for notes and efficient markdown rendering with memoization.
 
 ## Troubleshooting Guide
 Common issues and resolutions:
@@ -401,14 +474,16 @@ Common issues and resolutions:
 - API request errors: Inspect network tab for 4xx/5xx responses; the API module surfaces detailed error messages from the backend.
 - Extension bridge not detected: Confirm manifest permissions, service worker registration, and popup messaging setup.
 - Styling inconsistencies: Ensure Tailwind content paths include all component files and rebuild the project.
+- **Enhanced**: Markdown rendering issues: Verify react-markdown and remark-gfm dependencies are properly installed and configured.
 
 **Section sources**
 - [api.ts:190-214](file://frontend/src/lib/api.ts#L190-L214)
 - [ExtensionPage.tsx:43-72](file://frontend/src/routes/ExtensionPage.tsx#L43-L72)
 - [tailwind.config.ts:4-5](file://frontend/tailwind.config.ts#L4-L5)
+- [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
 
 ## Conclusion
-The frontend application is a modular, authenticated React 19 app with clear separation of concerns. It leverages Supabase for authentication, React Router for navigation, and a centralized API client for backend integration. The UI is built with reusable components and Tailwind CSS, ensuring a consistent and responsive design. The Chrome extension integration demonstrates secure, scoped communication for job capture. Together, these patterns support maintainability, scalability, and a robust user experience.
+The frontend application is a modular, authenticated React 19 app with clear separation of concerns. It leverages Supabase for authentication, React Router for navigation, and a centralized API client for backend integration. The UI is built with reusable components and Tailwind CSS, ensuring a consistent and responsive design. The Chrome extension integration demonstrates secure, scoped communication for job capture. **The enhanced ApplicationDetailPage now provides comprehensive resume generation capabilities with draft preview/editing, section-specific regeneration controls, and PDF export functionality, making it a complete solution for AI-powered resume creation.**
 
 ## Appendices
 
@@ -430,7 +505,6 @@ class ApplicationsDashboardPage {
 +applications
 +search
 +statusFilter
-+sortMode
 +handleCreateApplication()
 +handleAppliedToggle()
 }
@@ -438,8 +512,13 @@ class ApplicationDetailPage {
 +detail
 +progress
 +draft
++editMode
++editContent
 +handleSaveJobInfo()
 +handleTriggerGeneration()
++handleFullRegeneration()
++handleSectionRegeneration()
++handleSaveDraft()
 +handleExportPdf()
 }
 class ExtensionPage {
@@ -458,6 +537,11 @@ class LoginPage {
 +password
 +handleSubmit()
 }
+class MarkdownPreview {
++content : string
++className : string
++render()
+}
 class Button
 class Card
 class Input
@@ -473,6 +557,7 @@ ApplicationsDashboardPage --> Card : "uses"
 ApplicationDetailPage --> Button : "uses"
 ApplicationDetailPage --> Card : "uses"
 ApplicationDetailPage --> Input : "uses"
+ApplicationDetailPage --> MarkdownPreview : "uses"
 ExtensionPage --> Button : "uses"
 ExtensionPage --> Card : "uses"
 ProfilePage --> Button : "uses"
@@ -488,10 +573,11 @@ LoginPage --> Label : "uses"
 - [ProtectedRoute.tsx:6-43](file://frontend/src/routes/ProtectedRoute.tsx#L6-L43)
 - [AppShell.tsx:8-88](file://frontend/src/routes/AppShell.tsx#L8-L88)
 - [ApplicationsDashboardPage.tsx:16-263](file://frontend/src/routes/ApplicationsDashboardPage.tsx#L16-L263)
-- [ApplicationDetailPage.tsx:38-1101](file://frontend/src/routes/ApplicationDetailPage.tsx#L38-L1101)
+- [ApplicationDetailPage.tsx:38-1289](file://frontend/src/routes/ApplicationDetailPage.tsx#L38-L1289)
 - [ExtensionPage.tsx:26-199](file://frontend/src/routes/ExtensionPage.tsx#L26-L199)
 - [ProfilePage.tsx:17-263](file://frontend/src/routes/ProfilePage.tsx#L17-L263)
 - [LoginPage.tsx:10-110](file://frontend/src/routes/LoginPage.tsx#L10-L110)
+- [MarkdownPreview.tsx:4-15](file://frontend/src/components/MarkdownPreview.tsx#L4-L15)
 - [button.tsx:8-22](file://frontend/src/components/ui/button.tsx#L8-L22)
 - [card.tsx](file://frontend/src/components/ui/card.tsx)
 - [input.tsx](file://frontend/src/components/ui/input.tsx)
@@ -502,18 +588,35 @@ LoginPage --> Label : "uses"
 - Keyboard navigable buttons and form controls.
 - Sufficient color contrast and readable typography scales.
 - Responsive grids and flexible layouts adapt to mobile and desktop.
+- **Enhanced**: Proper markdown accessibility with semantic HTML rendering and screen reader support.
 
 **Section sources**
 - [button.tsx:1-23](file://frontend/src/components/ui/button.tsx#L1-L23)
 - [input.tsx](file://frontend/src/components/ui/input.tsx)
 - [label.tsx](file://frontend/src/components/ui/label.tsx)
 - [tailwind.config.ts:6-21](file://frontend/tailwind.config.ts#L6-L21)
+- [MarkdownPreview.tsx:9-14](file://frontend/src/components/MarkdownPreview.tsx#L9-L14)
 
 ### Cross-Browser Compatibility
 - Modern JavaScript features supported by Vite and React 19.
 - Tailwind utilities provide consistent rendering across browsers.
 - PostCSS and autoprefixer ensure vendor prefixes where needed.
+- **Enhanced**: React Markdown compatibility across modern browsers with fallbacks for older versions.
 
 **Section sources**
 - [package.json:29-35](file://frontend/package.json#L29-L35)
 - [tailwind.config.ts:1-25](file://frontend/tailwind.config.ts#L1-L25)
+
+### Enhanced API Endpoints
+The API module now includes comprehensive resume generation endpoints:
+
+- **triggerGeneration**: Start resume generation with base resume, target length, aggressiveness, and additional instructions
+- **fetchDraft**: Retrieve current resume draft content
+- **saveDraft**: Persist draft changes with markdown content
+- **triggerFullRegeneration**: Complete resume regeneration with current settings
+- **triggerSectionRegeneration**: Section-specific regeneration with instruction-based customization
+- **cancelGeneration**: Cancel ongoing generation processes
+- **exportPdf**: Generate and download PDF resume with automatic detail refresh
+
+**Section sources**
+- [api.ts:414-495](file://frontend/src/lib/api.ts#L414-L495)

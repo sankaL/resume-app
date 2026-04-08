@@ -15,7 +15,17 @@
 - [internal_worker.py](file://backend/app/api/internal_worker.py)
 - [main.py](file://backend/app/main.py)
 - [test_worker.py](file://agents/tests/test_worker.py)
+- [backend/AGENTS.md](file://backend/AGENTS.md)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Enhanced documentation of comprehensive resume generation system with detailed section-based generation capabilities
+- Added comprehensive coverage of hallucination detection mechanisms and ATS-safety compliance
+- Expanded validation service documentation with structured hallucination finding models
+- Updated worker orchestration capabilities documentation including regeneration workflows
+- Added detailed coverage of generation settings, aggressiveness levels, and target length guidance
+- Enhanced progress tracking and callback system documentation
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -77,25 +87,25 @@ CFG --> W
 ```
 
 **Diagram sources**
-- [worker.py:1-1186](file://agents/worker.py#L1-L1186)
+- [worker.py:1-1299](file://agents/worker.py#L1-L1299)
 - [generation.py:1-351](file://agents/generation.py#L1-L351)
 - [validation.py:1-292](file://agents/validation.py#L1-L292)
 - [assembly.py:1-63](file://agents/assembly.py#L1-L63)
 - [pyproject.toml:1-26](file://agents/pyproject.toml#L1-L26)
 - [Dockerfile:1-14](file://agents/Dockerfile#L1-L14)
-- [workflow-contract.json:1-112](file://shared/workflow-contract.json#L1-L112)
+- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
 - [workflow_contract.py:1-40](file://backend/app/core/workflow_contract.py#L1-L40)
-- [workflow.py:1-31](file://backend/app/services/workflow.py#L1-L31)
+- [workflow.py:1-32](file://backend/app/services/workflow.py#L1-L32)
 - [internal_worker.py:1-71](file://backend/app/api/internal_worker.py#L1-L71)
 - [main.py:1-36](file://backend/app/main.py#L1-L36)
 
 **Section sources**
-- [worker.py:1-1186](file://agents/worker.py#L1-L1186)
+- [worker.py:1-1299](file://agents/worker.py#L1-L1299)
 - [pyproject.toml:1-26](file://agents/pyproject.toml#L1-L26)
 - [Dockerfile:1-14](file://agents/Dockerfile#L1-L14)
-- [workflow-contract.json:1-112](file://shared/workflow-contract.json#L1-L112)
+- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
 - [workflow_contract.py:1-40](file://backend/app/core/workflow_contract.py#L1-L40)
-- [workflow.py:1-31](file://backend/app/services/workflow.py#L1-L31)
+- [workflow.py:1-32](file://backend/app/services/workflow.py#L1-L32)
 - [internal_worker.py:1-71](file://backend/app/api/internal_worker.py#L1-L71)
 - [main.py:1-36](file://backend/app/main.py#L1-L36)
 
@@ -109,11 +119,11 @@ CFG --> W
 - Workflow contract: shared contract defining internal states, workflow kinds, failure reasons, and status mapping rules.
 
 **Section sources**
-- [worker.py:526-880](file://agents/worker.py#L526-L880)
+- [worker.py:598-974](file://agents/worker.py#L598-L974)
 - [generation.py:159-224](file://agents/generation.py#L159-L224)
-- [validation.py:231-291](file://agents/validation.py#L231-L291)
-- [assembly.py:12-62](file://agents/assembly.py#L12-L62)
-- [workflow-contract.json:1-112](file://shared/workflow-contract.json#L1-L112)
+- [validation.py:231-292](file://agents/validation.py#L231-L292)
+- [assembly.py:12-63](file://agents/assembly.py#L12-L63)
+- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
 
 ## Architecture Overview
 The system integrates ARQ workers with Redis queues, LangChain ChatOpenAI via OpenRouter, Playwright for browser automation, and backend callbacks for progress and completion. The backend derives visible statuses from internal states using the shared workflow contract.
@@ -139,9 +149,9 @@ Backend-->>Client : "Poll progress/status"
 ```
 
 **Diagram sources**
-- [worker.py:526-880](file://agents/worker.py#L526-L880)
-- [internal_worker.py:19-70](file://backend/app/api/internal_worker.py#L19-L70)
-- [workflow-contract.json:1-112](file://shared/workflow-contract.json#L1-L112)
+- [worker.py:598-974](file://agents/worker.py#L598-L974)
+- [internal_worker.py:19-71](file://backend/app/api/internal_worker.py#L19-L71)
+- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
 
 ## Detailed Component Analysis
 
@@ -180,13 +190,13 @@ Worker->>CB : "post(succeeded, extracted)"
 ```
 
 **Diagram sources**
-- [worker.py:526-666](file://agents/worker.py#L526-L666)
-- [worker.py:307-370](file://agents/worker.py#L307-L370)
+- [worker.py:598-739](file://agents/worker.py#L598-L739)
+- [worker.py:444-496](file://agents/worker.py#L444-L496)
 
 **Section sources**
-- [worker.py:372-424](file://agents/worker.py#L372-L424)
-- [worker.py:526-666](file://agents/worker.py#L526-L666)
-- [worker.py:307-370](file://agents/worker.py#L307-L370)
+- [worker.py:444-496](file://agents/worker.py#L444-L496)
+- [worker.py:598-739](file://agents/worker.py#L598-L739)
+- [worker.py:444-496](file://agents/worker.py#L444-L496)
 
 ### Generation Agent
 The generation agent performs section-based generation with:
@@ -225,41 +235,41 @@ end
 ```
 
 **Diagram sources**
-- [worker.py:682-880](file://agents/worker.py#L682-L880)
+- [worker.py:754-974](file://agents/worker.py#L754-L974)
 - [generation.py:159-224](file://agents/generation.py#L159-L224)
-- [validation.py:231-291](file://agents/validation.py#L231-L291)
-- [assembly.py:12-62](file://agents/assembly.py#L12-L62)
+- [validation.py:231-292](file://agents/validation.py#L231-L292)
+- [assembly.py:12-63](file://agents/assembly.py#L12-L63)
 
 **Section sources**
-- [worker.py:682-880](file://agents/worker.py#L682-L880)
+- [worker.py:754-974](file://agents/worker.py#L754-L974)
 - [generation.py:159-224](file://agents/generation.py#L159-L224)
-- [validation.py:231-291](file://agents/validation.py#L231-L291)
+- [validation.py:231-292](file://agents/validation.py#L231-L292)
 
 ### Validation Agent
 The validation agent enforces:
-- Hallucination detection across sections
+- Hallucination detection across sections using structured LLM output
 - Required sections presence
 - Correct ordering
 - ATS safety (no tables/images; auto-correct minor formatting)
 
 ```mermaid
 flowchart TD
-Start(["validate_resume"]) --> Hallu["LLM hallucination check"]
+Start(["validate_resume"]) --> Hallu["LLM hallucination check<br/>Structured output"]
 Hallu --> Req["Required sections check"]
 Req --> Order["Section order check"]
-Order --> ATSSafe["ATS safety rules"]
+Order --> ATSSafe["ATS safety rules<br/>Auto-corrections"]
 ATSSafe --> Merge["Aggregate errors and auto_corrections"]
 Merge --> End(["Return {valid, errors, auto_corrections}"])
 ```
 
 **Diagram sources**
-- [validation.py:231-291](file://agents/validation.py#L231-L291)
+- [validation.py:231-292](file://agents/validation.py#L231-L292)
 
 **Section sources**
-- [validation.py:48-115](file://agents/validation.py#L48-L115)
-- [validation.py:118-175](file://agents/validation.py#L118-L175)
-- [validation.py:178-223](file://agents/validation.py#L178-L223)
-- [validation.py:231-291](file://agents/validation.py#L231-L291)
+- [validation.py:48-116](file://agents/validation.py#L48-L116)
+- [validation.py:118-176](file://agents/validation.py#L118-L176)
+- [validation.py:178-224](file://agents/validation.py#L178-L224)
+- [validation.py:231-292](file://agents/validation.py#L231-L292)
 
 ### Assembly Service
 Assembles final Markdown from personal info header and ordered generated sections, ensuring proper formatting and section separation.
@@ -274,10 +284,10 @@ J --> R["Return final Markdown"]
 ```
 
 **Diagram sources**
-- [assembly.py:12-62](file://agents/assembly.py#L12-L62)
+- [assembly.py:12-63](file://agents/assembly.py#L12-L63)
 
 **Section sources**
-- [assembly.py:12-62](file://agents/assembly.py#L12-L62)
+- [assembly.py:12-63](file://agents/assembly.py#L12-L63)
 
 ### Progress Tracking and Callbacks
 Progress is stored in Redis under a deterministic key and periodically updated during agent runs. Backend callbacks notify the system of state transitions and completion.
@@ -307,14 +317,14 @@ BackendCallbackClient -->|"HTTP POST"| BackendCallbackClient : "extraction/gener
 ```
 
 **Diagram sources**
-- [worker.py:272-305](file://agents/worker.py#L272-L305)
-- [worker.py:73-83](file://agents/worker.py#L73-L83)
-- [worker.py:290-305](file://agents/worker.py#L290-L305)
+- [worker.py:344-360](file://agents/worker.py#L344-L360)
+- [worker.py:75-85](file://agents/worker.py#L75-L85)
+- [worker.py:352-360](file://agents/worker.py#L352-L360)
 
 **Section sources**
-- [worker.py:272-305](file://agents/worker.py#L272-L305)
-- [worker.py:73-83](file://agents/worker.py#L73-L83)
-- [worker.py:290-305](file://agents/worker.py#L290-L305)
+- [worker.py:344-360](file://agents/worker.py#L344-L360)
+- [worker.py:75-85](file://agents/worker.py#L75-L85)
+- [worker.py:352-360](file://agents/worker.py#L352-L360)
 
 ### LangChain and OpenRouter Integration
 - ChatOpenAI is configured with OpenRouter base URL and API key.
@@ -322,9 +332,9 @@ BackendCallbackClient -->|"HTTP POST"| BackendCallbackClient : "extraction/gener
 - Fallback model is attempted automatically when the primary model fails.
 
 **Section sources**
-- [worker.py:335-340](file://agents/worker.py#L335-L340)
-- [generation.py:133-139](file://agents/generation.py#L133-L139)
-- [validation.py:89-95](file://agents/validation.py#L89-L95)
+- [worker.py:379-442](file://agents/worker.py#L379-L442)
+- [generation.py:117-151](file://agents/generation.py#L117-L151)
+- [validation.py:87-115](file://agents/validation.py#L87-L115)
 
 ### Workflow Contract Integration
 The shared workflow-contract.json defines internal states, workflow kinds, failure reasons, and mapping rules. The backend derives visible statuses from internal states and failure reasons.
@@ -337,14 +347,53 @@ Map --> Status["Visible Statuses"]
 ```
 
 **Diagram sources**
-- [workflow-contract.json:1-112](file://shared/workflow-contract.json#L1-L112)
+- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
 - [workflow_contract.py:32-39](file://backend/app/core/workflow_contract.py#L32-L39)
-- [workflow.py:11-30](file://backend/app/services/workflow.py#L11-L30)
+- [workflow.py:11-32](file://backend/app/services/workflow.py#L11-L32)
 
 **Section sources**
-- [workflow-contract.json:1-112](file://shared/workflow-contract.json#L1-L112)
+- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
 - [workflow_contract.py:32-39](file://backend/app/core/workflow_contract.py#L32-L39)
-- [workflow.py:11-30](file://backend/app/services/workflow.py#L11-L30)
+- [workflow.py:11-32](file://backend/app/services/workflow.py#L11-L32)
+
+### Generation Settings and Section Management
+The generation system supports advanced configuration including:
+- Aggressiveness levels (low, medium, high) for tailoring
+- Target length guidance (1_page, 2_page) for resume sizing
+- Section preferences with enabled status and ordering
+- Additional instructions for custom generation requirements
+
+```mermaid
+flowchart TD
+Settings["Generation Settings"] --> Agg["Aggressiveness<br/>low/medium/high"]
+Settings --> Length["Target Length<br/>1_page/2_page"]
+Settings --> Instructions["Additional Instructions"]
+Settings --> Sections["Section Preferences<br/>Enabled + Order"]
+Agg --> Prompt["Section Prompt"]
+Length --> Prompt
+Instructions --> Prompt
+Sections --> Prompt
+Prompt --> LLM["OpenRouter LLM Call"]
+LLM --> Section["Generated Section"]
+```
+
+**Diagram sources**
+- [generation.py:159-224](file://agents/generation.py#L159-L224)
+- [generation.py:67-114](file://agents/generation.py#L67-L114)
+
+**Section sources**
+- [generation.py:159-224](file://agents/generation.py#L159-L224)
+- [generation.py:67-114](file://agents/generation.py#L67-L114)
+
+### Regeneration Capabilities
+The system supports both full regeneration and single-section regeneration:
+- Full regeneration follows the same generation pipeline
+- Single-section regeneration allows targeted updates with user instructions
+- Automatic validation after regeneration with error recovery
+
+**Section sources**
+- [worker.py:981-1292](file://agents/worker.py#L981-L1292)
+- [generation.py:280-351](file://agents/generation.py#L280-L351)
 
 ## Dependency Analysis
 The agents package depends on ARQ for task queueing, LangChain OpenAI for LLM calls, Playwright for browser automation, and Redis for progress storage. The backend consumes agent callbacks and derives application statuses from the shared workflow contract.
@@ -386,8 +435,6 @@ FAST --> PG
 - Headless browser automation minimizes resource usage.
 - Progress updates keep UI responsive and enable user feedback.
 
-[No sources needed since this section provides general guidance]
-
 ## Troubleshooting Guide
 Common issues and remedies:
 - Extraction timeouts: Retry with manual entry; verify network and provider rate limits.
@@ -397,15 +444,13 @@ Common issues and remedies:
 - Model failures: Primary/fallback model retry is automatic; confirm API keys and base URLs.
 
 **Section sources**
-- [worker.py:645-666](file://agents/worker.py#L645-L666)
-- [worker.py:580-592](file://agents/worker.py#L580-L592)
-- [validation.py:255-291](file://agents/validation.py#L255-L291)
+- [worker.py:717-739](file://agents/worker.py#L717-L739)
+- [worker.py:652-665](file://agents/worker.py#L652-L665)
+- [validation.py:255-292](file://agents/validation.py#L255-L292)
 - [backend/AGENTS.md:38-44](file://backend/AGENTS.md#L38-L44)
 
 ## Conclusion
-The ARQ-based agent system provides a robust, asynchronous pipeline for extracting job postings, generating tailored resumes, validating ATS compliance, and assembling final outputs. It integrates tightly with Redis for progress tracking, OpenRouter for reliable LLM calls, and the backend’s workflow contract to maintain a clear state machine and visible status mapping. Built-in retry strategies, timeouts, and structured validation ensure resilient operation and predictable user experiences.
-
-[No sources needed since this section summarizes without analyzing specific files]
+The ARQ-based agent system provides a robust, asynchronous pipeline for extracting job postings, generating tailored resumes, validating ATS compliance, and assembling final outputs. It integrates tightly with Redis for progress tracking, OpenRouter for reliable LLM calls, and the backend's workflow contract to maintain a clear state machine and visible status mapping. Built-in retry strategies, timeouts, and structured validation ensure resilient operation and predictable user experiences.
 
 ## Appendices
 
@@ -423,10 +468,10 @@ The ARQ-based agent system provides a robust, asynchronous pipeline for extracti
   - Enqueue regeneration: include either full params or section_name + instructions + current_draft_content
 
 **Section sources**
-- [worker.py:54-71](file://agents/worker.py#L54-L71)
-- [worker.py:526-666](file://agents/worker.py#L526-L666)
-- [worker.py:682-880](file://agents/worker.py#L682-L880)
-- [worker.py:888-1180](file://agents/worker.py#L888-L1180)
+- [worker.py:56-73](file://agents/worker.py#L56-L73)
+- [worker.py:598-739](file://agents/worker.py#L598-L739)
+- [worker.py:754-974](file://agents/worker.py#L754-L974)
+- [worker.py:981-1292](file://agents/worker.py#L981-L1292)
 
 ### Monitoring Approaches
 - Poll progress: use the polling schema defined in the workflow contract to fetch JobProgress from Redis.
@@ -434,9 +479,9 @@ The ARQ-based agent system provides a robust, asynchronous pipeline for extracti
 - Callback verification: ensure X-Worker-Secret is present for internal worker endpoints.
 
 **Section sources**
-- [workflow-contract.json:89-111](file://shared/workflow-contract.json#L89-L111)
-- [workflow.py:11-30](file://backend/app/services/workflow.py#L11-L30)
-- [internal_worker.py:19-70](file://backend/app/api/internal_worker.py#L19-L70)
+- [workflow-contract.json:91-114](file://shared/workflow-contract.json#L91-L114)
+- [workflow.py:11-32](file://backend/app/services/workflow.py#L11-L32)
+- [internal_worker.py:19-71](file://backend/app/api/internal_worker.py#L19-L71)
 
 ### Error Recovery and Retry Strategies
 - Extraction agent: primary model followed by fallback model; blocked pages trigger manual entry.
@@ -444,7 +489,19 @@ The ARQ-based agent system provides a robust, asynchronous pipeline for extracti
 - Backend callbacks: on failure, set terminal error code and notify the backend; UI can guide user actions.
 
 **Section sources**
-- [worker.py:320-328](file://agents/worker.py#L320-L328)
+- [worker.py:379-442](file://agents/worker.py#L379-L442)
 - [generation.py:117-151](file://agents/generation.py#L117-L151)
 - [validation.py:87-115](file://agents/validation.py#L87-L115)
-- [worker.py:475-510](file://agents/worker.py#L475-L510)
+- [worker.py:547-582](file://agents/worker.py#L547-L582)
+
+### Hallucination Detection and Validation Rules
+The validation system implements comprehensive hallucination detection:
+- LLM-based hallucination checking with structured output
+- Detection of invented employers, titles, dates, credentials, and institutions
+- Cross-section consistency validation
+- ATS safety compliance with auto-correction capabilities
+
+**Section sources**
+- [validation.py:48-116](file://agents/validation.py#L48-L116)
+- [validation.py:231-292](file://agents/validation.py#L231-L292)
+- [AGENTS.md:23-31](file://agents/AGENTS.md#L23-L31)

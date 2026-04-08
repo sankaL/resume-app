@@ -37,7 +37,7 @@ Keep this file focused on durable backend rules for the AI Resume Builder. Do no
 
 ## Async and Timeout Contract
 - Extraction must enforce a `30s` timeout.
-- Full resume generation must enforce a `90s` timeout.
+- Full resume generation must enforce a `90s` idle timeout with a `300s` maximum wall-clock window.
 - Single-section regeneration must enforce a `45s` timeout.
 - PDF export must enforce a `20s` timeout.
 - Background work must use bounded retries, explicit cancellation behavior, and clear terminal failure handling.

@@ -10,8 +10,16 @@
 - [application_manager.py](file://backend/app/services/application_manager.py)
 - [jobs.py](file://backend/app/services/jobs.py)
 - [workflow-contract.json](file://shared/workflow-contract.json)
-- [AGENTS.md](file://AGENTS.md)
+- [AGENTS.md](file://agents/AGENTS.md)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Enhanced documentation to cover expanded generation agent capabilities
+- Added detailed coverage of aggressiveness levels (low, medium, high) and target page lengths (1_page, 2_page)
+- Updated section-based generation workflow with comprehensive error handling
+- Expanded structured output validation and fallback model support documentation
+- Added detailed progress reporting and timeout management information
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -27,7 +35,7 @@
 ## Introduction
 This document explains the generation agent responsible for AI-powered, section-based resume creation. It covers:
 - How each enabled resume section is generated individually with grounded prompts
-- Prompt engineering strategies and structured output handling
+- Prompt engineering strategies and structured output handling with aggressiveness and target length guidance
 - Section preferences and ordering
 - Integration with LangChain for reliable, structured LLM responses
 - Regeneration capabilities for individual sections and full drafts
@@ -35,6 +43,7 @@ This document explains the generation agent responsible for AI-powered, section-
 - Model configuration, fallback handling, and progress reporting
 - Validation to prevent hallucinations and ensure ATS-safe output
 - Context-aware generation using base resume content and job posting details
+- Comprehensive error handling and timeout management
 
 ## Project Structure
 The generation agent spans three layers:
@@ -83,14 +92,19 @@ SVC --> WFC
   - Builds section-specific prompts with aggressiveness and target length guidance
   - Uses LangChain ChatOpenAI with structured output to enforce Markdown and grounding rules
   - Implements fallback model handling for resilience
+  - Supports three aggressiveness levels: low, medium, and high
+  - Supports two target length options: 1_page and 2_page
 - Assembly:
   - Combines personal info header with ordered generated sections into a single Markdown document
 - Validation:
   - Detects hallucinations by comparing generated content to the base resume
   - Enforces required sections, correct order, and ATS-safety rules
+  - Provides auto-corrections for formatting issues
 - Worker orchestration:
   - Manages job lifecycle, progress reporting, and callback handoffs to backend
   - Supports full generation and single-section regeneration
+  - Implements comprehensive timeout management (300s for full generation, 45s for section regeneration)
+  - Handles error recovery and state transitions
 
 **Section sources**
 - [generation.py:159-351](file://agents/generation.py#L159-L351)
@@ -99,7 +113,7 @@ SVC --> WFC
 - [worker.py:682-1236](file://agents/worker.py#L682-L1236)
 
 ## Architecture Overview
-The generation agent follows a deterministic, section-by-section pipeline with validation and assembly.
+The generation agent follows a deterministic, section-by-section pipeline with validation and assembly, enhanced with comprehensive error handling and timeout management.
 
 ```mermaid
 sequenceDiagram
@@ -148,6 +162,7 @@ end
   - Aggressiveness and target length guidance
   - Strict Markdown-only rules and grounding constraints
 - Structured output ensures consistent Markdown with headings and bullet points
+- Comprehensive error handling with fallback models and timeouts
 
 ```mermaid
 flowchart TD
@@ -168,6 +183,25 @@ Loop --> |No| Return(["Return {sections, model_used}"])
 - [generation.py:67-114](file://agents/generation.py#L67-L114)
 - [generation.py:117-152](file://agents/generation.py#L117-L152)
 - [generation.py:159-224](file://agents/generation.py#L159-L224)
+
+### Aggressiveness Levels and Target Page Lengths
+The generation agent supports sophisticated customization through two key parameters:
+
+**Aggressiveness Levels:**
+- **Low**: Minimal change; preserve original voice and structure with light keyword alignment
+- **Medium**: Moderate tailoring; reword and reorder to align with job requirements
+- **High**: Stronger tailoring; significant rewrite while grounded in source content
+
+**Target Page Length Guidance:**
+- **1_page**: Keep content concise – the entire resume should fit on one page
+- **2_page**: Content may be more detailed – the resume can span up to two pages
+
+These parameters are integrated into the system prompt and influence the LLM's output style and content density.
+
+**Section sources**
+- [generation.py:20-36](file://agents/generation.py#L20-L36)
+- [generation.py:88-114](file://agents/generation.py#L88-L114)
+- [generation.py:186-188](file://agents/generation.py#L186-L188)
 
 ### Prompt Engineering Strategies
 - System instructions emphasize:
@@ -340,6 +374,21 @@ end
 - [internal_worker.py:37-53](file://backend/app/api/internal_worker.py#L37-L53)
 - [application_manager.py:603-718](file://backend/app/services/application_manager.py#L603-L718)
 
+### Comprehensive Error Handling and Timeout Management
+The generation agent implements robust error handling and timeout management:
+
+- **Full Generation Timeout**: 300 seconds (5 minutes) maximum processing time
+- **Section Regeneration Timeout**: 45 seconds maximum processing time
+- **Individual LLM Call Timeout**: 30 seconds per call
+- **Fallback Model Support**: Automatic fallback when primary model fails
+- **State Recovery**: Automatic detection and recovery of stuck generation jobs
+- **Terminal Error Codes**: Distinct error codes for different failure scenarios
+
+**Section sources**
+- [worker.py:52-53](file://agents/worker.py#L52-L53)
+- [worker.py:928-950](file://agents/worker.py#L928-L950)
+- [worker.py:1247-1269](file://agents/worker.py#L1247-L1269)
+
 ## Dependency Analysis
 - Orchestration:
   - Worker depends on generation, validation, and assembly modules
@@ -383,8 +432,8 @@ SVC --> WFC["workflow-contract.json"]
   - Prevent long-running tasks from blocking the worker pool
 - ATS safety:
   - Early detection of non-compliant constructs avoids rework
-
-[No sources needed since this section provides general guidance]
+- Aggressiveness and target length optimization:
+  - Allows users to balance content quality and processing speed
 
 ## Troubleshooting Guide
 Common issues and resolutions:
@@ -398,6 +447,10 @@ Common issues and resolutions:
   - Retry with reduced aggressiveness or shorter target length
 - Model failures:
   - Confirm API key and base URL; verify fallback model availability
+- Generation stuck:
+  - System automatically detects and recovers from stuck jobs after 90 seconds idle or 300 seconds total
+- Regeneration failures:
+  - Single-section regeneration requires explicit instructions and validates the regenerated content
 
 **Section sources**
 - [generation.py:183-184](file://agents/generation.py#L183-L184)
@@ -412,5 +465,7 @@ The generation agent implements a robust, section-based pipeline that:
 - Supports both full and partial regeneration with strong validation
 - Integrates tightly with backend services for progress tracking and persistence
 - Maintains reliability through fallback models and timeouts
+- Provides sophisticated customization through aggressiveness levels and target page lengths
+- Implements comprehensive error handling and automatic recovery mechanisms
 
-[No sources needed since this section summarizes without analyzing specific files]
+The enhanced generation agent offers users fine-grained control over the AI generation process while maintaining strict adherence to their base resume content and ATS compliance requirements.

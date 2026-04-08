@@ -6,6 +6,7 @@ from typing import Any, Optional
 import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
 from app.core.config import get_settings
@@ -284,7 +285,7 @@ class ApplicationRepository:
             sql.SQL("{} = {}").format(sql.Identifier(field), self._cast_placeholder(field))
             for field in updates
         ]
-        values = list(updates.values())
+        values = [self._prepare_value(field, value) for field, value in updates.items()]
         update_query = sql.SQL(
             """
             update public.applications
@@ -307,6 +308,20 @@ class ApplicationRepository:
             raise LookupError("Application not found.")
         return updated
 
+    def _prepare_value(self, field_name: str, value: Any) -> Any:
+        if value is None:
+            return None
+
+        jsonb_fields = {
+            "extraction_failure_details",
+            "generation_failure_details",
+            "duplicate_match_fields",
+        }
+        if field_name in jsonb_fields:
+            return Jsonb(value)
+
+        return value
+
     def _cast_placeholder(self, field_name: str) -> sql.SQL:
         enum_casts = {
             "visible_status": "public.visible_status_enum",
@@ -316,10 +331,13 @@ class ApplicationRepository:
             "duplicate_resolution_status": "public.duplicate_resolution_status_enum",
         }
         uuid_casts = {"base_resume_id"}
+        jsonb_casts = {"extraction_failure_details", "generation_failure_details", "duplicate_match_fields"}
         if field_name in enum_casts:
             return sql.SQL("%s::{}").format(sql.SQL(enum_casts[field_name]))
         if field_name in uuid_casts:
             return sql.SQL("%s::uuid")
+        if field_name in jsonb_casts:
+            return sql.SQL("%s::jsonb")
         return sql.SQL("%s")
 
 

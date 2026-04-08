@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApplicationDetailPage } from "@/routes/ApplicationDetailPage";
 import { ApplicationsDashboardPage } from "@/routes/ApplicationsDashboardPage";
 import { ExtensionPage } from "@/routes/ExtensionPage";
@@ -36,6 +36,10 @@ describe("phase 1 applications UI", () => {
     vi.resetAllMocks();
     api.fetchDraft.mockResolvedValue(null);
     api.listBaseResumes.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("renders the dashboard empty state when there are no applications", async () => {
@@ -366,5 +370,70 @@ describe("phase 1 applications UI", () => {
     await waitFor(() => expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1));
     expect(await screen.findByText(/resume generation failed unexpectedly/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /cancel generation/i })).not.toBeInTheDocument();
+  });
+
+  it("stops generation polling when terminal progress is returned but detail refresh fails", async () => {
+    vi.useFakeTimers();
+    api.fetchApplicationDetail
+      .mockResolvedValueOnce({
+        id: "app-1",
+        job_url: "https://example.com/job",
+        job_title: "Backend Engineer",
+        company: "Acme",
+        job_description: "Build APIs",
+        extracted_reference_id: null,
+        job_posting_origin: "linkedin",
+        job_posting_origin_other_text: null,
+        base_resume_id: "resume-1",
+        base_resume_name: "Default Resume",
+        visible_status: "draft",
+        internal_state: "generating",
+        failure_reason: null,
+        extraction_failure_details: null,
+        generation_failure_details: null,
+        applied: false,
+        duplicate_similarity_score: null,
+        duplicate_resolution_status: null,
+        duplicate_matched_application_id: null,
+        notes: null,
+        created_at: "2026-04-07T12:00:00Z",
+        updated_at: "2026-04-07T12:00:00Z",
+        has_action_required_notification: false,
+        duplicate_warning: null,
+      })
+      .mockRejectedValueOnce(new Error("Application request failed."));
+    api.fetchApplicationProgress.mockResolvedValue({
+      job_id: "job-1",
+      workflow_kind: "generation",
+      state: "generation_failed",
+      message: "Resume generation failed unexpectedly.",
+      percent_complete: 100,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:05:00Z",
+      completed_at: "2026-04-07T12:05:00Z",
+      terminal_error_code: "generation_failed",
+    });
+
+    await act(async () => {
+      render(
+        <MemoryRouter initialEntries={["/app/applications/app-1"]}>
+          <Routes>
+            <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/^Application request failed\.$/)).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8000);
+    });
+
+    expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1);
+    expect(api.fetchApplicationDetail).toHaveBeenCalledTimes(2);
   });
 });

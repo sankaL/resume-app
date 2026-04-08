@@ -1,5 +1,15 @@
 # Decisions Made
 
+## 2026-04-07 23:07:06 EDT — Treat full-generation timeouts as stalled-progress detection, not a blunt wall-clock cutoff
+
+- Status: Accepted
+- Context: Full resume generation could still be healthy after the original 90-second mark because sections complete independently, but the worker enforced a flat wall-clock timeout and the frontend kept polling forever when terminal progress could not be reconciled back into application detail.
+- Decision:
+  1. Keep section-level generation and validation calls individually bounded, but change full-generation timeout handling to a `90s` idle timeout with a `300s` maximum wall-clock cap.
+  2. Let backend stalled-job recovery run from the polling progress endpoint so the frontend sees the terminal state directly even when a detail refresh is lagging or broken.
+  3. Stop frontend generation polling once terminal progress is observed, using that terminal progress to exit the active state even if the final detail refresh fails.
+- Consequences: Long-running but advancing generations get more time to finish, truly stalled jobs still fail closed, and the detail page cannot remain stuck in an infinite `progress -> detail refresh -> retry` loop after a generation timeout or failure.
+
 ## 2026-04-07 22:45:00 EDT — Separate ready-to-generate from actively-running generation and fence stale callbacks
 
 - Status: Accepted

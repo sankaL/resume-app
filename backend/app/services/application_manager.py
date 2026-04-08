@@ -39,8 +39,10 @@ from app.services.workflow import derive_visible_status
 
 logger = logging.getLogger(__name__)
 
-FULL_GENERATION_TIMEOUT_SECONDS = 90
-SECTION_REGENERATION_TIMEOUT_SECONDS = 45
+FULL_GENERATION_IDLE_TIMEOUT_SECONDS = 90
+FULL_GENERATION_MAX_TIMEOUT_SECONDS = 300
+SECTION_REGENERATION_IDLE_TIMEOUT_SECONDS = 45
+SECTION_REGENERATION_MAX_TIMEOUT_SECONDS = 90
 ACTIVE_GENERATION_STATES = {"generating", "regenerating_full", "regenerating_section"}
 ACTIVE_GENERATION_PROGRESS_STATES = {
     "generation_pending",
@@ -262,13 +264,8 @@ class ApplicationService:
         application_id: str,
     ) -> ApplicationDetailPayload:
         record = self._require_application(user_id=user_id, application_id=application_id)
-        
-        # Detect and recover stuck generation states
-        recovered = await self._detect_and_recover_stuck_generation(record)
-        if recovered:
-            # Re-fetch after recovery
-            record = self._refresh(user_id=user_id, application_id=application_id)
-        
+        record = await self._recover_stuck_generation_if_needed(record)
+
         return self._detail_payload(record)
 
     async def patch_application(
@@ -497,47 +494,46 @@ class ApplicationService:
         self,
         record: ApplicationRecord,
     ) -> bool:
-        """Detect if a generation job has been stuck and recover it.
-        
-        Returns True if recovery was performed.
-        """
+        """Detect if a generation job has stalled and recover it."""
         current_progress = await self.progress_store.get(record.id)
         if not self._is_generation_active(record=record, progress=current_progress):
             return False
 
-        try:
-            activity_marker = (
-                current_progress.updated_at
-                if current_progress is not None and current_progress.completed_at is None
-                else record.updated_at
-            )
-            updated_at = datetime.fromisoformat(activity_marker)
-        except (ValueError, TypeError):
+        activity_at = self._parse_timestamp(
+            current_progress.updated_at
+            if current_progress is not None and current_progress.completed_at is None
+            else record.updated_at
+        )
+        started_at = self._parse_timestamp(
+            current_progress.created_at if current_progress is not None else record.updated_at
+        )
+        if activity_at is None or started_at is None:
             return False
 
         now = datetime.now(timezone.utc)
-        if updated_at.tzinfo is None:
-            updated_at = updated_at.replace(tzinfo=timezone.utc)
-
-        elapsed = (now - updated_at).total_seconds()
-        timeout_seconds = self._generation_timeout_seconds(record, current_progress)
-        if elapsed < timeout_seconds:
+        idle_elapsed = (now - activity_at).total_seconds()
+        total_elapsed = (now - started_at).total_seconds()
+        idle_timeout_seconds, max_timeout_seconds = self._generation_timeout_seconds(record, current_progress)
+        if idle_elapsed < idle_timeout_seconds and total_elapsed < max_timeout_seconds:
             return False
 
+        timed_out_for_idle = idle_elapsed >= idle_timeout_seconds
         logger.warning(
-            "Recovering stuck generation job %s (state=%s, elapsed=%.0fs)",
+            "Recovering stuck generation job %s (state=%s, idle=%.0fs, total=%.0fs)",
             record.id,
             record.internal_state,
-            elapsed,
+            idle_elapsed,
+            total_elapsed,
         )
 
         target_state = self._target_state_after_generation_stop(record, current_progress)
         is_initial_generation = target_state == "generation_pending"
         failure_reason = "generation_timeout" if is_initial_generation else "regeneration_failed"
+        workflow_label = "Generation" if is_initial_generation else "Regeneration"
         timeout_message = (
-            "Generation timed out. You can retry with the same settings."
-            if is_initial_generation
-            else "Regeneration timed out. You can retry with the same settings."
+            f"{workflow_label} stalled after {idle_timeout_seconds} seconds without progress. You can retry with the same settings."
+            if timed_out_for_idle
+            else f"{workflow_label} exceeded the maximum processing window. You can retry with the same settings."
         )
 
         updated = self.repository.update_application(
@@ -568,8 +564,105 @@ class ApplicationService:
 
         return True
 
+    async def _reconcile_terminal_generation_progress(
+        self,
+        record: ApplicationRecord,
+        progress: Optional[ProgressRecord],
+    ) -> ApplicationRecord:
+        if progress is None or progress.workflow_kind not in {"generation", "regeneration_full", "regeneration_section"}:
+            return record
+
+        is_terminal_success = progress.state == "resume_ready" and progress.terminal_error_code is None
+        is_terminal_failure = progress.terminal_error_code is not None
+        if not is_terminal_success and not is_terminal_failure:
+            return record
+
+        if is_terminal_success:
+            if record.internal_state == "resume_ready" and record.failure_reason is None:
+                return record
+
+            updated = self.repository.update_application(
+                application_id=record.id,
+                user_id=record.user_id,
+                updates=self._workflow_updates(
+                    internal_state="resume_ready",
+                    failure_reason=None,
+                    generation_failure_details=None,
+                ),
+            )
+            try:
+                self.notification_repository.clear_action_required(
+                    user_id=record.user_id,
+                    application_id=record.id,
+                )
+            except Exception:
+                logger.exception("Failed clearing stale action-required notifications for %s", record.id)
+            return updated
+
+        failure_reason = self._terminal_failure_reason(record=record, progress=progress)
+        target_state = self._target_state_after_generation_stop(record, progress)
+        normalized_details = (
+            record.generation_failure_details
+            if isinstance(record.generation_failure_details, dict) and record.generation_failure_details
+            else self._normalize_generation_failure_details(
+                message=progress.message,
+                failure_details=None,
+            )
+        )
+
+        if (
+            record.internal_state == target_state
+            and record.failure_reason == failure_reason
+            and record.generation_failure_details == normalized_details
+        ):
+            return record
+
+        updated = self.repository.update_application(
+            application_id=record.id,
+            user_id=record.user_id,
+            updates=self._workflow_updates(
+                internal_state=target_state,
+                failure_reason=failure_reason,
+                generation_failure_details=normalized_details,
+            ),
+        )
+        try:
+            self.notification_repository.clear_action_required(
+                user_id=record.user_id,
+                application_id=record.id,
+            )
+            self.notification_repository.create_notification(
+                user_id=record.user_id,
+                application_id=record.id,
+                notification_type="error",
+                message=progress.message,
+                action_required=True,
+            )
+        except Exception:
+            logger.exception("Failed reconciling terminal generation notifications for %s", record.id)
+        return updated
+
+    def _terminal_failure_reason(
+        self,
+        *,
+        record: ApplicationRecord,
+        progress: ProgressRecord,
+    ) -> str:
+        terminal_code = progress.terminal_error_code or "generation_failed"
+        workflow_kind = self._generation_workflow_kind(record, progress)
+
+        if workflow_kind == "generation":
+            if terminal_code == "generation_timeout":
+                return "generation_timeout"
+            if terminal_code == "generation_cancelled":
+                return "generation_cancelled"
+            return "generation_failed"
+
+        return "regeneration_failed"
+
     async def get_progress(self, *, user_id: str, application_id: str) -> ProgressRecord:
         record = self._require_application(user_id=user_id, application_id=application_id)
+        record = await self._recover_stuck_generation_if_needed(record)
         progress = await self.progress_store.get(application_id)
         if progress is not None:
             return progress
@@ -1672,11 +1765,45 @@ class ApplicationService:
         self,
         record: ApplicationRecord,
         progress: Optional[ProgressRecord],
-    ) -> int:
+    ) -> tuple[int, int]:
         workflow_kind = self._generation_workflow_kind(record, progress)
         if workflow_kind == "regeneration_section":
-            return SECTION_REGENERATION_TIMEOUT_SECONDS
-        return FULL_GENERATION_TIMEOUT_SECONDS
+            return (
+                SECTION_REGENERATION_IDLE_TIMEOUT_SECONDS,
+                SECTION_REGENERATION_MAX_TIMEOUT_SECONDS,
+            )
+        return (
+            FULL_GENERATION_IDLE_TIMEOUT_SECONDS,
+            FULL_GENERATION_MAX_TIMEOUT_SECONDS,
+        )
+
+    @staticmethod
+    def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+
+        try:
+            parsed = datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    async def _recover_stuck_generation_if_needed(
+        self,
+        record: ApplicationRecord,
+    ) -> ApplicationRecord:
+        current_progress = await self.progress_store.get(record.id)
+        reconciled = await self._reconcile_terminal_generation_progress(record, current_progress)
+        if reconciled is not record:
+            return reconciled
+
+        recovered = await self._detect_and_recover_stuck_generation(record)
+        if not recovered:
+            return record
+        return self._refresh(user_id=record.user_id, application_id=record.id)
 
     def _is_generation_active(
         self,
@@ -1685,6 +1812,9 @@ class ApplicationService:
         progress: Optional[ProgressRecord],
     ) -> bool:
         if record.failure_reason is not None:
+            return False
+
+        if progress is not None and (progress.completed_at is not None or progress.terminal_error_code is not None):
             return False
 
         if record.internal_state in ACTIVE_GENERATION_STATES:

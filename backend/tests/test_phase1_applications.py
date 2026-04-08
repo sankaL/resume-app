@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.types.json import Jsonb
 
 from app.db.applications import (
+    ApplicationRepository,
     ApplicationListRecord,
     ApplicationRecord,
     DuplicateCandidateRecord,
@@ -863,3 +866,169 @@ async def test_stuck_generation_recovery_marks_timeout_and_terminal_progress():
     assert timeout_progress is not None
     assert timeout_progress.terminal_error_code == "generation_timeout"
     assert timeout_progress.job_id != "job-1"
+
+
+@pytest.mark.asyncio
+async def test_get_progress_recovers_stalled_generation_before_returning_progress():
+    service, repository, _, progress_store, _, _, _ = build_service()
+    now = datetime.now(timezone.utc)
+    started_at = (now - timedelta(seconds=120)).isoformat()
+    stalled_at = (now - timedelta(seconds=95)).isoformat()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/2",
+        visible_status="draft",
+        internal_state="generating",
+    )
+    repository.records[created.id] = created.model_copy(update={"updated_at": stalled_at})
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-2",
+            workflow_kind="generation",
+            state="generating",
+            message="Resume generation is running.",
+            percent_complete=50,
+            created_at=started_at,
+            updated_at=stalled_at,
+            completed_at=None,
+            terminal_error_code=None,
+        ),
+    )
+
+    progress = await service.get_progress(user_id="user-1", application_id=created.id)
+
+    assert progress.terminal_error_code == "generation_timeout"
+    assert progress.completed_at is not None
+    updated = repository.fetch_application("user-1", created.id)
+    assert updated is not None
+    assert updated.failure_reason == "generation_timeout"
+
+
+@pytest.mark.asyncio
+async def test_get_progress_reconciles_terminal_generation_progress_without_timeout_recovery():
+    service, repository, notifications, progress_store, _, _, _ = build_service()
+    now = datetime.now(timezone.utc)
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/4",
+        visible_status="draft",
+        internal_state="generating",
+    )
+    repository.records[created.id] = created.model_copy(update={"updated_at": (now - timedelta(seconds=120)).isoformat()})
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-4",
+            workflow_kind="generation",
+            state="generation_failed",
+            message="Resume generation failed unexpectedly.",
+            percent_complete=100,
+            created_at=(now - timedelta(seconds=120)).isoformat(),
+            updated_at=(now - timedelta(seconds=110)).isoformat(),
+            completed_at=(now - timedelta(seconds=110)).isoformat(),
+            terminal_error_code="generation_error",
+        ),
+    )
+
+    progress = await service.get_progress(user_id="user-1", application_id=created.id)
+
+    assert progress.terminal_error_code == "generation_error"
+    updated = repository.fetch_application("user-1", created.id)
+    assert updated is not None
+    assert updated.internal_state == "generation_pending"
+    assert updated.failure_reason == "generation_failed"
+    assert updated.generation_failure_details == {"message": "Resume generation failed unexpectedly."}
+    assert notifications.notifications[-1]["message"] == "Resume generation failed unexpectedly."
+
+
+@pytest.mark.asyncio
+async def test_terminal_progress_reconciliation_preserves_existing_validation_errors():
+    service, repository, _, progress_store, _, _, _ = build_service()
+    now = datetime.now(timezone.utc)
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/5",
+        visible_status="draft",
+        internal_state="generation_pending",
+    )
+    repository.records[created.id] = created.model_copy(
+        update={
+            "internal_state": "generation_pending",
+            "failure_reason": "generation_failed",
+            "generation_failure_details": {
+                "message": "Resume validation failed.",
+                "validation_errors": ["summary: Invented employer"],
+            },
+            "updated_at": now.isoformat(),
+        }
+    )
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-5",
+            workflow_kind="generation",
+            state="generation_failed",
+            message="Resume validation failed.",
+            percent_complete=100,
+            created_at=(now - timedelta(seconds=5)).isoformat(),
+            updated_at=(now - timedelta(seconds=5)).isoformat(),
+            completed_at=(now - timedelta(seconds=5)).isoformat(),
+            terminal_error_code="generation_failed",
+        ),
+    )
+
+    progress = await service.get_progress(user_id="user-1", application_id=created.id)
+
+    assert progress.terminal_error_code == "generation_failed"
+    updated = repository.fetch_application("user-1", created.id)
+    assert updated is not None
+    assert updated.generation_failure_details == {
+        "message": "Resume validation failed.",
+        "validation_errors": ["summary: Invented employer"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_stuck_generation_recovery_waits_when_recent_progress_exists():
+    service, repository, _, progress_store, _, _, _ = build_service()
+    now = datetime.now(timezone.utc)
+    started_at = (now - timedelta(seconds=180)).isoformat()
+    recent_progress_at = (now - timedelta(seconds=15)).isoformat()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/3",
+        visible_status="draft",
+        internal_state="generating",
+    )
+    repository.records[created.id] = created.model_copy(update={"updated_at": recent_progress_at})
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-3",
+            workflow_kind="generation",
+            state="generating",
+            message="Generated skills section.",
+            percent_complete=75,
+            created_at=started_at,
+            updated_at=recent_progress_at,
+            completed_at=None,
+            terminal_error_code=None,
+        ),
+    )
+
+    recovered = await service._detect_and_recover_stuck_generation(repository.records[created.id])
+
+    assert recovered is False
+    updated = repository.fetch_application("user-1", created.id)
+    assert updated is not None
+    assert updated.failure_reason is None
+
+
+def test_application_repository_wraps_jsonb_update_values():
+    repository = ApplicationRepository("postgresql://example")
+
+    wrapped = repository._prepare_value("generation_failure_details", {"message": "failed"})
+
+    assert isinstance(wrapped, Jsonb)
+    assert repository._cast_placeholder("generation_failure_details").as_string(None) == "%s::jsonb"
