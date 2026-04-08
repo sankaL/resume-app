@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import re
+from dataclasses import dataclass
 from typing import Optional
 
 import httpx
@@ -10,6 +12,37 @@ import httpx
 from app.services.resume_privacy import reattach_header_lines, sanitize_resume_markdown
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ResumeCleanupResult:
+    cleaned_markdown: str
+    needs_review: bool = False
+    review_reason: Optional[str] = None
+
+
+def _extract_json_payload(text: str) -> dict:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+
+    try:
+        payload = json.loads(stripped)
+        if isinstance(payload, dict):
+            return payload
+    except json.JSONDecodeError:
+        pass
+
+    first_brace = stripped.find("{")
+    last_brace = stripped.rfind("}")
+    if first_brace == -1 or last_brace == -1 or last_brace <= first_brace:
+        raise json.JSONDecodeError("No JSON object found.", stripped, 0)
+
+    payload = json.loads(stripped[first_brace : last_brace + 1])
+    if not isinstance(payload, dict):
+        raise TypeError("Cleanup response payload must be an object.")
+    return payload
 
 
 class ResumeParserService:
@@ -167,7 +200,7 @@ class ResumeParserService:
             result = re.sub(pattern, replacement, result)
         return result.strip()
 
-    async def cleanup_with_llm(self, raw_markdown: str) -> str:
+    async def cleanup_with_llm(self, raw_markdown: str) -> ResumeCleanupResult:
         """
         Clean up the parsed resume using LLM.
 
@@ -182,21 +215,25 @@ class ResumeParserService:
         """
         if not self.openrouter_api_key:
             logger.debug("OpenRouter API key not configured, skipping LLM cleanup")
-            return raw_markdown
+            return ResumeCleanupResult(cleaned_markdown=raw_markdown)
 
         sanitized = sanitize_resume_markdown(raw_markdown)
         sanitized_markdown = sanitized.sanitized_markdown
         if not sanitized_markdown.strip():
             logger.warning("Sanitized resume content was empty, skipping LLM cleanup")
-            return raw_markdown
+            return ResumeCleanupResult(cleaned_markdown=raw_markdown)
 
         system_prompt = (
-            "You are a resume formatting assistant. Your job is to improve the structure "
-            "of parsed resume text into clean Markdown. Detect and format section headings "
-            "(## level), bullet points, dates, job titles, company names, education entries. "
-            "The input has already had personal/contact data removed. Do NOT add or infer contact info. "
-            "Do NOT modify, add, or remove any content - only improve formatting and structure. "
-            "Return only the formatted Markdown body without personal/contact header lines."
+            "You are a resume formatting assistant. Improve the structure of parsed resume text into clean Markdown.\n"
+            "Return a single JSON object with exactly these keys: cleaned_markdown, needs_review, review_reason.\n"
+            "Rules:\n"
+            "- Detect and format section headings (## level), bullet points, dates, job titles, company names, and education entries.\n"
+            "- The input has already had personal/contact data removed. Do NOT add or infer contact info.\n"
+            "- Do NOT modify, add, or remove content. Preserve wording and order.\n"
+            "- When structure is ambiguous, prefer the minimal interpretation.\n"
+            "- Do not introduce em dashes.\n"
+            "- Set needs_review to true when the source looks too degraded or ambiguous to structure confidently.\n"
+            "- When needs_review is false, set review_reason to null.\n"
         )
 
         try:
@@ -219,20 +256,32 @@ class ResumeParserService:
                 )
                 response.raise_for_status()
                 data = response.json()
-                cleaned_body = data["choices"][0]["message"]["content"]
+                cleaned_body_raw = data["choices"][0]["message"]["content"]
+                payload = _extract_json_payload(cleaned_body_raw)
+                cleaned_body = str(payload["cleaned_markdown"])
+                needs_review = bool(payload.get("needs_review"))
+                review_reason = payload.get("review_reason")
+                review_reason = str(review_reason).strip() if review_reason is not None else None
                 cleaned_sanitized = sanitize_resume_markdown(cleaned_body).sanitized_markdown or cleaned_body
-                return reattach_header_lines(cleaned_sanitized, sanitized.header_lines)
+                return ResumeCleanupResult(
+                    cleaned_markdown=reattach_header_lines(cleaned_sanitized, sanitized.header_lines),
+                    needs_review=needs_review,
+                    review_reason=review_reason if needs_review else None,
+                )
 
         except httpx.TimeoutException:
             logger.warning("LLM cleanup timed out after 30 seconds, returning raw markdown")
-            return raw_markdown
+            return ResumeCleanupResult(cleaned_markdown=raw_markdown)
         except httpx.HTTPStatusError as e:
             logger.warning(
                 "LLM cleanup API error: %s - %s",
                 e.response.status_code,
                 e.response.text[:200] if e.response.text else "no details",
             )
-            return raw_markdown
+            return ResumeCleanupResult(cleaned_markdown=raw_markdown)
+        except (KeyError, json.JSONDecodeError, TypeError, ValueError) as e:
+            logger.warning("LLM cleanup returned invalid structured output: %s", str(e))
+            return ResumeCleanupResult(cleaned_markdown=raw_markdown)
         except Exception as e:
             logger.warning("LLM cleanup failed: %s", str(e))
-            return raw_markdown
+            return ResumeCleanupResult(cleaned_markdown=raw_markdown)

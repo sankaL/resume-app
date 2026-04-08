@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.services.resume_parser import ResumeParserService
@@ -14,7 +16,13 @@ class FakeResponse:
             "choices": [
                 {
                     "message": {
-                        "content": "## Summary\nBuilt backend systems.\n",
+                        "content": json.dumps(
+                            {
+                                "cleaned_markdown": "## Summary\nBuilt backend systems.\n",
+                                "needs_review": False,
+                                "review_reason": None,
+                            }
+                        ),
                     }
                 }
             ]
@@ -48,8 +56,9 @@ async def test_cleanup_with_llm_sanitizes_prompt_and_reattaches_header(monkeypat
     )
 
     assert captured_user_content == ["## Summary\nBuilt backend systems.\n"]
-    assert cleaned.startswith("Alex Example\nalex@example.com | https://linkedin.com/in/alex")
-    assert "## Summary\nBuilt backend systems." in cleaned
+    assert cleaned.cleaned_markdown.startswith("Alex Example\nalex@example.com | https://linkedin.com/in/alex")
+    assert "## Summary\nBuilt backend systems." in cleaned.cleaned_markdown
+    assert cleaned.needs_review is False
 
 
 @pytest.mark.asyncio
@@ -68,7 +77,13 @@ async def test_cleanup_with_llm_preserves_non_header_github_project_lines(monkey
                 "choices": [
                     {
                         "message": {
-                            "content": self._content,
+                            "content": json.dumps(
+                                {
+                                    "cleaned_markdown": self._content,
+                                    "needs_review": False,
+                                    "review_reason": None,
+                                }
+                            ),
                         }
                     }
                 ]
@@ -99,4 +114,98 @@ async def test_cleanup_with_llm_preserves_non_header_github_project_lines(monkey
     )
 
     assert captured_user_content == ["## Projects\n- Demo: https://github.com/acme/tool\n"]
-    assert "- Demo: https://github.com/acme/tool" in cleaned
+    assert "- Demo: https://github.com/acme/tool" in cleaned.cleaned_markdown
+
+
+@pytest.mark.asyncio
+async def test_cleanup_with_llm_surfaces_review_warning(monkeypatch):
+    class ReviewResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "cleaned_markdown": "## Experience\nAcme Corp\nBuilt APIs\n",
+                                    "needs_review": True,
+                                    "review_reason": "The source looked fragmented and may need manual cleanup.",
+                                }
+                            ),
+                        }
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, _url: str, *, headers, json):
+            del headers, json
+            return ReviewResponse()
+
+    monkeypatch.setattr("app.services.resume_parser.httpx.AsyncClient", FakeAsyncClient)
+
+    service = ResumeParserService(openrouter_api_key="test-key", openrouter_model="model")
+    cleaned = await service.cleanup_with_llm(
+        "Alex Example\nalex@example.com | https://linkedin.com/in/alex\n\n## Experience\nAcme Corp\nBuilt APIs\n"
+    )
+
+    assert cleaned.needs_review is True
+    assert cleaned.review_reason == "The source looked fragmented and may need manual cleanup."
+
+
+@pytest.mark.asyncio
+async def test_cleanup_with_llm_accepts_fenced_json_payload(monkeypatch):
+    class ReviewResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                "```json\n"
+                                '{"cleaned_markdown":"## Summary\\nBuilt backend systems.\\n","needs_review":false,"review_reason":null}\n'
+                                "```"
+                            ),
+                        }
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: float) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, _url: str, *, headers, json):
+            del headers, json
+            return ReviewResponse()
+
+    monkeypatch.setattr("app.services.resume_parser.httpx.AsyncClient", FakeAsyncClient)
+
+    service = ResumeParserService(openrouter_api_key="test-key", openrouter_model="model")
+    cleaned = await service.cleanup_with_llm(
+        "Alex Example\nalex@example.com | https://linkedin.com/in/alex\n\n## Summary\nBuilt backend systems.\n"
+    )
+
+    assert "## Summary\nBuilt backend systems." in cleaned.cleaned_markdown
+    assert cleaned.needs_review is False

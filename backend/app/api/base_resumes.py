@@ -67,6 +67,8 @@ class BaseResumeDetail(BaseModel):
     is_default: bool
     created_at: str
     updated_at: str
+    needs_review: bool = False
+    import_warning: Optional[str] = None
 
 
 def _map_service_error(error: Exception) -> HTTPException:
@@ -153,8 +155,13 @@ async def upload_base_resume(
         ) from error
 
     # Optionally clean up with LLM
+    needs_review = False
+    import_warning: Optional[str] = None
     if use_llm_cleanup:
-        raw_markdown = await parser.cleanup_with_llm(raw_markdown)
+        cleanup_result = await parser.cleanup_with_llm(raw_markdown)
+        raw_markdown = cleanup_result.cleaned_markdown
+        needs_review = cleanup_result.needs_review
+        import_warning = cleanup_result.review_reason
 
     # Create the base resume
     try:
@@ -163,7 +170,13 @@ async def upload_base_resume(
             name=name,
             content_md=raw_markdown,
         )
-        return BaseResumeDetail.model_validate(record.model_dump())
+        return BaseResumeDetail.model_validate(
+            {
+                **record.model_dump(),
+                "needs_review": needs_review,
+                "import_warning": import_warning,
+            }
+        )
     except Exception as error:
         raise _map_service_error(error) from error
 

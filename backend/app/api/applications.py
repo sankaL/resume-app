@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -19,6 +20,48 @@ from app.services.application_manager import (
 from app.services.progress import ProgressRecord
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
+
+INSTRUCTION_WHITESPACE_RE = re.compile(r"\s+")
+UNSAFE_INSTRUCTION_PATTERNS = (
+    re.compile(r"\b(ignore|disregard|override)\b.{0,40}\b(previous|prior|above|earlier)\b", re.I),
+    re.compile(r"\b(make up|invent|fabricate|hallucinate)\b", re.I),
+    re.compile(
+        r"\b(add|insert|append)\b.{0,60}\b("
+        r"degree|certification|certificate|credential|award|employer|date|dates|"
+        r"phone|email|address|linkedin|website|url|harvard|stanford|mit"
+        r")\b",
+        re.I,
+    ),
+    re.compile(
+        r"\binclude\b.{0,60}\b("
+        r"degree|certification|certificate|credential|award|employer|date|dates|"
+        r"phone|email|address|linkedin|website|url|harvard|stanford|mit"
+        r")\b",
+        re.I,
+    ),
+)
+
+
+def _validate_generation_instruction_text(value: Optional[str], *, required: bool, field_label: str) -> Optional[str]:
+    if value is None:
+        if required:
+            raise ValueError(f"{field_label} are required.")
+        return None
+
+    stripped = value.strip()
+    if not stripped:
+        if required:
+            raise ValueError(f"{field_label} are required.")
+        return None
+
+    policy_text = INSTRUCTION_WHITESPACE_RE.sub(" ", stripped)
+    for pattern in UNSAFE_INSTRUCTION_PATTERNS:
+        if pattern.search(policy_text):
+            raise ValueError(
+                f"{field_label} can refine tone, emphasis, prioritization, brevity, and keyword focus only."
+            )
+
+    return stripped
 
 
 class CreateApplicationRequest(BaseModel):
@@ -231,10 +274,7 @@ class GenerateResumeRequest(BaseModel):
     @field_validator("additional_instructions")
     @classmethod
     def normalize_instructions(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        stripped = value.strip()
-        return stripped or None
+        return _validate_generation_instruction_text(value, required=False, field_label="Additional instructions")
 
 
 class FullRegenerationRequest(BaseModel):
@@ -259,10 +299,7 @@ class FullRegenerationRequest(BaseModel):
     @field_validator("additional_instructions")
     @classmethod
     def normalize_instructions(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        stripped = value.strip()
-        return stripped or None
+        return _validate_generation_instruction_text(value, required=False, field_label="Additional instructions")
 
 
 class SectionRegenerationRequest(BaseModel):
@@ -280,10 +317,14 @@ class SectionRegenerationRequest(BaseModel):
     @field_validator("instructions")
     @classmethod
     def require_non_blank_instructions(cls, value: str) -> str:
-        stripped = value.strip()
-        if not stripped:
+        validated = _validate_generation_instruction_text(
+            value,
+            required=True,
+            field_label="Instructions",
+        )
+        if validated is None:
             raise ValueError("Instructions are required for section regeneration.")
-        return stripped
+        return validated
 
 
 class SaveDraftRequest(BaseModel):

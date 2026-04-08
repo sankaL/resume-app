@@ -430,11 +430,17 @@ class OpenRouterExtractionAgent:
             (
                 "system",
                 (
-                    "Extract job-posting fields from the supplied webpage context. "
-                    "Do not invent facts. job_title and job_description are required. "
-                    "Use only these normalized origins when known: linkedin, indeed, google_jobs, "
-                    "glassdoor, ziprecruiter, monster, dice, company_website, other. "
-                    "If origin is unknown, leave it null."
+                    "Extract structured job-posting fields from the supplied webpage context.\n"
+                    "Rules:\n"
+                    "- Do not invent facts. job_title and job_description are required.\n"
+                    "- Use json_ld for structured metadata when it is coherent.\n"
+                    "- Use visible_text for the job description body.\n"
+                    "- Use page_title, meta, final_url, detected_origin, and extracted_reference_id only to disambiguate or fill structured fields already supported by the page.\n"
+                    "- Ignore navigation, sign-in prompts, cookie banners, related-job cards, footers, and other page chrome.\n"
+                    "- If multiple jobs are present, extract the primary posting that best matches the page title, URL, and reference id.\n"
+                    "- Use only these normalized origins when known: linkedin, indeed, google_jobs, glassdoor, ziprecruiter, monster, dice, company_website, other.\n"
+                    "- If origin is unknown, leave it null.\n"
+                    "- If a field is uncertain, leave it null rather than guessing."
                 ),
             ),
             (

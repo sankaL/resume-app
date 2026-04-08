@@ -18,13 +18,25 @@ export const visibleStatusLabels = {
 } as const;
 
 export const PAGE_LENGTH_OPTIONS = [
-  { value: "1_page", label: "1 Page" },
-  { value: "2_page", label: "2 Pages" },
-  { value: "3_page", label: "3 Pages" },
+  { value: "1_page", label: "1 Page", description: "Target 450-700 words with an 850-word hard cap." },
+  { value: "2_page", label: "2 Pages", description: "Target 900-1400 words with a 1600-word hard cap." },
+  { value: "3_page", label: "3 Pages", description: "Target 1500-2100 words with a 2400-word hard cap." },
 ] as const;
 
 export const AGGRESSIVENESS_OPTIONS = [
-  { value: "low", label: "Low", description: "Minimal change; preserve voice and structure with light keyword alignment" },
-  { value: "medium", label: "Medium", description: "Moderate tailoring; reword and reorder to align with the job posting" },
-  { value: "high", label: "High", description: "Stronger tailoring; significant rewrite while staying grounded in source content" },
+  {
+    value: "low",
+    label: "Low",
+    description: "Light edits to Summary and Experience only. Skills stay as-is. Education is never rewritten.",
+  },
+  {
+    value: "medium",
+    label: "Medium",
+    description: "Rewrite Summary, reorder Experience, and regroup or prune Skills. Education stays fixed.",
+  },
+  {
+    value: "high",
+    label: "High",
+    description: "Most assertive rewrite for Summary, Experience, and Skills while staying source-grounded. Education stays fixed.",
+  },
 ] as const;

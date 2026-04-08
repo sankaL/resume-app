@@ -1,5 +1,19 @@
 # Decisions Made
 
+## 2026-04-08 12:55:00 EDT — Make resume prompts operational, enable generation-only reasoning, and surface low-confidence upload cleanup
+
+- Status: Accepted
+- Context: The single-call generation pipeline had the right grounding and privacy posture, but the prompts were still underspecified for resume-writing quality, section-specific rewrite behavior, word-budget control, and adversarial user instructions. The upload cleanup path also had no way to signal when a badly parsed resume still needed manual review.
+- Decision:
+  1. Replace the prior generation prompt with a fixed five-block structure: role, non-negotiables, section rules, aggressiveness contract, and length contract.
+  2. Treat the model as an expert ATS resume writer, explicitly require resume-writing best practices, forbid em dashes in model-authored resume content, and make aggressiveness section-specific: Summary and Professional Experience vary most, Skills varies by level, and Education stays fact-frozen.
+  3. Replace vague page-count language with explicit word-budget targets and hard caps, plus section-level content budgets.
+  4. Enable OpenRouter reasoning only for resume generation calls, using medium reasoning for initial full generation and high reasoning for full or section regeneration. Keep extraction and upload cleanup non-reasoning.
+  5. Try structured output first for generation, but keep a strict prompt-level JSON contract and fall back locally when structured output or provider-specific reasoning support is not available.
+  6. Add deterministic screening for unsafe user instructions that attempt to override grounding or inject new facts.
+  7. Let upload cleanup return both cleaned Markdown and a minimal review-warning signal when the parsed resume still looks too degraded to trust automatically.
+- Consequences: Resume prompts become more controllable and auditable, generation can spend extra reasoning budget only where quality matters most, prompt injection on user instructions is reduced before jobs start, and uploaded resumes can surface a review banner instead of silently feeding questionable parsed content into later generation steps.
+
 ## 2026-04-08 08:39:33 EDT — Move resume writing to single-call structured generation with local privacy and validation controls
 
 - Status: Accepted

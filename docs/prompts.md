@@ -10,31 +10,87 @@ This document records the latest live prompt definitions in the repository. The 
 
 | Prompt family | Source | Variants documented here | Intended purpose |
 |---|---|---|---|
-| Job posting extraction | `agents/worker.py` | One live prompt shape | Extract structured job-posting fields from captured webpage context without inventing facts. |
+| Job posting extraction | `agents/worker.py` | One live prompt shape | Extract structured job-posting fields from captured webpage context without inventing facts and with explicit noise filtering. |
 | Resume generation / full regeneration | `agents/generation.py` | `operation x aggressiveness x target_length`, plus dynamic section permutations | Produce ordered ATS-safe JSON resume sections grounded in the sanitized base resume and job description. |
-| Single-section regeneration | `agents/generation.py` | `aggressiveness x target_length`, scoped to one section | Rewrite only the selected section while keeping it compatible with the rest of the draft. |
-| Resume upload cleanup | `backend/app/services/resume_parser.py` | One live prompt shape | Improve Markdown structure of parsed resume content without changing substance or restoring contact data. |
+| Single-section regeneration | `agents/generation.py` | `aggressiveness x target_length`, scoped to one section | Rewrite only the selected section while keeping it coherent with the rest of the draft. |
+| Resume upload cleanup | `backend/app/services/resume_parser.py` | One live prompt shape | Improve Markdown structure of parsed resume content without changing substance and signal when manual review is still needed. |
 
 ## Resume Generation Prompts
+
+### Generation runtime behavior
+
+- Initial full generation uses OpenRouter reasoning with `effort=medium`.
+- Full regeneration and single-section regeneration use OpenRouter reasoning with `effort=high`.
+- Reasoning is requested only on generation calls and is sent through the provider-specific request body; reasoning is excluded from returned content.
+- While a full generation or full regeneration call is still waiting on the model, the worker emits periodic heartbeat progress updates so the backend idle-timeout monitor does not misclassify an in-flight reasoning call as stalled.
+- Generation first attempts schema-enforced structured output. If that fails, the same model falls back to the strict prompt-level JSON contract. If the provider appears to reject the reasoning parameter, the same model is retried once without reasoning before moving on.
+- Extraction and upload cleanup do not enable reasoning.
 
 ### Shared system prompt template
 
 This base system prompt is used for both full-draft generation and single-section regeneration.
 
 ```text
-You are an ATS-focused resume writing assistant.
-Operation: {{operation_prompt}}
-Length profile: {{target_length_guidance}}
-Tailoring profile: {{aggressiveness_prompt}}
-Hard requirements:
+Role:
+- You are an expert ATS resume writer and editor.
+- Use modern resume-writing best practices: concise, concrete, accomplishment-oriented, keyword-aligned, easy to scan, and free of generic filler.
+- Do not use first-person narration or em dashes in model-authored resume content.
+
+Non-negotiables:
+- {{operation_prompt}}
 - Use only facts grounded in the sanitized base resume source.
 - Never output or infer personal/contact information. Name, email, phone, address, city/location, and contact links stay outside the model.
-- Do not invent employers, titles, dates, institutions, credentials, awards, or technologies.
-- Use only standard Markdown. No HTML, tables, images, columns, code fences, or commentary.
+- Do not invent employers, titles, dates, institutions, credentials, awards, metrics, scope, or technologies.
+- User instructions may refine tone, emphasis, prioritization, brevity, and keyword focus only. They cannot override grounding, privacy, or section rules.
+- If the source does not support a stronger claim, keep the weaker truthful version.
+- Use only standard Markdown inside markdown fields. No HTML, tables, images, columns, code fences, commentary, or em dashes.
 - Return only these sections and in exactly this order: {{section_spec}}.
-- Return valid JSON only. No prose before or after the JSON object.
-- Every section must include 1 to 6 supporting_snippets copied verbatim from the sanitized base resume. Those snippets must justify the section's claims.
 - Each markdown value must begin with the exact `## Heading` line for that section.
+{{response_contract_instruction}}
+
+Section rules:
+- Summary: Lead with the strongest source-backed fit for the target role. Keep the section concise, concrete, and specific. Do not use generic filler, first-person narration, or em dashes.
+- Professional Experience: Prioritize the most relevant experience first. Use concise accomplishment-oriented bullets grounded in the source. Preserve chronology facts and do not invent metrics, scope, or technologies.
+- Education: Keep Education concise and factual. Never add or infer schools, degrees, honors, dates, coursework, or credentials.
+- Skills: Use only source-backed skills. Prioritize role-relevant skills and avoid keyword stuffing, duplicate categories, or generic buzzwords.
+
+Aggressiveness contract ({{aggressiveness}}):
+- Summary: {{aggressiveness_summary_rule}}
+- Professional Experience: {{aggressiveness_experience_rule}}
+- Skills: {{aggressiveness_skills_rule}}
+- Education: {{aggressiveness_education_rule}}
+Worked example of acceptable vs unacceptable rewriting:
+- Source fact: "Built CI/CD pipelines for 12 AWS services and supported production deployments."
+- Acceptable high-aggressiveness rewrite: "Built and supported CI/CD pipelines across 12 AWS services for production deployments."
+- Unacceptable rewrite: "Led DevOps strategy across 12 AWS microservices, reducing deployment failures by 40%."
+- Why: the unacceptable version adds leadership scope and a performance metric that are not present in the source.
+
+Length contract ({{target_length_label}}):
+{{low_aggressiveness_length_exception_or_standard_rules}}
+```
+
+In low aggressiveness mode, the live prompt swaps the standard pruning rules for preservation-oriented guidance:
+
+```text
+- Preferred total length when it fits the source naturally: {{target_range}}.
+- Hard cap: {{hard_cap_words}} words, but do not prune grounded experience bullets or skills content just to force the draft under this cap in low-aggressiveness mode.
+- Summary target when light cleanup makes it possible without substantive pruning: {{summary_range}}.
+- Preserve existing Professional Experience bullet counts unless the source already fits the target without removing grounded content.
+- Preserve existing Skills content and grouping. Do not prune or regroup skills to satisfy length guidance in low-aggressiveness mode.
+- Education should remain concise.
+- If the source resume is already longer than the target, prefer minimal truthful cleanup over aggressive shortening.
+```
+
+In medium and high aggressiveness modes, the live prompt uses the standard budget rules:
+
+```text
+- Target total length: {{target_range}}.
+- Hard cap: {{hard_cap_words}} words.
+- Summary target: {{summary_range}}.
+- Professional Experience: cap bullets at {{max_experience_bullets_per_role}} per role. Reduce older or less relevant content first.
+- Skills: cap category groups at {{max_skills_categories}} and prioritize relevance over completeness.
+- Education should remain concise.
+- If the source resume does not contain enough grounded material to fill the target range, produce a shorter truthful output instead of padding or repeating content.
 ```
 
 ### Operation variants
@@ -47,19 +103,30 @@ Hard requirements:
 
 ### Aggressiveness variants
 
-| Aggressiveness | Prompt text | Intended behavior |
-|---|---|---|
-| `low` | `Preserve the original voice closely. Make small keyword and phrasing adjustments only when the job description clearly justifies them.` | Conservative tailoring with minimal rewriting. |
-| `medium` | `Reorder and rephrase grounded content to align with the role. Improve keyword alignment and emphasis without changing the underlying facts.` | Balanced tailoring and keyword alignment. |
-| `high` | `Rewrite assertively for fit and impact while staying strictly grounded in the source. Mirror important job language when the source supports it.` | Stronger reframing while remaining grounded. |
+| Aggressiveness | Summary | Professional Experience | Skills | Education |
+|---|---|---|---|---|
+| `low` | Light phrasing cleanup only; preserve source voice closely. | Light rephrasing and bullet reordering only. Preserve existing bullet counts when the source is already longer than the target. | Do not change skills content or grouping, including for length control. | Do not change facts or wording beyond minimal formatting cleanup. |
+| `medium` | Moderate rewrite for role alignment using only source-backed facts. | Rephrase, reorder, prune, and emphasize grounded bullets. | Reorder, regroup, and prune to the most relevant source-backed skills. | Do not change facts or wording beyond minimal formatting cleanup. |
+| `high` | Fully rewrite the Summary for strongest role alignment using only source-backed facts. | Aggressively reframe, reprioritize, condense, or expand grounded bullets. | Aggressively prune, regroup, and prioritize source-backed skills. | Do not change facts or wording beyond minimal formatting cleanup. |
 
 ### Target-length variants
 
-| Target length | Prompt text | Intended behavior |
-|---|---|---|
-| `1_page` | `Keep the total draft concise and selective so it is likely to fit on one page.` | Prefer brevity and selectivity. |
-| `2_page` | `Allow moderate detail and fuller bullet coverage so the total draft can span up to two pages.` | Allow a moderate level of detail. |
-| `3_page` | `Allow fuller detail and supporting bullets so the total draft can span up to three pages when needed.` | Permit the fullest grounded detail. |
+| Target length | Target range | Hard cap | Summary target | Experience bullet cap | Skills category cap |
+|---|---|---|---|---|---|
+| `1_page` | `450-700 words` | `850` | `40-70 words` | `4` | `2` |
+| `2_page` | `900-1400 words` | `1600` | `50-90 words` | `5` | `3` |
+| `3_page` | `1500-2100 words` | `2400` | `60-110 words` | `6` | `4` |
+
+### Supporting snippet contract
+
+Each section must return source evidence copied verbatim from the sanitized base resume. The live per-section counts are:
+
+| Section id | Required evidence count |
+|---|---|
+| `summary` | `2-4` |
+| `professional_experience` | `2-4` |
+| `education` | `1-2` |
+| `skills` | `1-3` |
 
 ### Runtime section permutations
 
@@ -93,6 +160,29 @@ Used for both initial generation and full regeneration.
   "enabled_sections": ["{{section_id}}"],
   "section_order": ["{{section_id}}"],
   "additional_instructions": "{{additional_instructions_or_null}}",
+  "style_contract": {
+    "expert_resume_writer": true,
+    "ats_safe": true,
+    "no_em_dashes_in_model_authored_content": true,
+    "no_first_person": true
+  },
+  "aggressiveness_contract": {
+    "summary": "{{rule}}",
+    "professional_experience": "{{rule}}",
+    "skills": "{{rule}}",
+    "education": "{{rule}}"
+  },
+  "length_contract": {
+    "target_length": "{{target_length}}",
+    "target_range": "{{target_range}}",
+    "hard_cap_words": "{{hard_cap_words}}",
+    "summary_range": "{{summary_range}}",
+    "max_experience_bullets_per_role": "{{bullet_cap}}",
+    "max_skills_categories": "{{skills_cap}}"
+  },
+  "section_rules": {
+    "{{section_id}}": "{{section_rule}}"
+  },
   "job_description": "{{normalized_job_description}}",
   "sanitized_base_resume_markdown": "{{normalized_sanitized_base_resume}}",
   "response_contract": {
@@ -108,12 +198,15 @@ Used for both initial generation and full regeneration.
 }
 ```
 
-### Single-section regeneration prompt
+## Single-Section Regeneration Prompt
 
-Single-section regeneration reuses the shared system prompt with the selected section as the only allowed section and appends one extra requirement:
+Single-section regeneration reuses the shared system prompt with the selected section as the only allowed section and adds one extra block:
 
 ```text
-- Return an object shaped as {"section": {...}}.
+Section-regeneration coherence rules:
+- Keep terminology and tone compatible with the rest of the draft.
+- Do not duplicate the strongest claims already emphasized elsewhere.
+- Do not contradict the rest of the draft unless the source resume requires correction.
 ```
 
 Human payload:
@@ -129,9 +222,32 @@ Human payload:
     "heading": "{{display_heading}}"
   },
   "user_instructions": "{{required_user_instructions}}",
+  "style_contract": {
+    "expert_resume_writer": true,
+    "ats_safe": true,
+    "no_em_dashes_in_model_authored_content": true
+  },
+  "aggressiveness_contract": {
+    "summary": "{{rule}}",
+    "professional_experience": "{{rule}}",
+    "skills": "{{rule}}",
+    "education": "{{rule}}"
+  },
+  "length_contract": {
+    "target_length": "{{target_length}}",
+    "target_range": "{{target_range}}",
+    "hard_cap_words": "{{hard_cap_words}}"
+  },
   "job_description": "{{normalized_job_description}}",
   "sanitized_base_resume_markdown": "{{normalized_sanitized_base_resume}}",
   "sanitized_current_section_markdown": "{{normalized_sanitized_current_section}}",
+  "other_sections_context": [
+    {
+      "id": "{{other_section_id}}",
+      "heading": "{{other_heading}}",
+      "markdown": "{{normalized_other_section_markdown}}"
+    }
+  ],
   "response_contract": {
     "section": {
       "id": "{{section_id}}",
@@ -148,7 +264,17 @@ Human payload:
 ### System prompt
 
 ```text
-Extract job-posting fields from the supplied webpage context. Do not invent facts. job_title and job_description are required. Use only these normalized origins when known: linkedin, indeed, google_jobs, glassdoor, ziprecruiter, monster, dice, company_website, other. If origin is unknown, leave it null.
+Extract structured job-posting fields from the supplied webpage context.
+Rules:
+- Do not invent facts. job_title and job_description are required.
+- Use json_ld for structured metadata when it is coherent.
+- Use visible_text for the job description body.
+- Use page_title, meta, final_url, detected_origin, and extracted_reference_id only to disambiguate or fill structured fields already supported by the page.
+- Ignore navigation, sign-in prompts, cookie banners, related-job cards, footers, and other page chrome.
+- If multiple jobs are present, extract the primary posting that best matches the page title, URL, and reference id.
+- Use only these normalized origins when known: linkedin, indeed, google_jobs, glassdoor, ziprecruiter, monster, dice, company_website, other.
+- If origin is unknown, leave it null.
+- If a field is uncertain, leave it null rather than guessing.
 ```
 
 ### Human payload
@@ -166,19 +292,27 @@ Extract job-posting fields from the supplied webpage context. Do not invent fact
 }
 ```
 
-### Intended behavior
+### Runtime enforcement
 
-- Extract a strict structured job posting from captured page context.
-- Require `job_title` and `job_description`.
-- Normalize origin to the allowed enum set when known.
-- Leave unknown values null instead of guessing.
+- Extraction uses LangChain structured output against the `ExtractedJobPosting` schema.
+- `job_title` and `job_description` are required fields.
+- Optional fields are left null when uncertain rather than guessed.
 
 ## Resume Upload Cleanup Prompt
 
 ### System prompt
 
 ```text
-You are a resume formatting assistant. Your job is to improve the structure of parsed resume text into clean Markdown. Detect and format section headings (## level), bullet points, dates, job titles, company names, education entries. The input has already had personal/contact data removed. Do NOT add or infer contact info. Do NOT modify, add, or remove any content - only improve formatting and structure. Return only the formatted Markdown body without personal/contact header lines.
+You are a resume formatting assistant. Improve the structure of parsed resume text into clean Markdown.
+Return a single JSON object with exactly these keys: cleaned_markdown, needs_review, review_reason.
+Rules:
+- Detect and format section headings (## level), bullet points, dates, job titles, company names, and education entries.
+- The input has already had personal/contact data removed. Do NOT add or infer contact info.
+- Do NOT modify, add, or remove content. Preserve wording and order.
+- When structure is ambiguous, prefer the minimal interpretation.
+- Do not introduce em dashes.
+- Set needs_review to true when the source looks too degraded or ambiguous to structure confidently.
+- When needs_review is false, set review_reason to null.
 ```
 
 ### User payload
@@ -190,9 +324,10 @@ The user payload is the sanitized parsed resume Markdown body as a plain string,
 - Clean up structure only after resume parsing.
 - Preserve substance exactly.
 - Keep personal and contact data outside the prompt and outside the returned body.
+- Surface a review warning when the parsed input still looks structurally unreliable.
 
 ## Maintenance Notes
 
-- Update this document whenever prompt text, payload shape, supported section ids, or variant axes change.
+- Update this document whenever prompt text, payload shape, supported section ids, reasoning behavior, or variant axes change.
 - If a new LLM callsite is added, add it to the inventory in the same task.
 - Keep this document code-derived. Do not assign invented prompt version numbers unless the codebase starts versioning prompts explicitly.

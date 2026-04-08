@@ -1062,6 +1062,9 @@ export function ApplicationDetailPage() {
                       </label>
                     ))}
                   </div>
+                  <p className="mt-2 text-sm text-ink/65">
+                    {PAGE_LENGTH_OPTIONS.find((option) => option.value === pageLength)?.description}
+                  </p>
                 </div>
 
                 {/* Aggressiveness */}
@@ -1099,10 +1102,13 @@ export function ApplicationDetailPage() {
                   <label className="block text-sm font-medium text-ink">Additional Instructions (Optional)</label>
                   <textarea
                     className="mt-2 min-h-24 w-full rounded-[24px] border border-black/10 bg-white px-4 py-3 text-sm text-ink"
-                    placeholder="Add any specific instructions for the AI..."
+                    placeholder="Examples: emphasize API architecture, keep the summary concise, prioritize leadership signals."
                     value={additionalInstructions}
                     onChange={(event) => setAdditionalInstructions(event.target.value)}
                   />
+                  <p className="mt-2 text-sm text-ink/65">
+                    This field can refine tone, emphasis, prioritization, brevity, and keyword focus only. It cannot add new facts.
+                  </p>
                 </div>
 
                 {/* Action Buttons */}

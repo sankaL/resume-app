@@ -147,6 +147,8 @@ export type BaseResumeDetail = {
   is_default: boolean;
   created_at: string;
   updated_at: string;
+  needs_review?: boolean;
+  import_warning?: string | null;
 };
 
 export type ProfileData = {

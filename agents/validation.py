@@ -25,11 +25,18 @@ HTML_RE = re.compile(r"<[a-z][^>]*>", re.I)
 TABLE_RE = re.compile(r"^\s*\|.*\|.*\|", re.MULTILINE)
 IMAGE_RE = re.compile(r"!\[")
 CODE_FENCE_RE = re.compile(r"```")
+EM_DASH_RE = re.compile(r"—")
 
 TARGET_WORD_LIMITS = {
     "1_page": 850,
     "2_page": 1600,
     "3_page": 2400,
+}
+SUPPORTING_SNIPPET_LIMITS = {
+    "summary": (2, 4),
+    "professional_experience": (2, 4),
+    "education": (1, 2),
+    "skills": (1, 3),
 }
 ROLE_AT_CLAIM_RE = re.compile(
     r"\b([A-Z][A-Za-z0-9&/+.-]*(?:\s+[A-Z][A-Za-z0-9&/+.-]*){0,4})\s+at\s+([A-Z][A-Za-z0-9&/+.-]*(?:\s+[A-Z][A-Za-z0-9&/+.-]*){0,4})"
@@ -264,15 +271,24 @@ def _check_supporting_snippets(
 
     for section in generated_sections:
         snippets = section.get("supporting_snippets") or []
-        if not isinstance(snippets, list) or not snippets:
+        minimum, maximum = SUPPORTING_SNIPPET_LIMITS.get(section["name"], (1, 4))
+        if not isinstance(snippets, list) or len(snippets) < minimum:
             errors.append(
                 {
                     "type": "missing_support",
                     "section": section["name"],
-                    "detail": "At least one supporting snippet is required.",
+                    "detail": f"Section requires at least {minimum} supporting snippets.",
                 }
             )
             continue
+        if len(snippets) > maximum:
+            errors.append(
+                {
+                    "type": "excess_support",
+                    "section": section["name"],
+                    "detail": f"Section exceeds the maximum of {maximum} supporting snippets.",
+                }
+            )
 
         for snippet in snippets:
             snippet_text = str(snippet)
@@ -333,6 +349,14 @@ def _check_ats_safety(
                     "type": "ats_violation",
                     "section": name,
                     "detail": "Code fences are not allowed.",
+                }
+            )
+        if EM_DASH_RE.search(content):
+            errors.append(
+                {
+                    "type": "style_violation",
+                    "section": name,
+                    "detail": "Em dashes are not allowed in generated resume content.",
                 }
             )
 

@@ -222,7 +222,7 @@ export function BaseResumeEditorPage() {
               <span className="text-sm text-ink">Improve with AI (sanitized)</span>
             </label>
             <p className="text-xs text-ink/50">
-              AI cleanup removes the contact header before sending content externally, improves the body formatting, and then restores the stripped header locally.
+              AI cleanup removes the contact header before sending content externally, improves the body formatting, restores the stripped header locally, and flags uploads that still need manual review.
             </p>
 
             <div className="flex gap-3">
@@ -248,6 +248,15 @@ export function BaseResumeEditorPage() {
           <Card className="border-ember/20 bg-ember/5 text-ember">
             <p className="font-semibold">Save failed</p>
             <p className="mt-2 text-base">{error}</p>
+          </Card>
+        ) : null}
+
+        {uploadedResume?.needs_review ? (
+          <Card className="border-amber-300/40 bg-amber-50 text-amber-900">
+            <p className="font-semibold">Review recommended</p>
+            <p className="mt-2 text-base">
+              {uploadedResume.import_warning ?? "This upload may need manual cleanup before you use it for generation."}
+            </p>
           </Card>
         ) : null}
 
