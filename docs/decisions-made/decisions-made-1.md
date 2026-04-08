@@ -1,5 +1,42 @@
 # Decisions Made
 
+## 2026-04-07 22:45:00 EDT — Separate ready-to-generate from actively-running generation and fence stale callbacks
+
+- Status: Accepted
+- Context: Applications were getting stuck in apparent generation progress because the worker callback payload shape diverged from the backend contract, the frontend treated every `generation_pending` row as actively running, and cancel or timeout recovery paths tried to write failure reasons the database enum did not allow.
+- Decision:
+  1. Reserve `generation_pending` for ready or retryable initial-generation states, and treat actively running generation as `generating` plus live non-terminal progress.
+  2. Use nested `generated` and `failure` payloads for generation and regeneration worker callbacks so success and failure data match the backend models exactly.
+  3. When cancelling or timing out a generation job, write terminal progress with a fresh synthetic job id so any late worker callback is ignored by the existing job-id fence.
+  4. Extend `failure_reason_enum` with `generation_timeout` and `generation_cancelled` so cancel and timeout behavior remains explicit and schema-safe.
+- Consequences: Failed or cancelled initial-generation rows stay retryable without masquerading as active jobs, stale callbacks cannot overwrite a cancelled or timed-out application, and the detail page can reliably switch from progress UI to failure or retry UI for both current and future applications.
+
+## Phase 3 & 4: Generation, Editing, and Export (2026-04-07)
+
+### Generation Architecture
+- **Section-based generation**: Each resume section (summary, experience, education, skills, etc.) is generated as an independent LLM call. This enables targeted section regeneration without re-generating the entire resume.
+- **Model fallback**: Primary model → fallback model on failure. Configured via GENERATION_AGENT_MODEL and GENERATION_AGENT_FALLBACK_MODEL env vars.
+- **LangChain + OpenRouter**: Used ChatOpenAI from langchain-openai pointed at OpenRouter API base for model flexibility.
+
+### Validation Pipeline
+- **Hallucination detection**: LLM-based comparison of generated content against source resume to flag invented facts.
+- **ATS-safety**: Rule-based checks (no tables, no images, clean Markdown).
+- **Required sections + ordering**: Validates all enabled sections are present and correctly ordered.
+
+### PDF Export
+- **WeasyPrint**: Chosen for ATS-safe PDF output. Runs in thread pool with 20s timeout.
+- **On-demand only**: No persistent PDF storage per PRD. Generated from latest draft content on each export request.
+- **Deferred import**: WeasyPrint imported at call time to avoid breaking dev environments without native libs.
+
+### Frontend Editing
+- **Inline Markdown editor**: Edit/preview toggle in the draft card. Direct Markdown editing with save to backend.
+- **react-markdown + remark-gfm**: For Markdown preview rendering with GitHub Flavored Markdown support.
+
+### Status Management
+- After export, visible_status transitions to "complete".
+- After edit or regeneration post-export, status returns to "in_progress".
+- `applied` flag remains independently user-controlled throughout.
+
 ## 2026-04-07 17:30:00 EDT — Phase 2 — File Format and LLM Cleanup Decisions
 
 - Status: Accepted

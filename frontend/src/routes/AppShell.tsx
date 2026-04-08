@@ -32,40 +32,40 @@ export function AppShell() {
       <div className="mx-auto flex max-w-6xl flex-col gap-6">
         <div className="flex flex-col gap-4 rounded-[32px] bg-ink p-8 text-white shadow-panel md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.18em] text-white/55">AI Resume Builder</p>
+            <p className="text-sm uppercase tracking-[0.18em] text-white/90">AI Resume Builder</p>
             <h1 className="mt-3 font-display text-4xl">Application intake workspace</h1>
-            <p className="mt-4 max-w-3xl text-lg text-white/72">
+            <p className="mt-4 max-w-3xl text-lg text-white">
               Capture job postings, recover failed extraction, and resolve duplicates before
               generation starts.
             </p>
           </div>
           <div className="flex flex-col items-start gap-3 md:items-end">
-            <div className="text-sm text-white/70">{bootstrap?.user.email ?? "Loading session…"}</div>
+            <div className="text-sm text-white/95">{bootstrap?.user.email ?? "Loading session…"}</div>
             <div className="flex flex-wrap gap-3">
               <Button
                 variant="secondary"
-                className="border-white/20 bg-transparent text-white"
+                className="border-white/30 bg-white/15 text-white hover:bg-white/25"
                 onClick={() => navigate("/app/resumes")}
               >
                 Resumes
               </Button>
               <Button
                 variant="secondary"
-                className="border-white/20 bg-transparent text-white"
+                className="border-white/30 bg-white/15 text-white hover:bg-white/25"
                 onClick={() => navigate("/app/profile")}
               >
                 Profile
               </Button>
               <Button
                 variant="secondary"
-                className="border-white/20 bg-transparent text-white"
+                className="border-white/30 bg-white/15 text-white hover:bg-white/25"
                 onClick={() => navigate("/app/extension")}
               >
                 Chrome Extension
               </Button>
               <Button
                 variant="secondary"
-                className="border-white/20 bg-transparent text-white"
+                className="border-white/30 bg-white/15 text-white hover:bg-white/25"
                 onClick={handleSignOut}
               >
                 Sign out

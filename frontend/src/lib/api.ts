@@ -66,12 +66,29 @@ export type ApplicationSummary = {
   has_unresolved_duplicate: boolean;
 };
 
+export type GenerationFailureDetails = {
+  message: string | null;
+  validation_errors: string[] | null;
+};
+
+export type ResumeDraft = {
+  id: string;
+  application_id: string;
+  content_md: string;
+  generation_params: Record<string, unknown>;
+  sections_snapshot: Record<string, unknown>;
+  last_generated_at: string;
+  last_exported_at: string | null;
+  updated_at: string;
+};
+
 export type ApplicationDetail = {
   id: string;
   job_url: string;
   job_title: string | null;
   company: string | null;
   job_description: string | null;
+  extracted_reference_id: string | null;
   job_posting_origin: string | null;
   job_posting_origin_other_text: string | null;
   base_resume_id: string | null;
@@ -80,6 +97,7 @@ export type ApplicationDetail = {
   internal_state: string;
   failure_reason: string | null;
   extraction_failure_details: ExtractionFailureDetails | null;
+  generation_failure_details: GenerationFailureDetails | null;
   applied: boolean;
   duplicate_similarity_score: number | null;
   duplicate_resolution_status: string | null;
@@ -389,4 +407,88 @@ export async function updateProfile(updates: ProfileUpdatePayload): Promise<Prof
     method: "PATCH",
     body: updates,
   });
+}
+
+// Generation
+
+export async function triggerGeneration(
+  applicationId: string,
+  settings: {
+    base_resume_id: string;
+    target_length: string;
+    aggressiveness: string;
+    additional_instructions?: string;
+  },
+): Promise<ApplicationDetail> {
+  return authenticatedRequest<ApplicationDetail>(`/api/applications/${applicationId}/generate`, {
+    method: "POST",
+    body: settings,
+  });
+}
+
+export async function fetchDraft(applicationId: string): Promise<ResumeDraft | null> {
+  return authenticatedRequest<ResumeDraft | null>(`/api/applications/${applicationId}/draft`);
+}
+
+export async function saveDraft(
+  applicationId: string,
+  content: string,
+): Promise<ResumeDraft> {
+  return authenticatedRequest<ResumeDraft>(`/api/applications/${applicationId}/draft`, {
+    method: "PUT",
+    body: { content },
+  });
+}
+
+export async function triggerFullRegeneration(
+  applicationId: string,
+  settings: {
+    target_length: string;
+    aggressiveness: string;
+    additional_instructions?: string;
+  },
+): Promise<ApplicationDetail> {
+  return authenticatedRequest<ApplicationDetail>(`/api/applications/${applicationId}/regenerate`, {
+    method: "POST",
+    body: settings,
+  });
+}
+
+export async function triggerSectionRegeneration(
+  applicationId: string,
+  sectionName: string,
+  instructions: string,
+): Promise<ApplicationDetail> {
+  return authenticatedRequest<ApplicationDetail>(`/api/applications/${applicationId}/regenerate-section`, {
+    method: "POST",
+    body: { section_name: sectionName, instructions },
+  });
+}
+
+export async function cancelGeneration(applicationId: string): Promise<ApplicationDetail> {
+  return authenticatedRequest<ApplicationDetail>(`/api/applications/${applicationId}/cancel-generation`, {
+    method: "POST",
+  });
+}
+
+export async function exportPdf(applicationId: string): Promise<Blob> {
+  const token = await getAccessToken();
+  const response = await fetch(`${env.VITE_API_URL}/api/applications/${applicationId}/export-pdf`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    let detail = "Export failed.";
+    try {
+      const payload = await response.json();
+      detail = payload.detail ?? detail;
+    } catch {
+      detail = "Export failed.";
+    }
+    throw new Error(detail);
+  }
+
+  return response.blob();
 }

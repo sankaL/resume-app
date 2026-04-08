@@ -3,10 +3,12 @@ from __future__ import annotations
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 from app.core.auth import AuthenticatedUser, get_current_user
 from app.db.applications import ApplicationListRecord, ApplicationRecord, MatchedApplicationRecord
+from app.db.resume_drafts import ResumeDraftRecord
 from app.services.application_manager import (
     ApplicationDetailPayload,
     ApplicationService,
@@ -129,6 +131,11 @@ class ApplicationSummary(BaseModel):
     has_unresolved_duplicate: bool
 
 
+class GenerationFailureDetails(BaseModel):
+    message: Optional[str] = None
+    validation_errors: Optional[list[str]] = None
+
+
 class ApplicationDetail(BaseModel):
     id: str
     job_url: str
@@ -144,6 +151,7 @@ class ApplicationDetail(BaseModel):
     internal_state: str
     failure_reason: Optional[str]
     extraction_failure_details: Optional[ExtractionFailureDetails]
+    generation_failure_details: Optional[dict[str, Any]]
     applied: bool
     duplicate_similarity_score: Optional[float]
     duplicate_resolution_status: Optional[str]
@@ -192,6 +200,126 @@ class RecoverFromSourceRequest(BaseModel):
         return stripped or None
 
 
+class GenerateResumeRequest(BaseModel):
+    base_resume_id: str
+    target_length: str = "1_page"
+    aggressiveness: str = "medium"
+    additional_instructions: Optional[str] = None
+
+    @field_validator("base_resume_id")
+    @classmethod
+    def require_non_blank_resume_id(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Base resume ID is required.")
+        return stripped
+
+    @field_validator("target_length")
+    @classmethod
+    def validate_target_length(cls, value: str) -> str:
+        if value not in {"1_page", "2_page", "3_page"}:
+            raise ValueError("Target length must be 1_page, 2_page, or 3_page.")
+        return value
+
+    @field_validator("aggressiveness")
+    @classmethod
+    def validate_aggressiveness(cls, value: str) -> str:
+        if value not in {"low", "medium", "high"}:
+            raise ValueError("Aggressiveness must be low, medium, or high.")
+        return value
+
+    @field_validator("additional_instructions")
+    @classmethod
+    def normalize_instructions(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+
+class FullRegenerationRequest(BaseModel):
+    target_length: str = "1_page"
+    aggressiveness: str = "medium"
+    additional_instructions: Optional[str] = None
+
+    @field_validator("target_length")
+    @classmethod
+    def validate_target_length(cls, value: str) -> str:
+        if value not in {"1_page", "2_page", "3_page"}:
+            raise ValueError("Target length must be 1_page, 2_page, or 3_page.")
+        return value
+
+    @field_validator("aggressiveness")
+    @classmethod
+    def validate_aggressiveness(cls, value: str) -> str:
+        if value not in {"low", "medium", "high"}:
+            raise ValueError("Aggressiveness must be low, medium, or high.")
+        return value
+
+    @field_validator("additional_instructions")
+    @classmethod
+    def normalize_instructions(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+
+class SectionRegenerationRequest(BaseModel):
+    section_name: str
+    instructions: str
+
+    @field_validator("section_name")
+    @classmethod
+    def require_non_blank_section(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Section name is required.")
+        return stripped
+
+    @field_validator("instructions")
+    @classmethod
+    def require_non_blank_instructions(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Instructions are required for section regeneration.")
+        return stripped
+
+
+class SaveDraftRequest(BaseModel):
+    content: str
+
+    @field_validator("content")
+    @classmethod
+    def require_non_blank_content(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Draft content cannot be blank.")
+        return value
+
+
+class ResumeDraftResponse(BaseModel):
+    id: str
+    application_id: str
+    content_md: str
+    generation_params: dict[str, Any]
+    sections_snapshot: dict[str, Any]
+    last_generated_at: str
+    last_exported_at: Optional[str]
+    updated_at: str
+
+
+class WorkflowProgress(BaseModel):
+    job_id: str
+    workflow_kind: str
+    state: str
+    message: str
+    percent_complete: int
+    created_at: str
+    updated_at: str
+    completed_at: Optional[str]
+    terminal_error_code: Optional[str]
+
+
 def to_application_summary(record: ApplicationListRecord) -> ApplicationSummary:
     return ApplicationSummary(
         **record.model_dump(),
@@ -216,13 +344,14 @@ def to_application_detail(payload: ApplicationDetailPayload) -> ApplicationDetai
     record = payload.application
     return ApplicationDetail(
         **record.model_dump(
-            exclude={"exported_at", "duplicate_match_fields", "extraction_failure_details"},
+            exclude={"exported_at", "duplicate_match_fields", "extraction_failure_details", "generation_failure_details"},
         ),
         extraction_failure_details=(
             ExtractionFailureDetails.model_validate(record.extraction_failure_details)
             if record.extraction_failure_details
             else None
         ),
+        generation_failure_details=record.generation_failure_details,
         duplicate_warning=to_duplicate_warning(payload.duplicate_warning),
     )
 
@@ -394,17 +523,155 @@ async def resolve_duplicate(
         raise _map_service_error(error) from error
 
 
-@router.get("/{application_id}/progress", response_model=ExtractionProgress)
+@router.get("/{application_id}/progress", response_model=WorkflowProgress)
 async def get_progress(
     application_id: str,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     service: Annotated[ApplicationService, Depends(get_application_service)],
-) -> ExtractionProgress:
+) -> WorkflowProgress:
     try:
         progress = await service.get_progress(
             user_id=current_user.id,
             application_id=application_id,
         )
-        return ExtractionProgress.model_validate(progress.model_dump())
+        return WorkflowProgress.model_validate(progress.model_dump())
+    except Exception as error:
+        raise _map_service_error(error) from error
+
+
+@router.get("/{application_id}/draft", response_model=Optional[ResumeDraftResponse])
+async def get_draft(
+    application_id: str,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[ApplicationService, Depends(get_application_service)],
+) -> Optional[ResumeDraftResponse]:
+    try:
+        draft = await service.get_draft(
+            user_id=current_user.id,
+            application_id=application_id,
+        )
+        if draft is None:
+            return None
+        return ResumeDraftResponse.model_validate(draft.model_dump(exclude={"user_id"}))
+    except Exception as error:
+        raise _map_service_error(error) from error
+
+
+@router.post("/{application_id}/generate", response_model=ApplicationDetail, status_code=status.HTTP_202_ACCEPTED)
+async def generate_resume(
+    application_id: str,
+    request: GenerateResumeRequest,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[ApplicationService, Depends(get_application_service)],
+) -> ApplicationDetail:
+    try:
+        return to_application_detail(
+            await service.trigger_generation(
+                user_id=current_user.id,
+                application_id=application_id,
+                base_resume_id=request.base_resume_id,
+                target_length=request.target_length,
+                aggressiveness=request.aggressiveness,
+                additional_instructions=request.additional_instructions,
+            )
+        )
+    except Exception as error:
+        raise _map_service_error(error) from error
+
+
+@router.post("/{application_id}/regenerate", response_model=ApplicationDetail, status_code=status.HTTP_202_ACCEPTED)
+async def regenerate_full(
+    application_id: str,
+    request: FullRegenerationRequest,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[ApplicationService, Depends(get_application_service)],
+) -> ApplicationDetail:
+    try:
+        return to_application_detail(
+            await service.trigger_full_regeneration(
+                user_id=current_user.id,
+                application_id=application_id,
+                target_length=request.target_length,
+                aggressiveness=request.aggressiveness,
+                additional_instructions=request.additional_instructions,
+            )
+        )
+    except Exception as error:
+        raise _map_service_error(error) from error
+
+
+@router.post("/{application_id}/regenerate-section", response_model=ApplicationDetail, status_code=status.HTTP_202_ACCEPTED)
+async def regenerate_section(
+    application_id: str,
+    request: SectionRegenerationRequest,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[ApplicationService, Depends(get_application_service)],
+) -> ApplicationDetail:
+    try:
+        return to_application_detail(
+            await service.trigger_section_regeneration(
+                user_id=current_user.id,
+                application_id=application_id,
+                section_name=request.section_name,
+                instructions=request.instructions,
+            )
+        )
+    except Exception as error:
+        raise _map_service_error(error) from error
+
+
+@router.post("/{application_id}/cancel-generation", response_model=ApplicationDetail)
+async def cancel_generation(
+    application_id: str,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[ApplicationService, Depends(get_application_service)],
+) -> ApplicationDetail:
+    try:
+        return to_application_detail(
+            await service.cancel_generation(
+                user_id=current_user.id,
+                application_id=application_id,
+            )
+        )
+    except Exception as error:
+        raise _map_service_error(error) from error
+
+
+@router.put("/{application_id}/draft", response_model=ResumeDraftResponse)
+async def save_draft(
+    application_id: str,
+    request: SaveDraftRequest,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[ApplicationService, Depends(get_application_service)],
+) -> ResumeDraftResponse:
+    try:
+        draft = await service.save_draft_edit(
+            user_id=current_user.id,
+            application_id=application_id,
+            content=request.content,
+        )
+        return ResumeDraftResponse.model_validate(draft.model_dump(exclude={"user_id"}))
+    except Exception as error:
+        raise _map_service_error(error) from error
+
+
+@router.get("/{application_id}/export-pdf")
+async def export_pdf(
+    application_id: str,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[ApplicationService, Depends(get_application_service)],
+) -> Response:
+    try:
+        pdf_bytes, filename = await service.export_pdf(
+            user_id=current_user.id,
+            application_id=application_id,
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
     except Exception as error:
         raise _map_service_error(error) from error

@@ -1,12 +1,12 @@
 # AI Resume Builder Build Plan
 
 **Document status:** Active roadmap  
-**Last updated:** 2026-04-07 17:30:00 EDT  
-**Implementation status:** Phase 0, Phase 1, Phase 1A, and Phase 2 implemented; later phases pending  
+**Last updated:** 2026-04-07  
+**Implementation status:** Phases 0 through 4 implemented; Phase 5 pending  
 **Primary product source:** `docs/resume_builder_PRD_v3.md`  
 **Database contract:** `docs/database_schema.md`
 
-This roadmap now includes the committed Phase 0 foundation, the committed Phase 1 application-intake workflow, and the committed Phase 1A blocked-site recovery plus Chrome extension intake follow-on. Later phases remain unimplemented.
+This roadmap now includes the committed Phase 0 foundation, the committed Phase 1 application-intake workflow, the committed Phase 1A blocked-site recovery plus Chrome extension intake follow-on, Phase 2 base resumes and profile preferences, Phase 3 generation/validation/assembly, and Phase 4 editing/regeneration/export. Phase 5 hardening remains unimplemented.
 
 ## Planning Defaults
 
@@ -28,8 +28,8 @@ This roadmap now includes the committed Phase 0 foundation, the committed Phase 
 | Phase 1 | Implemented | Application intake, extraction, manual fallback, duplicate review, and extraction-problem notifications |
 | Phase 1A | Implemented | Blocked-page recovery, pasted-text retry, and Chrome current-tab capture intake |
 | Phase 2 | Implemented | Base resumes, profile data, section preferences, PDF upload with optional LLM cleanup, and pre-generation configuration surface |
-| Phase 3 | Planned | Generation, validation, assembly, notifications, and application workspace |
-| Phase 4 | Planned | Editing, regeneration, and PDF export |
+| Phase 3 | Implemented | Generation, validation, assembly, notifications, and application workspace |
+| Phase 4 | Implemented | Editing, regeneration, and PDF export |
 | Phase 5 | Planned | Hardening, recovery, and end-to-end MVP acceptance |
 
 ## Task Tracking
@@ -83,22 +83,22 @@ These tables track implementation-sized tasks seeded from the phase roadmap belo
 
 | Task ID | Task | Type | Status | Date updated | Comments |
 |---|---|---|---|---|---|
-| P3-T01 | Build the application detail page as the primary resume workspace with preview and status context | FE | TODO | 2026-04-07 | |
-| P3-T02 | Implement section-based resume generation through LangChain and OpenRouter with model fallback handling | AI | TODO | 2026-04-07 | |
-| P3-T03 | Add validation for hallucinations, required sections, ordering, and ATS-safety before draft assembly | AI | TODO | 2026-04-07 | |
-| P3-T04 | Assemble final Markdown using profile data and ordered enabled sections, then persist the current draft | BE | TODO | 2026-04-07 | |
-| P3-T05 | Update statuses and send in-app and email notifications for generation outcomes and attention states | BE | TODO | 2026-04-07 | |
-| P3-T06 | Preserve applied flag independence from the primary application status throughout the workspace flow | BE | TODO | 2026-04-07 | |
+| P3-T01 | Build the application detail page as the primary resume workspace with preview and status context | FE | DONE | 2026-04-07 | Application detail page serves as the resume workspace with status badge, job info, generation settings, Markdown preview, and applied toggle. |
+| P3-T02 | Implement section-based resume generation through LangChain and OpenRouter with model fallback handling | AI | DONE | 2026-04-07 | Section-based generation via LangChain ChatOpenAI + OpenRouter with primary/fallback model support in agents/generation.py. |
+| P3-T03 | Add validation for hallucinations, required sections, ordering, and ATS-safety before draft assembly | AI | DONE | 2026-04-07 | LLM-based hallucination detection plus rule-based ATS-safety, required sections, and ordering validation in agents/validation.py. |
+| P3-T04 | Assemble final Markdown using profile data and ordered enabled sections, then persist the current draft | BE | DONE | 2026-04-07 | Personal info header injection and ordered section assembly in agents/assembly.py, persisted to resume_drafts via DraftRepository. |
+| P3-T05 | Update statuses and send in-app and email notifications for generation outcomes and attention states | BE | DONE | 2026-04-07 | Generation success/failure status transitions, in-app notifications, and email notifications for generation events. |
+| P3-T06 | Preserve applied flag independence from the primary application status throughout the workspace flow | BE | DONE | 2026-04-07 | Applied flag remains independently user-controlled across all generation, editing, and export status transitions. |
 
 ### Phase 4 Tasks
 
 | Task ID | Task | Type | Status | Date updated | Comments |
 |---|---|---|---|---|---|
-| P4-T01 | Add Markdown edit mode with persistent saves and a preview or edit mode switch | FE | TODO | 2026-04-07 | |
-| P4-T02 | Implement single-section regeneration with required instructions and validator enforcement | AI | TODO | 2026-04-07 | |
-| P4-T03 | Implement full regeneration with prefilled prior settings and overwrite of the current draft | AI | TODO | 2026-04-07 | |
-| P4-T04 | Build on-demand PDF export from the latest draft content without persistent PDF storage | BE | TODO | 2026-04-07 | |
-| P4-T05 | Return status to In Progress after edits or regeneration and handle regen or export notifications | BE | TODO | 2026-04-07 | |
+| P4-T01 | Add Markdown edit mode with persistent saves and a preview or edit mode switch | FE | DONE | 2026-04-07 | Edit/preview toggle with inline Markdown editor, save to backend, and react-markdown preview with remark-gfm. |
+| P4-T02 | Implement single-section regeneration with required instructions and validator enforcement | AI | DONE | 2026-04-07 | Section regeneration endpoint with required instructions, validation, and selective draft update. |
+| P4-T03 | Implement full regeneration with prefilled prior settings and overwrite of the current draft | AI | DONE | 2026-04-07 | Full regeneration reuses prior generation params, overwrites current draft, and updates timestamps. |
+| P4-T04 | Build on-demand PDF export from the latest draft content without persistent PDF storage | BE | DONE | 2026-04-07 | WeasyPrint-based PDF export with ATS-safe CSS, thread pool execution with 20s timeout, no persistent storage. |
+| P4-T05 | Return status to In Progress after edits or regeneration and handle regen or export notifications | BE | DONE | 2026-04-07 | Post-export edits/regeneration return status to in_progress; export and regeneration notifications implemented. |
 
 ### Phase 5 Tasks
 
@@ -114,6 +114,7 @@ These tables track implementation-sized tasks seeded from the phase roadmap belo
 
 | Task ID | Task | Type | Status | Date updated | Comments |
 |---|---|---|---|---|---|
+| B4-T01 | Fix generation callback contract, active-state handling, and cancel or timeout failure compatibility | BE/FE/AI | DONE | 2026-04-07 22:45:00 EDT | Worker callbacks now match the backend payload contract, generation timeout and cancellation failure reasons are schema-safe, stale callbacks are fenced off after cancel or timeout, and the detail page no longer treats failed `generation_pending` rows as active jobs. |
 | B1A-T01 | Persist extracted reference IDs from worker success callbacks and use them in duplicate detection | BE | DONE | 2026-04-07 15:51:23 EDT | Added `applications.extracted_reference_id`, persisted worker-extracted IDs, and updated duplicate detection to use the stored value before falling back to URL or description parsing. |
 | B1A-T02 | Restore fail-closed application-state transitions and tighten Chrome extension bridge trust checks | BE/FE | DONE | 2026-04-07 16:02:40 EDT | Manual-entry PATCH edits no longer clear recovery state, duplicate resolution now requires a pending duplicate-review state, retry queue failures restore manual-entry progress/notifications, and the Chrome extension now accepts bridge messages only from trusted local or already-connected app origins. |
 

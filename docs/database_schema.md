@@ -1,7 +1,7 @@
 # AI Resume Builder Database Schema
 
 **Document status:** Source of truth for the MVP database contract  
-**Last updated:** 2026-04-07 15:51:23 EDT
+**Last updated:** 2026-04-07
 **Primary product source:** `docs/resume_builder_PRD_v3.md`  
 **Related rollout guide:** `docs/backend-database-migration-runbook.md`
 
@@ -21,7 +21,7 @@
 |---|---|---|
 | `visible_status_enum` | `draft`, `needs_action`, `in_progress`, `complete` | User-visible application status |
 | `internal_state_enum` | `extraction_pending`, `extracting`, `manual_entry_required`, `duplicate_review_required`, `generation_pending`, `generating`, `resume_ready`, `regenerating_section`, `regenerating_full`, `export_in_progress` | Internal workflow state |
-| `failure_reason_enum` | `extraction_failed`, `generation_failed`, `regeneration_failed`, `export_failed` | Nullable failure classification |
+| `failure_reason_enum` | `extraction_failed`, `generation_failed`, `generation_timeout`, `generation_cancelled`, `regeneration_failed`, `export_failed` | Nullable recoverable failure classification |
 | `duplicate_resolution_status_enum` | `pending`, `dismissed`, `redirected` | Duplicate-review state |
 | `job_posting_origin_enum` | `linkedin`, `indeed`, `google_jobs`, `glassdoor`, `ziprecruiter`, `monster`, `dice`, `company_website`, `other` | Normalized job posting source. UI labels should present these as LinkedIn, Indeed, Google Jobs, Glassdoor, ZipRecruiter, Monster, Dice, Company Website, and Other. |
 | `notification_type_enum` | `info`, `success`, `warning`, `error` | In-app notification category |
@@ -37,6 +37,7 @@ Backend write paths must validate these shapes before persisting them.
 | `profiles.section_preferences` | Object map of section identifier to boolean, for example `{"summary": true, "professional_experience": true, "education": true, "skills": true}` | Default keys are the four MVP sections. Additional keys may exist for forward compatibility but are ignored unless the application supports them. |
 | `profiles.section_order` | Ordered JSON array of section identifiers, for example `["summary", "professional_experience", "education", "skills"]` | Must contain enabled sections in the order used for future generations. |
 | `applications.extraction_failure_details` | Object with `kind`, `provider`, `reference_id`, `blocked_url`, and `detected_at`, for example `{"kind": "blocked_source", "provider": "indeed", "reference_id": "9e8afb060bd31117", "blocked_url": "https://www.indeed.com/viewjob?jk=abc123", "detected_at": "2026-04-07T19:30:43+00:00"}` | Stores sanitized extraction failure diagnostics for recoverable failures. MVP currently persists blocked-source metadata only. |
+| `applications.generation_failure_details` | Object with `message` and optional `validation_errors` array, for example `{"message": "Validation failed", "validation_errors": ["Hallucinated employer detected", "Missing required section: skills"]}` | Stores generation, timeout, cancellation, validation, and regeneration failure details in a user-safe shape. |
 | `applications.extracted_reference_id` | Lowercase or normalized requisition/reference identifier, for example `"req-42"` | Stores the reference identifier extracted during capture so duplicate detection can use a persisted signal instead of re-parsing URLs or descriptions later. |
 | `applications.duplicate_match_fields` | Object with `matched_fields` array and `match_basis` string, for example `{"matched_fields": ["job_title", "company", "job_url"], "match_basis": "exact_job_url"}` | Stores what caused the duplicate warning, not the full comparison payload. `matched_fields` may include `job_posting_origin`, `job_url`, `reference_id`, or `job_description` only when those signals actually contributed to the duplicate warning. |
 | `resume_drafts.generation_params` | Object with `page_length`, `aggressiveness`, and `additional_instructions`, for example `{"page_length": "1_page", "aggressiveness": "medium", "additional_instructions": null}` | `page_length` values: `1_page`, `2_page`, `3_page`. `aggressiveness` values: `low`, `medium`, `high`. |
@@ -130,6 +131,7 @@ User-owned job application records and workflow state.
 | `internal_state` | `internal_state_enum` | No | `extraction_pending` | Internal workflow state. |
 | `failure_reason` | `failure_reason_enum` | Yes | `null` | Nullable recoverable failure type. |
 | `extraction_failure_details` | `jsonb` | Yes | `null` | See JSON contract above. |
+| `generation_failure_details` | `jsonb` | Yes | `null` | See JSON contract above. |
 | `applied` | `boolean` | No | `false` | User-controlled flag independent from `visible_status`. |
 | `duplicate_similarity_score` | `numeric(5,2)` | Yes | `null` | Percentage score from `0.00` to `100.00`. |
 | `duplicate_match_fields` | `jsonb` | Yes | `null` | See JSON contract above. |
@@ -153,6 +155,7 @@ User-owned job application records and workflow state.
 - `applied` must remain editable regardless of the primary visible status.
 - `job_posting_origin` may remain `NULL` after extraction succeeds if origin classification is unknown; the user may supply or edit it later.
 - `extraction_failure_details` stores sanitized recoverable diagnostics for extraction failures. MVP uses it for blocked-source metadata such as provider, reference ID, blocked URL, and detection timestamp.
+- `generation_failure_details` stores generation and regeneration failure diagnostics including timeout or cancellation copy plus an optional array of specific validation errors. Cleared on successful generation or regeneration.
 - `extracted_reference_id` should be written from the extraction pipeline when present and reused by duplicate detection before falling back to URL or description parsing.
 - Duplicate dismissal is stored on the application so the warning does not re-evaluate for that application after dismissal.
 - Duplicate detection must include normalized `job_posting_origin` when it is populated on both compared applications, and fall back to `job_title` + `company` matching when origin is missing on either side.

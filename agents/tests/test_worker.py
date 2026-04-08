@@ -13,6 +13,8 @@ from worker import (
     PageContext,
     SourceCapture,
     WorkerSettingsEnv,
+    build_generation_failure_payload,
+    build_generation_success_payload,
     build_page_context_from_capture,
     detect_blocked_page,
     extract_reference_id,
@@ -124,3 +126,39 @@ async def test_extraction_agent_uses_fallback_model_after_primary_failure():
     result = await agent.extract(build_context())
     assert result.company == "Acme"
     assert agent.calls == ["primary-model", "fallback-model"]
+
+
+def test_build_generation_success_payload_nests_generated_fields():
+    payload = build_generation_success_payload(
+        application_id="app-1",
+        user_id="user-1",
+        job_id="job-1",
+        content_md="# Resume",
+        generation_params={"page_length": "1_page"},
+        sections_snapshot={"enabled_sections": ["summary"], "section_order": ["summary"]},
+    )
+
+    assert payload["event"] == "succeeded"
+    assert payload["generated"]["content_md"] == "# Resume"
+    assert payload["generated"]["generation_params"]["page_length"] == "1_page"
+
+
+def test_build_generation_failure_payload_normalizes_validation_errors():
+    payload = build_generation_failure_payload(
+        application_id="app-1",
+        user_id="user-1",
+        job_id="job-1",
+        message="Resume validation failed.",
+        terminal_error_code="generation_failed",
+        validation_errors=[
+            {"type": "hallucination", "section": "summary", "detail": "Invented employer"},
+            "Missing required section: skills",
+        ],
+    )
+
+    assert payload["event"] == "failed"
+    assert payload["failure"]["terminal_error_code"] == "generation_failed"
+    assert payload["failure"]["failure_details"]["validation_errors"] == [
+        "summary: Invented employer",
+        "Missing required section: skills",
+    ]

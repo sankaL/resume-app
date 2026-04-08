@@ -11,9 +11,11 @@ from app.db.applications import (
     DuplicateCandidateRecord,
     MatchedApplicationRecord,
 )
+from app.db.resume_drafts import ResumeDraftRecord
 from app.main import app
 from app.services.application_manager import (
     ApplicationService,
+    GenerationCallbackPayload,
     SourceCapturePayload,
     WorkerCallbackPayload,
     WorkerSuccessPayload,
@@ -256,19 +258,69 @@ class FakeEmailSender:
         return "email-1"
 
 
-def build_service(*, queue_should_fail: bool = False) -> tuple[ApplicationService, FakeApplicationRepository, FakeNotificationRepository, FakeProgressStore, FakeExtractionJobQueue, FakeEmailSender]:
+class FakeDraftRepository:
+    def __init__(self) -> None:
+        self.drafts: dict[str, ResumeDraftRecord] = {}
+
+    def fetch_draft(self, user_id: str, application_id: str) -> Optional[ResumeDraftRecord]:
+        draft = self.drafts.get(application_id)
+        if draft and draft.user_id == user_id:
+            return draft
+        return None
+
+    def upsert_draft(
+        self,
+        *,
+        application_id: str,
+        user_id: str,
+        content_md: str,
+        generation_params: dict[str, Any],
+        sections_snapshot: dict[str, Any],
+    ) -> ResumeDraftRecord:
+        draft = ResumeDraftRecord(
+            id=f"draft-{application_id}",
+            application_id=application_id,
+            user_id=user_id,
+            content_md=content_md,
+            generation_params=generation_params,
+            sections_snapshot=sections_snapshot,
+            last_generated_at="2026-04-07T12:10:00+00:00",
+            last_exported_at=None,
+            updated_at="2026-04-07T12:10:00+00:00",
+        )
+        self.drafts[application_id] = draft
+        return draft
+
+
+def build_service(
+    *,
+    queue_should_fail: bool = False,
+    draft_repository: Optional[FakeDraftRepository] = None,
+) -> tuple[
+    ApplicationService,
+    FakeApplicationRepository,
+    FakeNotificationRepository,
+    FakeProgressStore,
+    FakeExtractionJobQueue,
+    FakeEmailSender,
+    FakeDraftRepository,
+]:
     repository = FakeApplicationRepository()
     notifications = FakeNotificationRepository()
     progress = FakeProgressStore()
     queue = FakeExtractionJobQueue(should_fail=queue_should_fail)
     email = FakeEmailSender()
     profiles = FakeProfileRepository()
+    drafts = draft_repository or FakeDraftRepository()
     service = ApplicationService(
         repository=repository,
+        base_resume_repository=None,
+        draft_repository=drafts,
         profile_repository=profiles,
         notification_repository=notifications,
         progress_store=progress,
         extraction_job_queue=queue,
+        generation_job_queue=None,
         email_sender=email,
         settings=type(
             "Settings",
@@ -276,12 +328,12 @@ def build_service(*, queue_should_fail: bool = False) -> tuple[ApplicationServic
             {"duplicate_similarity_threshold": 85.0, "app_url": "http://localhost:5173"},
         )(),
     )
-    return service, repository, notifications, progress, queue, email
+    return service, repository, notifications, progress, queue, email, drafts
 
 
 @pytest.mark.asyncio
 async def test_create_application_queues_extraction_and_seeds_progress():
-    service, _, _, progress_store, queue, _ = build_service()
+    service, _, _, progress_store, queue, _, _ = build_service()
 
     record = await service.create_application(user_id="user-1", job_url="https://example.com/jobs/1")
 
@@ -293,7 +345,7 @@ async def test_create_application_queues_extraction_and_seeds_progress():
 
 @pytest.mark.asyncio
 async def test_create_application_falls_back_to_manual_entry_when_queue_fails():
-    service, _, notifications, progress_store, _, email = build_service(queue_should_fail=True)
+    service, _, notifications, progress_store, _, email, _ = build_service(queue_should_fail=True)
 
     record = await service.create_application(user_id="user-1", job_url="https://example.com/jobs/1")
 
@@ -306,7 +358,7 @@ async def test_create_application_falls_back_to_manual_entry_when_queue_fails():
 
 @pytest.mark.asyncio
 async def test_manual_entry_with_duplicate_candidate_marks_duplicate_review_required():
-    service, repository, notifications, _, _, _ = build_service()
+    service, repository, notifications, _, _, _, _ = build_service()
     existing = repository.create_application(
         user_id="user-1",
         job_url="https://example.com/jobs/1",
@@ -351,7 +403,7 @@ async def test_manual_entry_with_duplicate_candidate_marks_duplicate_review_requ
 
 @pytest.mark.asyncio
 async def test_patching_manual_entry_fields_keeps_manual_entry_state_until_submit():
-    service, repository, _, _, _, _ = build_service()
+    service, repository, _, _, _, _, _ = build_service()
     created = repository.create_application(
         user_id="user-1",
         job_url="https://example.com/jobs/1",
@@ -384,7 +436,7 @@ async def test_patching_manual_entry_fields_keeps_manual_entry_state_until_submi
 
 @pytest.mark.asyncio
 async def test_missing_company_skips_duplicate_then_rechecks_when_company_is_added():
-    service, repository, _, _, _, _ = build_service()
+    service, repository, _, _, _, _, _ = build_service()
     candidate = repository.create_application(
         user_id="user-1",
         job_url="https://www.linkedin.com/jobs/view/123456",
@@ -439,7 +491,7 @@ async def test_missing_company_skips_duplicate_then_rechecks_when_company_is_add
 
 @pytest.mark.asyncio
 async def test_persisted_reference_id_can_drive_duplicate_review_without_url_match():
-    service, repository, notifications, _, _, _ = build_service()
+    service, repository, notifications, _, _, _, _ = build_service()
     existing = repository.create_application(
         user_id="user-1",
         job_url="https://company.example/jobs/platform-engineer",
@@ -488,7 +540,7 @@ async def test_persisted_reference_id_can_drive_duplicate_review_without_url_mat
 
 @pytest.mark.asyncio
 async def test_worker_blocked_failure_persists_failure_details():
-    service, repository, notifications, _, _, _ = build_service()
+    service, repository, notifications, _, _, _, _ = build_service()
     created = repository.create_application(
         user_id="user-1",
         job_url="https://www.indeed.com/viewjob?jk=abc123",
@@ -526,7 +578,7 @@ async def test_worker_blocked_failure_persists_failure_details():
 
 @pytest.mark.asyncio
 async def test_recover_from_source_queues_capture_payload():
-    service, repository, notifications, progress_store, queue, _ = build_service()
+    service, repository, notifications, progress_store, queue, _, _ = build_service()
     created = repository.create_application(
         user_id="user-1",
         job_url="https://www.indeed.com/viewjob?jk=abc123",
@@ -577,7 +629,7 @@ async def test_recover_from_source_queues_capture_payload():
 
 @pytest.mark.asyncio
 async def test_retry_extraction_restores_manual_entry_when_queue_fails():
-    service, repository, notifications, progress_store, _, email = build_service(queue_should_fail=True)
+    service, repository, notifications, progress_store, _, email, _ = build_service(queue_should_fail=True)
     created = repository.create_application(
         user_id="user-1",
         job_url="https://example.com/jobs/1",
@@ -611,7 +663,7 @@ async def test_retry_extraction_restores_manual_entry_when_queue_fails():
 
 @pytest.mark.asyncio
 async def test_duplicate_resolution_requires_pending_duplicate_review_state():
-    service, repository, _, _, _, _ = build_service()
+    service, repository, _, _, _, _, _ = build_service()
     created = repository.create_application(
         user_id="user-1",
         job_url="https://example.com/jobs/1",
@@ -635,3 +687,179 @@ def test_applications_endpoint_requires_authentication():
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Missing bearer token."
+
+
+@pytest.mark.asyncio
+async def test_generation_success_callback_persists_draft_and_marks_resume_ready():
+    service, repository, notifications, progress_store, _, _, drafts = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="draft",
+        internal_state="generating",
+    )
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-1",
+            workflow_kind="generation",
+            state="generating",
+            message="Resume generation is running.",
+            percent_complete=25,
+            created_at="2026-04-07T12:00:00+00:00",
+            updated_at="2026-04-07T12:00:00+00:00",
+            completed_at=None,
+            terminal_error_code=None,
+        ),
+    )
+
+    updated = await service.handle_generation_callback(
+        GenerationCallbackPayload.model_validate(
+            {
+                "application_id": created.id,
+                "user_id": "user-1",
+                "job_id": "job-1",
+                "event": "succeeded",
+                "generated": {
+                    "content_md": "# Resume",
+                    "generation_params": {"page_length": "1_page", "aggressiveness": "medium"},
+                    "sections_snapshot": {"enabled_sections": ["summary"], "section_order": ["summary"]},
+                },
+            }
+        )
+    )
+
+    assert updated.internal_state == "resume_ready"
+    assert updated.failure_reason is None
+    assert drafts.fetch_draft("user-1", created.id) is not None
+    assert drafts.fetch_draft("user-1", created.id).content_md == "# Resume"
+    assert (await progress_store.get(created.id)).state == "resume_ready"
+    assert notifications.notifications[-1]["notification_type"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_cancel_generation_rejects_retryable_failed_row():
+    service, repository, notifications, progress_store, _, _, _ = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="needs_action",
+        internal_state="generation_pending",
+    )
+    repository.update_application(
+        application_id=created.id,
+        user_id="user-1",
+        updates={"failure_reason": "generation_failed"},
+    )
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-1",
+            workflow_kind="generation",
+            state="generation_failed",
+            message="Generation failed.",
+            percent_complete=100,
+            created_at="2026-04-07T12:00:00+00:00",
+            updated_at="2026-04-07T12:00:00+00:00",
+            completed_at="2026-04-07T12:00:00+00:00",
+            terminal_error_code="generation_failed",
+        ),
+    )
+
+    with pytest.raises(PermissionError) as exc_info:
+        await service.cancel_generation(user_id="user-1", application_id=created.id)
+
+    assert str(exc_info.value) == "No active generation to cancel."
+    assert notifications.notifications == []
+
+
+@pytest.mark.asyncio
+async def test_cancelled_generation_ignores_stale_success_callback():
+    service, repository, _, progress_store, _, _, drafts = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="draft",
+        internal_state="generating",
+    )
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-1",
+            workflow_kind="generation",
+            state="generating",
+            message="Resume generation is running.",
+            percent_complete=50,
+            created_at="2026-04-07T12:00:00+00:00",
+            updated_at="2026-04-07T12:00:00+00:00",
+            completed_at=None,
+            terminal_error_code=None,
+        ),
+    )
+
+    detail = await service.cancel_generation(user_id="user-1", application_id=created.id)
+
+    assert detail.application.failure_reason == "generation_cancelled"
+    cancelled_progress = await progress_store.get(created.id)
+    assert cancelled_progress is not None
+    assert cancelled_progress.terminal_error_code == "generation_cancelled"
+    assert cancelled_progress.job_id != "job-1"
+
+    updated = await service.handle_generation_callback(
+        GenerationCallbackPayload.model_validate(
+            {
+                "application_id": created.id,
+                "user_id": "user-1",
+                "job_id": "job-1",
+                "event": "succeeded",
+                "generated": {
+                    "content_md": "# Stale Resume",
+                    "generation_params": {"page_length": "1_page", "aggressiveness": "medium"},
+                    "sections_snapshot": {"enabled_sections": ["summary"], "section_order": ["summary"]},
+                },
+            }
+        )
+    )
+
+    assert updated.failure_reason == "generation_cancelled"
+    assert drafts.fetch_draft("user-1", created.id) is None
+
+
+@pytest.mark.asyncio
+async def test_stuck_generation_recovery_marks_timeout_and_terminal_progress():
+    service, repository, _, progress_store, _, _, _ = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="draft",
+        internal_state="generating",
+    )
+    repository.records[created.id] = created.model_copy(
+        update={"updated_at": "2026-04-07T10:00:00+00:00"}
+    )
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-1",
+            workflow_kind="generation",
+            state="generating",
+            message="Resume generation is running.",
+            percent_complete=50,
+            created_at="2026-04-07T10:00:00+00:00",
+            updated_at="2026-04-07T10:00:00+00:00",
+            completed_at=None,
+            terminal_error_code=None,
+        ),
+    )
+
+    recovered = await service._detect_and_recover_stuck_generation(repository.records[created.id])
+
+    assert recovered is True
+    updated = repository.fetch_application("user-1", created.id)
+    assert updated is not None
+    assert updated.failure_reason == "generation_timeout"
+    assert updated.internal_state == "generation_pending"
+    timeout_progress = await progress_store.get(created.id)
+    assert timeout_progress is not None
+    assert timeout_progress.terminal_error_code == "generation_timeout"
+    assert timeout_progress.job_id != "job-1"

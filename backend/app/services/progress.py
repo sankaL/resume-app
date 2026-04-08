@@ -32,13 +32,14 @@ def build_progress(
     state: str,
     message: str,
     percent_complete: int,
+    workflow_kind: str = "extraction",
     completed_at: Optional[str] = None,
     terminal_error_code: Optional[str] = None,
     created_at: Optional[str] = None,
 ) -> ProgressRecord:
     return ProgressRecord(
         job_id=job_id,
-        workflow_kind="extraction",
+        workflow_kind=workflow_kind,
         state=state,
         message=message,
         percent_complete=percent_complete,

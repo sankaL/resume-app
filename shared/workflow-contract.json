@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "visible_statuses": [
     { "id": "draft", "label": "Draft" },
     { "id": "needs_action", "label": "Needs Action" },
@@ -21,6 +21,8 @@
   "failure_reasons": [
     "extraction_failed",
     "generation_failed",
+    "generation_timeout",
+    "generation_cancelled",
     "regeneration_failed",
     "export_failed"
   ],

@@ -47,6 +47,7 @@ class ApplicationRecord(BaseModel):
     internal_state: str
     failure_reason: Optional[str]
     extraction_failure_details: Optional[dict[str, Any]] = None
+    generation_failure_details: Optional[dict[str, Any]] = None
     applied: bool
     duplicate_similarity_score: Optional[float]
     duplicate_match_fields: Optional[dict[str, Any]]
@@ -95,6 +96,7 @@ select
   a.internal_state::text,
   a.failure_reason::text,
   a.extraction_failure_details,
+  a.generation_failure_details,
   a.applied,
   a.duplicate_similarity_score::float8,
   a.duplicate_match_fields,

@@ -113,7 +113,7 @@ Application statuses are kept lightweight and action-oriented for the user.
 | Status | When It Applies |
 |---|---|
 | **Draft** | Application exists but no usable tailored resume draft yet. Covers: just submitted URL, extraction pending or running, details extracted but generation not started. |
-| **Needs Action** | User must do something before the workflow can continue. Covers: extraction failed (manual entry required), duplicate review unresolved, generation failed, regeneration failed, export failed. |
+| **Needs Action** | User must do something before the workflow can continue. Covers: extraction failed (manual entry required), duplicate review unresolved, generation failed, generation timed out, generation cancelled, regeneration failed, export failed. |
 | **In Progress** | A tailored resume draft exists and the user is reviewing or iterating. Covers: generation complete, user editing, after section or full regeneration, after editing a previously exported resume. |
 | **Complete** | The current draft has been successfully exported as a PDF. **Not permanent** — if the user edits or regenerates after export, status returns to In Progress. |
 
@@ -142,6 +142,8 @@ These are not user-facing but must be tracked internally for workflow logic and 
 **Failure reasons (tracked alongside state):**
 - `extraction_failed`
 - `generation_failed`
+- `generation_timeout`
+- `generation_cancelled`
 - `regeneration_failed`
 - `export_failed`
 

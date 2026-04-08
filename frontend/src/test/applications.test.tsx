@@ -7,18 +7,26 @@ import { ApplicationsDashboardPage } from "@/routes/ApplicationsDashboardPage";
 import { ExtensionPage } from "@/routes/ExtensionPage";
 
 const api = vi.hoisted(() => ({
+  cancelGeneration: vi.fn(),
   createApplication: vi.fn(),
+  exportPdf: vi.fn(),
   fetchExtensionStatus: vi.fn(),
   fetchApplicationDetail: vi.fn(),
   fetchApplicationProgress: vi.fn(),
+  fetchDraft: vi.fn(),
   issueExtensionToken: vi.fn(),
+  listBaseResumes: vi.fn(),
   listApplications: vi.fn(),
   patchApplication: vi.fn(),
   recoverApplicationFromSource: vi.fn(),
   resolveDuplicate: vi.fn(),
   revokeExtensionToken: vi.fn(),
   retryExtraction: vi.fn(),
+  saveDraft: vi.fn(),
   submitManualEntry: vi.fn(),
+  triggerFullRegeneration: vi.fn(),
+  triggerGeneration: vi.fn(),
+  triggerSectionRegeneration: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => api);
@@ -26,6 +34,8 @@ vi.mock("@/lib/api", () => api);
 describe("phase 1 applications UI", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    api.fetchDraft.mockResolvedValue(null);
+    api.listBaseResumes.mockResolvedValue([]);
   });
 
   it("renders the dashboard empty state when there are no applications", async () => {
@@ -229,5 +239,132 @@ describe("phase 1 applications UI", () => {
     expect(await screen.findByText(/current-tab capture/i)).toBeInTheDocument();
     expect(screen.getByText(/no active extension token is connected/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /connect extension/i })).toBeInTheDocument();
+  });
+
+  it("treats generation_pending with a failure reason as failed, not active", async () => {
+    api.fetchApplicationDetail.mockResolvedValue({
+      id: "app-1",
+      job_url: "https://example.com/job",
+      job_title: "Backend Engineer",
+      company: "Acme",
+      job_description: "Build APIs",
+      extracted_reference_id: null,
+      job_posting_origin: "linkedin",
+      job_posting_origin_other_text: null,
+      base_resume_id: "resume-1",
+      base_resume_name: "Default Resume",
+      visible_status: "needs_action",
+      internal_state: "generation_pending",
+      failure_reason: "generation_failed",
+      extraction_failure_details: null,
+      generation_failure_details: {
+        message: "Resume validation failed.",
+        validation_errors: ["summary: Invented employer"],
+      },
+      applied: false,
+      duplicate_similarity_score: null,
+      duplicate_resolution_status: null,
+      duplicate_matched_application_id: null,
+      notes: null,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:00:00Z",
+      has_action_required_notification: true,
+      duplicate_warning: null,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/app/applications/app-1"]}>
+        <Routes>
+          <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText(/generation failed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/generation progress/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /cancel generation/i })).not.toBeInTheDocument();
+    expect(api.fetchApplicationProgress).not.toHaveBeenCalled();
+  });
+
+  it("polls immediately for active generation and swaps to failure UI on terminal progress", async () => {
+    api.fetchApplicationDetail
+      .mockResolvedValueOnce({
+        id: "app-1",
+        job_url: "https://example.com/job",
+        job_title: "Backend Engineer",
+        company: "Acme",
+        job_description: "Build APIs",
+        extracted_reference_id: null,
+        job_posting_origin: "linkedin",
+        job_posting_origin_other_text: null,
+        base_resume_id: "resume-1",
+        base_resume_name: "Default Resume",
+        visible_status: "draft",
+        internal_state: "generating",
+        failure_reason: null,
+        extraction_failure_details: null,
+        generation_failure_details: null,
+        applied: false,
+        duplicate_similarity_score: null,
+        duplicate_resolution_status: null,
+        duplicate_matched_application_id: null,
+        notes: null,
+        created_at: "2026-04-07T12:00:00Z",
+        updated_at: "2026-04-07T12:00:00Z",
+        has_action_required_notification: false,
+        duplicate_warning: null,
+      })
+      .mockResolvedValueOnce({
+        id: "app-1",
+        job_url: "https://example.com/job",
+        job_title: "Backend Engineer",
+        company: "Acme",
+        job_description: "Build APIs",
+        extracted_reference_id: null,
+        job_posting_origin: "linkedin",
+        job_posting_origin_other_text: null,
+        base_resume_id: "resume-1",
+        base_resume_name: "Default Resume",
+        visible_status: "needs_action",
+        internal_state: "generation_pending",
+        failure_reason: "generation_failed",
+        extraction_failure_details: null,
+        generation_failure_details: {
+          message: "Resume generation failed unexpectedly.",
+          validation_errors: null,
+        },
+        applied: false,
+        duplicate_similarity_score: null,
+        duplicate_resolution_status: null,
+        duplicate_matched_application_id: null,
+        notes: null,
+        created_at: "2026-04-07T12:00:00Z",
+        updated_at: "2026-04-07T12:05:00Z",
+        has_action_required_notification: true,
+        duplicate_warning: null,
+      });
+    api.fetchApplicationProgress.mockResolvedValue({
+      job_id: "job-1",
+      workflow_kind: "generation",
+      state: "generation_pending",
+      message: "Resume generation failed unexpectedly.",
+      percent_complete: 100,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:05:00Z",
+      completed_at: "2026-04-07T12:05:00Z",
+      terminal_error_code: "generation_failed",
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/app/applications/app-1"]}>
+        <Routes>
+          <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/resume generation failed unexpectedly/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /cancel generation/i })).not.toBeInTheDocument();
   });
 });

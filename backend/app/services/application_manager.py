@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import Depends
@@ -13,11 +16,19 @@ from app.db.applications import (
     MatchedApplicationRecord,
     get_application_repository,
 )
+from app.db.base_resumes import BaseResumeRepository, get_base_resume_repository
 from app.db.notifications import NotificationRepository, get_notification_repository
 from app.db.profiles import ProfileRepository, get_profile_repository
+from app.db.resume_drafts import ResumeDraftRecord, ResumeDraftRepository, get_resume_draft_repository
 from app.services.duplicates import DuplicateDetector
 from app.services.email import EmailMessage, EmailSender, build_email_sender
-from app.services.jobs import ExtractionJobQueue, get_extraction_job_queue
+from app.services.jobs import (
+    ExtractionJobQueue,
+    GenerationJobQueue,
+    get_extraction_job_queue,
+    get_generation_job_queue,
+)
+from app.services.pdf_export import generate_pdf
 from app.services.progress import (
     ProgressRecord,
     RedisProgressStore,
@@ -25,6 +36,18 @@ from app.services.progress import (
     get_progress_store,
 )
 from app.services.workflow import derive_visible_status
+
+logger = logging.getLogger(__name__)
+
+FULL_GENERATION_TIMEOUT_SECONDS = 90
+SECTION_REGENERATION_TIMEOUT_SECONDS = 45
+ACTIVE_GENERATION_STATES = {"generating", "regenerating_full", "regenerating_section"}
+ACTIVE_GENERATION_PROGRESS_STATES = {
+    "generation_pending",
+    "generating",
+    "regenerating_full",
+    "regenerating_section",
+}
 
 
 class DuplicateWarningPayload(BaseModel):
@@ -96,23 +119,60 @@ class WorkerCallbackPayload(BaseModel):
     failure: Optional[WorkerFailurePayload] = None
 
 
+class GenerationSuccessPayload(BaseModel):
+    content_md: str
+    generation_params: dict[str, Any]
+    sections_snapshot: dict[str, Any]
+
+
+class GenerationFailurePayload(BaseModel):
+    message: str
+    terminal_error_code: str = "generation_failed"
+    failure_details: Optional[dict[str, Any]] = None
+
+
+class GenerationCallbackPayload(BaseModel):
+    application_id: str
+    user_id: str
+    job_id: str
+    event: str
+    generated: Optional[GenerationSuccessPayload] = None
+    failure: Optional[GenerationFailurePayload] = None
+
+
+class RegenerationCallbackPayload(BaseModel):
+    application_id: str
+    user_id: str
+    job_id: str
+    event: str
+    regeneration_target: str = "full"
+    generated: Optional[GenerationSuccessPayload] = None
+    failure: Optional[GenerationFailurePayload] = None
+
+
 class ApplicationService:
     def __init__(
         self,
         *,
         repository: ApplicationRepository,
+        base_resume_repository: BaseResumeRepository,
+        draft_repository: ResumeDraftRepository,
         profile_repository: ProfileRepository,
         notification_repository: NotificationRepository,
         progress_store: RedisProgressStore,
         extraction_job_queue: ExtractionJobQueue,
+        generation_job_queue: GenerationJobQueue,
         email_sender: EmailSender,
         settings: Settings,
     ) -> None:
         self.repository = repository
+        self.base_resume_repository = base_resume_repository
+        self.draft_repository = draft_repository
         self.profile_repository = profile_repository
         self.notification_repository = notification_repository
         self.progress_store = progress_store
         self.extraction_job_queue = extraction_job_queue
+        self.generation_job_queue = generation_job_queue
         self.email_sender = email_sender
         self.settings = settings
         self.duplicate_detector = DuplicateDetector(settings.duplicate_similarity_threshold)
@@ -202,6 +262,13 @@ class ApplicationService:
         application_id: str,
     ) -> ApplicationDetailPayload:
         record = self._require_application(user_id=user_id, application_id=application_id)
+        
+        # Detect and recover stuck generation states
+        recovered = await self._detect_and_recover_stuck_generation(record)
+        if recovered:
+            # Re-fetch after recovery
+            record = self._refresh(user_id=user_id, application_id=application_id)
+        
         return self._detail_payload(record)
 
     async def patch_application(
@@ -386,6 +453,121 @@ class ApplicationService:
         self.notification_repository.clear_action_required(user_id=user_id, application_id=application_id)
         return self._detail_payload(updated)
 
+    async def cancel_generation(
+        self,
+        *,
+        user_id: str,
+        application_id: str,
+    ) -> ApplicationDetailPayload:
+        record = self._require_application(user_id=user_id, application_id=application_id)
+        current_progress = await self.progress_store.get(application_id)
+
+        if not self._is_generation_active(record=record, progress=current_progress):
+            raise PermissionError("No active generation to cancel.")
+
+        target_state = self._target_state_after_generation_stop(record, current_progress)
+
+        updated = self.repository.update_application(
+            application_id=application_id,
+            user_id=user_id,
+            updates=self._workflow_updates(
+                internal_state=target_state,
+                failure_reason="generation_cancelled",
+                generation_failure_details={"message": "Generation was cancelled by user."},
+            ),
+        )
+        await self._set_terminal_generation_progress(
+            record=updated,
+            previous_progress=current_progress,
+            target_state=target_state,
+            message="Generation was cancelled.",
+            terminal_error_code="generation_cancelled",
+        )
+        self.notification_repository.create_notification(
+            user_id=user_id,
+            application_id=application_id,
+            notification_type="info",
+            message="Generation was cancelled.",
+            action_required=False,
+        )
+
+        return self._detail_payload(updated)
+
+    async def _detect_and_recover_stuck_generation(
+        self,
+        record: ApplicationRecord,
+    ) -> bool:
+        """Detect if a generation job has been stuck and recover it.
+        
+        Returns True if recovery was performed.
+        """
+        current_progress = await self.progress_store.get(record.id)
+        if not self._is_generation_active(record=record, progress=current_progress):
+            return False
+
+        try:
+            activity_marker = (
+                current_progress.updated_at
+                if current_progress is not None and current_progress.completed_at is None
+                else record.updated_at
+            )
+            updated_at = datetime.fromisoformat(activity_marker)
+        except (ValueError, TypeError):
+            return False
+
+        now = datetime.now(timezone.utc)
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+
+        elapsed = (now - updated_at).total_seconds()
+        timeout_seconds = self._generation_timeout_seconds(record, current_progress)
+        if elapsed < timeout_seconds:
+            return False
+
+        logger.warning(
+            "Recovering stuck generation job %s (state=%s, elapsed=%.0fs)",
+            record.id,
+            record.internal_state,
+            elapsed,
+        )
+
+        target_state = self._target_state_after_generation_stop(record, current_progress)
+        is_initial_generation = target_state == "generation_pending"
+        failure_reason = "generation_timeout" if is_initial_generation else "regeneration_failed"
+        timeout_message = (
+            "Generation timed out. You can retry with the same settings."
+            if is_initial_generation
+            else "Regeneration timed out. You can retry with the same settings."
+        )
+
+        updated = self.repository.update_application(
+            application_id=record.id,
+            user_id=record.user_id,
+            updates=self._workflow_updates(
+                internal_state=target_state,
+                failure_reason=failure_reason,
+                generation_failure_details={
+                    "message": timeout_message,
+                },
+            ),
+        )
+        await self._set_terminal_generation_progress(
+            record=updated,
+            previous_progress=current_progress,
+            target_state=target_state,
+            message=timeout_message,
+            terminal_error_code=failure_reason,
+        )
+        self.notification_repository.create_notification(
+            user_id=record.user_id,
+            application_id=record.id,
+            notification_type="warning",
+            message=timeout_message,
+            action_required=True,
+        )
+
+        return True
+
     async def get_progress(self, *, user_id: str, application_id: str) -> ProgressRecord:
         record = self._require_application(user_id=user_id, application_id=application_id)
         progress = await self.progress_store.get(application_id)
@@ -459,6 +641,684 @@ class ApplicationService:
             return await self._run_duplicate_resolution_flow(updated)
 
         raise ValueError("Unsupported worker event.")
+
+    async def trigger_generation(
+        self,
+        *,
+        user_id: str,
+        application_id: str,
+        base_resume_id: str,
+        target_length: str,
+        aggressiveness: str,
+        additional_instructions: Optional[str] = None,
+    ) -> ApplicationDetailPayload:
+        record = self._require_application(user_id=user_id, application_id=application_id)
+
+        if record.internal_state not in ("generation_pending", "resume_ready"):
+            raise PermissionError("Application is not ready for generation.")
+
+        if not record.job_title or not record.job_description:
+            raise ValueError("Job title and description are required before generation.")
+
+        if record.duplicate_resolution_status == "pending":
+            raise PermissionError("Unresolved duplicate must be resolved before generation.")
+
+        base_resume = self.base_resume_repository.fetch_resume(user_id, base_resume_id)
+        if base_resume is None:
+            raise LookupError("Base resume not found.")
+
+        profile = self.profile_repository.fetch_profile(user_id)
+        if profile is None:
+            raise ValueError("User profile is required for generation.")
+
+        personal_info = {
+            "name": profile.name,
+            "email": profile.email,
+            "phone": profile.phone,
+            "address": profile.address,
+        }
+
+        section_prefs = self._build_section_preferences(profile)
+
+        generation_settings = {
+            "page_length": target_length,
+            "aggressiveness": aggressiveness,
+            "additional_instructions": additional_instructions,
+        }
+
+        updated = self.repository.update_application(
+            application_id=application_id,
+            user_id=user_id,
+            updates={
+                "base_resume_id": base_resume_id,
+                **self._workflow_updates(
+                    internal_state="generating",
+                    failure_reason=None,
+                    generation_failure_details=None,
+                ),
+            },
+        )
+        self.notification_repository.clear_action_required(
+            user_id=user_id, application_id=application_id,
+        )
+
+        try:
+            job_id = await self.generation_job_queue.enqueue(
+                application_id=application_id,
+                user_id=user_id,
+                job_title=record.job_title,
+                company_name=record.company,
+                job_description=record.job_description,
+                base_resume_content=base_resume.content_md,
+                personal_info=personal_info,
+                section_preferences=section_prefs,
+                generation_settings=generation_settings,
+            )
+            await self.progress_store.set(
+                application_id,
+                build_progress(
+                    job_id=job_id,
+                    workflow_kind="generation",
+                    state="generation_pending",
+                    message="Resume generation is queued.",
+                    percent_complete=0,
+                ),
+            )
+            return self._detail_payload(updated)
+        except Exception:
+            failed = await self._mark_generation_failure(
+                record=updated,
+                message="Generation could not be started. Try again or adjust settings.",
+            )
+            return self._detail_payload(failed)
+
+    async def handle_generation_callback(
+        self, payload: GenerationCallbackPayload,
+    ) -> ApplicationRecord:
+        record = self.repository.fetch_application_unscoped(payload.application_id)
+        if record is None:
+            raise LookupError("Application not found.")
+        if record.user_id != payload.user_id:
+            raise PermissionError("Worker payload user mismatch.")
+
+        current_progress = await self.progress_store.get(record.id)
+        if current_progress is not None and current_progress.job_id != payload.job_id:
+            return record
+
+        if payload.event == "started":
+            await self.progress_store.set(
+                record.id,
+                build_progress(
+                    job_id=payload.job_id,
+                    workflow_kind="generation",
+                    state="generating",
+                    message="Resume generation is running.",
+                    percent_complete=25,
+                ),
+            )
+            return self.repository.update_application(
+                application_id=record.id,
+                user_id=record.user_id,
+                updates=self._workflow_updates(
+                    internal_state="generating",
+                    failure_reason=None,
+                    generation_failure_details=None,
+                ),
+            )
+
+        if payload.event == "progress" and current_progress is not None:
+            current_progress.percent_complete = min(
+                current_progress.percent_complete + 15, 90,
+            )
+            current_progress.updated_at = build_progress(
+                job_id=payload.job_id, state="generating",
+                message="Generation in progress.", percent_complete=0,
+            ).updated_at
+            await self.progress_store.set(record.id, current_progress)
+            return record
+
+        if payload.event == "failed":
+            failure_msg = payload.failure.message if payload.failure else "Generation failed."
+            failure_details = payload.failure.failure_details if payload.failure else None
+            terminal_code = payload.failure.terminal_error_code if payload.failure else "generation_failed"
+            failure_reason = (
+                terminal_code
+                if terminal_code in {"generation_failed", "generation_timeout"}
+                else "generation_failed"
+            )
+
+            completed_progress = build_progress(
+                job_id=payload.job_id,
+                workflow_kind="generation",
+                state="generation_failed",
+                message=failure_msg,
+                percent_complete=100,
+                terminal_error_code=terminal_code,
+            )
+            completed_progress.completed_at = completed_progress.updated_at
+            await self.progress_store.set(record.id, completed_progress)
+
+            return await self._mark_generation_failure(
+                record=record,
+                message=failure_msg,
+                failure_details=failure_details,
+                failure_reason=failure_reason,
+            )
+
+        if payload.event == "succeeded":
+            if payload.generated is None:
+                raise ValueError("Missing generated payload for success callback.")
+
+            self.draft_repository.upsert_draft(
+                application_id=record.id,
+                user_id=record.user_id,
+                content_md=payload.generated.content_md,
+                generation_params=payload.generated.generation_params,
+                sections_snapshot=payload.generated.sections_snapshot,
+            )
+
+            updated = self.repository.update_application(
+                application_id=record.id,
+                user_id=record.user_id,
+                updates=self._workflow_updates(
+                    internal_state="resume_ready",
+                    failure_reason=None,
+                    generation_failure_details=None,
+                ),
+            )
+
+            completed_progress = build_progress(
+                job_id=payload.job_id,
+                workflow_kind="generation",
+                state="resume_ready",
+                message="Resume generation completed.",
+                percent_complete=100,
+            )
+            completed_progress.completed_at = completed_progress.updated_at
+            await self.progress_store.set(record.id, completed_progress)
+
+            self.notification_repository.clear_action_required(
+                user_id=record.user_id, application_id=record.id,
+            )
+            self.notification_repository.create_notification(
+                user_id=record.user_id,
+                application_id=record.id,
+                notification_type="success",
+                message="Resume generation completed successfully.",
+                action_required=False,
+            )
+            await self._send_generation_email(
+                record=updated,
+                subject="Resume Builder: resume generated",
+                body="Your tailored resume has been generated and is ready for review.",
+            )
+            return updated
+
+        raise ValueError("Unsupported generation callback event.")
+
+    async def trigger_full_regeneration(
+        self,
+        *,
+        user_id: str,
+        application_id: str,
+        target_length: str,
+        aggressiveness: str,
+        additional_instructions: Optional[str] = None,
+    ) -> ApplicationDetailPayload:
+        record = self._require_application(user_id=user_id, application_id=application_id)
+
+        if record.internal_state not in ("resume_ready",):
+            raise PermissionError("Application must have an existing draft for regeneration.")
+
+        draft = self.draft_repository.fetch_draft(user_id=user_id, application_id=application_id)
+        if draft is None:
+            raise PermissionError("No existing draft found for regeneration.")
+
+        if not record.job_title or not record.job_description:
+            raise ValueError("Job title and description are required for regeneration.")
+
+        base_resume_id = record.base_resume_id
+        if not base_resume_id:
+            raise ValueError("A base resume must be linked to the application for regeneration.")
+
+        base_resume = self.base_resume_repository.fetch_resume(user_id, base_resume_id)
+        if base_resume is None:
+            raise LookupError("Linked base resume not found.")
+
+        profile = self.profile_repository.fetch_profile(user_id)
+        if profile is None:
+            raise ValueError("User profile is required for regeneration.")
+
+        personal_info = {
+            "name": profile.name,
+            "email": profile.email,
+            "phone": profile.phone,
+            "address": profile.address,
+        }
+
+        section_prefs = self._build_section_preferences(profile)
+        generation_settings = {
+            "page_length": target_length,
+            "aggressiveness": aggressiveness,
+            "additional_instructions": additional_instructions,
+        }
+
+        updated = self.repository.update_application(
+            application_id=application_id,
+            user_id=user_id,
+            updates=self._workflow_updates(
+                internal_state="regenerating_full",
+                failure_reason=None,
+                generation_failure_details=None,
+            ),
+        )
+        self.notification_repository.clear_action_required(
+            user_id=user_id, application_id=application_id,
+        )
+
+        try:
+            job_id = await self.generation_job_queue.enqueue_regeneration(
+                application_id=application_id,
+                user_id=user_id,
+                job_title=record.job_title,
+                company_name=record.company,
+                job_description=record.job_description,
+                base_resume_content=base_resume.content_md,
+                current_draft_content=draft.content_md,
+                personal_info=personal_info,
+                section_preferences=section_prefs,
+                generation_settings=generation_settings,
+                regeneration_target="full",
+                regeneration_instructions=additional_instructions,
+            )
+            await self.progress_store.set(
+                application_id,
+                build_progress(
+                    job_id=job_id,
+                    workflow_kind="regeneration_full",
+                    state="regenerating_full",
+                    message="Full resume regeneration is queued.",
+                    percent_complete=0,
+                ),
+            )
+            return self._detail_payload(updated)
+        except Exception:
+            failed = await self._mark_generation_failure(
+                record=updated,
+                message="Full regeneration could not be started. Try again.",
+                failure_reason="regeneration_failed",
+            )
+            return self._detail_payload(failed)
+
+    async def trigger_section_regeneration(
+        self,
+        *,
+        user_id: str,
+        application_id: str,
+        section_name: str,
+        instructions: str,
+    ) -> ApplicationDetailPayload:
+        record = self._require_application(user_id=user_id, application_id=application_id)
+
+        if record.internal_state not in ("resume_ready",):
+            raise PermissionError("Application must have an existing draft for section regeneration.")
+
+        draft = self.draft_repository.fetch_draft(user_id=user_id, application_id=application_id)
+        if draft is None:
+            raise PermissionError("No existing draft found for section regeneration.")
+
+        if not instructions or not instructions.strip():
+            raise ValueError("Instructions are required for section regeneration.")
+
+        if not record.job_title or not record.job_description:
+            raise ValueError("Job title and description are required for regeneration.")
+
+        base_resume_id = record.base_resume_id
+        if not base_resume_id:
+            raise ValueError("A base resume must be linked to the application for regeneration.")
+
+        base_resume = self.base_resume_repository.fetch_resume(user_id, base_resume_id)
+        if base_resume is None:
+            raise LookupError("Linked base resume not found.")
+
+        profile = self.profile_repository.fetch_profile(user_id)
+        if profile is None:
+            raise ValueError("User profile is required for regeneration.")
+
+        personal_info = {
+            "name": profile.name,
+            "email": profile.email,
+            "phone": profile.phone,
+            "address": profile.address,
+        }
+
+        section_prefs = self._build_section_preferences(profile)
+        generation_settings = draft.generation_params
+
+        updated = self.repository.update_application(
+            application_id=application_id,
+            user_id=user_id,
+            updates=self._workflow_updates(
+                internal_state="regenerating_section",
+                failure_reason=None,
+                generation_failure_details=None,
+            ),
+        )
+        self.notification_repository.clear_action_required(
+            user_id=user_id, application_id=application_id,
+        )
+
+        try:
+            job_id = await self.generation_job_queue.enqueue_regeneration(
+                application_id=application_id,
+                user_id=user_id,
+                job_title=record.job_title,
+                company_name=record.company,
+                job_description=record.job_description,
+                base_resume_content=base_resume.content_md,
+                current_draft_content=draft.content_md,
+                personal_info=personal_info,
+                section_preferences=section_prefs,
+                generation_settings=generation_settings,
+                regeneration_target=section_name,
+                regeneration_instructions=instructions.strip(),
+            )
+            await self.progress_store.set(
+                application_id,
+                build_progress(
+                    job_id=job_id,
+                    workflow_kind="regeneration_section",
+                    state="regenerating_section",
+                    message=f"Section regeneration ({section_name}) is queued.",
+                    percent_complete=0,
+                ),
+            )
+            return self._detail_payload(updated)
+        except Exception:
+            failed = await self._mark_generation_failure(
+                record=updated,
+                message="Section regeneration could not be started. Try again.",
+                failure_reason="regeneration_failed",
+            )
+            return self._detail_payload(failed)
+
+    async def handle_regeneration_callback(
+        self, payload: RegenerationCallbackPayload,
+    ) -> ApplicationRecord:
+        record = self.repository.fetch_application_unscoped(payload.application_id)
+        if record is None:
+            raise LookupError("Application not found.")
+        if record.user_id != payload.user_id:
+            raise PermissionError("Worker payload user mismatch.")
+
+        current_progress = await self.progress_store.get(record.id)
+        if current_progress is not None and current_progress.job_id != payload.job_id:
+            return record
+
+        is_section = payload.regeneration_target != "full"
+        workflow_kind = "regeneration_section" if is_section else "regeneration_full"
+        generating_state = "regenerating_section" if is_section else "regenerating_full"
+        failure_reason = "regeneration_failed"
+
+        if payload.event == "started":
+            await self.progress_store.set(
+                record.id,
+                build_progress(
+                    job_id=payload.job_id,
+                    workflow_kind=workflow_kind,
+                    state=generating_state,
+                    message="Regeneration is running.",
+                    percent_complete=25,
+                ),
+            )
+            return self.repository.update_application(
+                application_id=record.id,
+                user_id=record.user_id,
+                updates=self._workflow_updates(
+                    internal_state=generating_state,
+                    failure_reason=None,
+                    generation_failure_details=None,
+                ),
+            )
+
+        if payload.event == "failed":
+            failure_msg = payload.failure.message if payload.failure else "Regeneration failed."
+            failure_details = payload.failure.failure_details if payload.failure else None
+
+            completed_progress = build_progress(
+                job_id=payload.job_id,
+                workflow_kind=workflow_kind,
+                state="regeneration_failed",
+                message=failure_msg,
+                percent_complete=100,
+                terminal_error_code=failure_reason,
+            )
+            completed_progress.completed_at = completed_progress.updated_at
+            await self.progress_store.set(record.id, completed_progress)
+
+            return await self._mark_generation_failure(
+                record=record,
+                message=failure_msg,
+                failure_details=failure_details,
+                failure_reason=failure_reason,
+            )
+
+        if payload.event == "succeeded":
+            if payload.generated is None:
+                raise ValueError("Missing generated payload for regeneration success callback.")
+
+            self.draft_repository.upsert_draft(
+                application_id=record.id,
+                user_id=record.user_id,
+                content_md=payload.generated.content_md,
+                generation_params=payload.generated.generation_params,
+                sections_snapshot=payload.generated.sections_snapshot,
+            )
+
+            updated = self.repository.update_application(
+                application_id=record.id,
+                user_id=record.user_id,
+                updates=self._workflow_updates(
+                    internal_state="resume_ready",
+                    failure_reason=None,
+                    generation_failure_details=None,
+                ),
+            )
+
+            completed_progress = build_progress(
+                job_id=payload.job_id,
+                workflow_kind=workflow_kind,
+                state="resume_ready",
+                message="Regeneration completed.",
+                percent_complete=100,
+            )
+            completed_progress.completed_at = completed_progress.updated_at
+            await self.progress_store.set(record.id, completed_progress)
+
+            self.notification_repository.clear_action_required(
+                user_id=record.user_id, application_id=record.id,
+            )
+            self.notification_repository.create_notification(
+                user_id=record.user_id,
+                application_id=record.id,
+                notification_type="success",
+                message="Resume regeneration completed successfully.",
+                action_required=False,
+            )
+            await self._send_generation_email(
+                record=updated,
+                subject="Resume Builder: resume regenerated",
+                body="Your resume has been regenerated and is ready for review.",
+            )
+            return updated
+
+        raise ValueError("Unsupported regeneration callback event.")
+
+    async def get_draft(
+        self, *, user_id: str, application_id: str,
+    ) -> Optional[ResumeDraftRecord]:
+        self._require_application(user_id=user_id, application_id=application_id)
+        return self.draft_repository.fetch_draft(user_id=user_id, application_id=application_id)
+
+    async def save_draft_edit(
+        self,
+        *,
+        user_id: str,
+        application_id: str,
+        content: str,
+    ) -> ResumeDraftRecord:
+        record = self._require_application(user_id=user_id, application_id=application_id)
+
+        draft = self.draft_repository.fetch_draft(user_id=user_id, application_id=application_id)
+        if draft is None:
+            raise PermissionError("No draft exists. Generation must happen first.")
+
+        updated_draft = self.draft_repository.update_draft_content(
+            application_id=application_id,
+            user_id=user_id,
+            content_md=content,
+        )
+
+        # If current state indicates export happened, transition back to resume_ready
+        # and let derive_visible_status figure out the right visible status.
+        has_export = record.exported_at is not None
+        # After edit, draft is always changed since export
+        draft_changed = True if has_export else False
+
+        if record.internal_state == "resume_ready" or has_export:
+            updated_vs = derive_visible_status(
+                internal_state="resume_ready",
+                failure_reason=None,
+                has_successful_export=has_export,
+                draft_changed_since_export=draft_changed,
+            )
+            self.repository.update_application(
+                application_id=application_id,
+                user_id=user_id,
+                updates={
+                    "internal_state": "resume_ready",
+                    "failure_reason": None,
+                    "visible_status": updated_vs,
+                },
+            )
+
+        return updated_draft
+
+    async def export_pdf(
+        self,
+        *,
+        user_id: str,
+        application_id: str,
+    ) -> tuple[bytes, str]:
+        """Generate and return PDF bytes and filename.
+
+        Returns (pdf_bytes, filename).
+        """
+        record = self._require_application(user_id=user_id, application_id=application_id)
+
+        draft = self.draft_repository.fetch_draft(user_id=user_id, application_id=application_id)
+        if draft is None:
+            raise PermissionError("No draft exists. Generation must happen first.")
+
+        profile = self.profile_repository.fetch_profile(user_id)
+        personal_info = None
+        full_name = "resume"
+        if profile:
+            personal_info = {
+                "name": profile.name,
+                "email": profile.email,
+                "phone": profile.phone,
+                "address": profile.address,
+            }
+            full_name = (profile.name or "resume").replace(" ", "_")
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        filename = f"{full_name}_resume_{timestamp}.pdf"
+
+        try:
+            pdf_bytes = await generate_pdf(
+                markdown_content=draft.content_md,
+                personal_info=personal_info,
+            )
+        except asyncio.TimeoutError:
+            await self._handle_export_failure(
+                record=record,
+                message="PDF export timed out. Please try again.",
+            )
+            raise ValueError("PDF export timed out.")
+        except Exception as exc:
+            logger.exception("PDF export failed for application %s", application_id)
+            await self._handle_export_failure(
+                record=record,
+                message="PDF export failed. Please try again.",
+            )
+            raise ValueError("PDF export failed.") from exc
+
+        # Success: update exported_at, last_exported_at, status
+        self.repository.update_application(
+            application_id=application_id,
+            user_id=user_id,
+            updates={
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "internal_state": "resume_ready",
+                "failure_reason": None,
+                "visible_status": derive_visible_status(
+                    internal_state="resume_ready",
+                    failure_reason=None,
+                    has_successful_export=True,
+                    draft_changed_since_export=False,
+                ),
+            },
+        )
+        self.draft_repository.update_exported_at(
+            application_id=application_id,
+            user_id=user_id,
+        )
+
+        self.notification_repository.create_notification(
+            user_id=user_id,
+            application_id=application_id,
+            notification_type="success",
+            message="PDF export completed successfully.",
+            action_required=False,
+        )
+
+        return pdf_bytes, filename
+
+    async def _handle_export_failure(
+        self,
+        *,
+        record: ApplicationRecord,
+        message: str,
+    ) -> None:
+        self.repository.update_application(
+            application_id=record.id,
+            user_id=record.user_id,
+            updates=self._workflow_updates(
+                internal_state="resume_ready",
+                failure_reason="export_failed",
+            ),
+        )
+        self.notification_repository.create_notification(
+            user_id=record.user_id,
+            application_id=record.id,
+            notification_type="error",
+            message=message,
+            action_required=True,
+        )
+        try:
+            await self.email_sender.send(
+                EmailMessage(
+                    to=[self._recipient_email(record)],
+                    subject="Resume Builder: PDF export failed",
+                    text=(
+                        f"{message}\n\n"
+                        f"Open the application: {self._application_url(record.id)}"
+                    ),
+                )
+            )
+        except Exception:
+            pass
 
     async def _run_duplicate_resolution_flow(self, record: ApplicationRecord) -> ApplicationRecord:
         if not record.job_title or not record.company:
@@ -571,6 +1431,58 @@ class ApplicationService:
         )
         return updated
 
+    async def _mark_generation_failure(
+        self,
+        *,
+        record: ApplicationRecord,
+        message: str,
+        failure_details: Optional[dict[str, Any]] = None,
+        failure_reason: str = "generation_failed",
+    ) -> ApplicationRecord:
+        updated = self.repository.update_application(
+            application_id=record.id,
+            user_id=record.user_id,
+            updates=self._workflow_updates(
+                internal_state="resume_ready" if record.internal_state in (
+                    "regenerating_section", "regenerating_full",
+                ) else "generation_pending",
+                failure_reason=failure_reason,
+                generation_failure_details=self._normalize_generation_failure_details(
+                    message=message,
+                    failure_details=failure_details,
+                ),
+            ),
+        )
+        await self._set_action_required(
+            record=updated,
+            notification_type="error",
+            message=message,
+            send_email=True,
+            email_subject=f"Resume Builder: {'regeneration' if 'regeneration' in failure_reason else 'generation'} failed",
+        )
+        return updated
+
+    async def _send_generation_email(
+        self,
+        *,
+        record: ApplicationRecord,
+        subject: str,
+        body: str,
+    ) -> None:
+        try:
+            await self.email_sender.send(
+                EmailMessage(
+                    to=[self._recipient_email(record)],
+                    subject=subject,
+                    text=(
+                        f"{body}\n\n"
+                        f"Open the application: {self._application_url(record.id)}"
+                    ),
+                )
+            )
+        except Exception:
+            pass
+
     async def _set_action_required(
         self,
         *,
@@ -578,6 +1490,7 @@ class ApplicationService:
         notification_type: str,
         message: str,
         send_email: bool,
+        email_subject: Optional[str] = None,
     ) -> None:
         self.notification_repository.clear_action_required(
             user_id=record.user_id,
@@ -591,10 +1504,11 @@ class ApplicationService:
             action_required=True,
         )
         if send_email:
+            subject = email_subject or "Resume Builder: extraction needs manual entry"
             await self.email_sender.send(
                 EmailMessage(
                     to=[self._recipient_email(record)],
-                    subject="Resume Builder: extraction needs manual entry",
+                    subject=subject,
                     text=(
                         f"{message}\n\n"
                         f"Open the application: {self._application_url(record.id)}"
@@ -607,6 +1521,26 @@ class ApplicationService:
         if profile is None:
             raise ValueError("Authenticated profile is unavailable.")
         return profile.email
+
+    @staticmethod
+    def _build_section_preferences(profile) -> list[dict[str, Any]]:
+        prefs = profile.section_preferences or {}
+        order = profile.section_order or []
+        result = []
+        for idx, section_name in enumerate(order):
+            result.append({
+                "name": section_name,
+                "enabled": prefs.get(section_name, True),
+                "order": idx,
+            })
+        for section_name, enabled in prefs.items():
+            if section_name not in order:
+                result.append({
+                    "name": section_name,
+                    "enabled": enabled,
+                    "order": len(result),
+                })
+        return result
 
     def _detail_payload(self, record: ApplicationRecord) -> ApplicationDetailPayload:
         warning = None
@@ -647,6 +1581,14 @@ class ApplicationService:
         }
 
     def _default_progress_message(self, record: ApplicationRecord) -> str:
+        if record.failure_reason == "generation_timeout":
+            return "Generation timed out. You can retry."
+        if record.failure_reason == "generation_cancelled":
+            return "Generation was cancelled."
+        if record.failure_reason == "generation_failed":
+            return "Generation failed. Review the errors and retry."
+        if record.failure_reason == "regeneration_failed":
+            return "Regeneration failed. Review the errors and retry."
         if record.internal_state == "manual_entry_required":
             if record.extraction_failure_details and record.extraction_failure_details.get("kind") == "blocked_source":
                 return "This source blocked automated retrieval. Paste the job text or complete manual entry."
@@ -654,10 +1596,129 @@ class ApplicationService:
         if record.internal_state == "duplicate_review_required":
             return "Duplicate review is required before generation."
         if record.internal_state == "generation_pending":
-            return "Extraction completed."
+            return "Ready for resume generation."
+        if record.internal_state == "generating":
+            return "Resume generation is running."
+        if record.internal_state == "resume_ready":
+            return "Resume is ready for review."
+        if record.internal_state == "regenerating_section":
+            return "Section regeneration is running."
+        if record.internal_state == "regenerating_full":
+            return "Full regeneration is running."
         if record.internal_state == "extracting":
             return "Extraction is running."
         return "Extraction is queued."
+
+    def _normalize_generation_failure_details(
+        self,
+        *,
+        message: str,
+        failure_details: Optional[dict[str, Any]],
+    ) -> dict[str, Any]:
+        normalized: dict[str, Any] = {"message": message}
+        if not failure_details:
+            return normalized
+
+        validation_errors = failure_details.get("validation_errors")
+        if isinstance(validation_errors, list):
+            formatted_errors = [
+                formatted
+                for formatted in (self._format_validation_error(error) for error in validation_errors)
+                if formatted
+            ]
+            if formatted_errors:
+                normalized["validation_errors"] = formatted_errors
+
+        return normalized
+
+    @staticmethod
+    def _format_validation_error(error: Any) -> Optional[str]:
+        if isinstance(error, str):
+            stripped = error.strip()
+            return stripped or None
+
+        if isinstance(error, dict):
+            detail = str(error.get("detail") or error.get("type") or "").strip()
+            section = str(error.get("section") or "").strip()
+            if not detail:
+                return None
+            return f"{section}: {detail}" if section else detail
+
+        text = str(error).strip()
+        return text or None
+
+    @staticmethod
+    def _generation_workflow_kind(
+        record: ApplicationRecord,
+        progress: Optional[ProgressRecord],
+    ) -> str:
+        if progress is not None:
+            return progress.workflow_kind
+        if record.internal_state == "regenerating_full":
+            return "regeneration_full"
+        if record.internal_state == "regenerating_section":
+            return "regeneration_section"
+        return "generation"
+
+    def _target_state_after_generation_stop(
+        self,
+        record: ApplicationRecord,
+        progress: Optional[ProgressRecord],
+    ) -> str:
+        workflow_kind = self._generation_workflow_kind(record, progress)
+        return "generation_pending" if workflow_kind == "generation" else "resume_ready"
+
+    def _generation_timeout_seconds(
+        self,
+        record: ApplicationRecord,
+        progress: Optional[ProgressRecord],
+    ) -> int:
+        workflow_kind = self._generation_workflow_kind(record, progress)
+        if workflow_kind == "regeneration_section":
+            return SECTION_REGENERATION_TIMEOUT_SECONDS
+        return FULL_GENERATION_TIMEOUT_SECONDS
+
+    def _is_generation_active(
+        self,
+        *,
+        record: ApplicationRecord,
+        progress: Optional[ProgressRecord],
+    ) -> bool:
+        if record.failure_reason is not None:
+            return False
+
+        if record.internal_state in ACTIVE_GENERATION_STATES:
+            return True
+
+        if record.internal_state != "generation_pending" or progress is None:
+            return False
+
+        return (
+            progress.state in ACTIVE_GENERATION_PROGRESS_STATES
+            and progress.completed_at is None
+            and progress.terminal_error_code is None
+            and progress.workflow_kind == "generation"
+        )
+
+    async def _set_terminal_generation_progress(
+        self,
+        *,
+        record: ApplicationRecord,
+        previous_progress: Optional[ProgressRecord],
+        target_state: str,
+        message: str,
+        terminal_error_code: str,
+    ) -> None:
+        completed_progress = build_progress(
+            job_id=f"{terminal_error_code}-{record.id}-{int(datetime.now(timezone.utc).timestamp())}",
+            workflow_kind=self._generation_workflow_kind(record, previous_progress),
+            state=target_state,
+            message=message,
+            percent_complete=100,
+            terminal_error_code=terminal_error_code,
+        )
+        completed_progress.completed_at = completed_progress.updated_at
+        await self.progress_store.set(record.id, completed_progress)
 
     def _application_url(self, application_id: str) -> str:
         return f"{self.settings.app_url.rstrip('/')}/app/applications/{application_id}"
@@ -716,18 +1777,24 @@ class ApplicationService:
 
 def get_application_service(
     repository: ApplicationRepository = Depends(get_application_repository),
+    base_resume_repository: BaseResumeRepository = Depends(get_base_resume_repository),
+    draft_repository: ResumeDraftRepository = Depends(get_resume_draft_repository),
     profile_repository: ProfileRepository = Depends(get_profile_repository),
     notification_repository: NotificationRepository = Depends(get_notification_repository),
     progress_store: RedisProgressStore = Depends(get_progress_store),
     extraction_job_queue: ExtractionJobQueue = Depends(get_extraction_job_queue),
+    generation_job_queue: GenerationJobQueue = Depends(get_generation_job_queue),
     settings: Settings = Depends(get_settings),
 ) -> ApplicationService:
     return ApplicationService(
         repository=repository,
+        base_resume_repository=base_resume_repository,
+        draft_repository=draft_repository,
         profile_repository=profile_repository,
         notification_repository=notification_repository,
         progress_store=progress_store,
         extraction_job_queue=extraction_job_queue,
+        generation_job_queue=generation_job_queue,
         email_sender=build_email_sender(settings),
         settings=settings,
     )

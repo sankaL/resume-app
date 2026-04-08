@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import asdict, dataclass
@@ -16,6 +17,10 @@ from playwright.async_api import async_playwright
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis
+
+from assembly import assemble_resume
+from generation import generate_sections, regenerate_single_section, _replace_section_in_draft, SECTION_DISPLAY_NAMES
+from validation import validate_resume
 
 
 ORIGIN_MAP = {
@@ -44,6 +49,8 @@ REFERENCE_PATTERNS = (
     re.compile(r"/jobs/(?:view/)?([0-9]{4,})", re.I),
     re.compile(r"/job/([A-Za-z0-9_-]{6,})", re.I),
 )
+FULL_GENERATION_TIMEOUT_SECONDS = 90.0
+SECTION_REGENERATION_TIMEOUT_SECONDS = 45.0
 
 
 class WorkerSettingsEnv(BaseSettings):
@@ -154,6 +161,76 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _normalize_validation_error(error: Any) -> Optional[str]:
+    if isinstance(error, str):
+        stripped = error.strip()
+        return stripped or None
+
+    if isinstance(error, dict):
+        detail = str(error.get("detail") or error.get("type") or "").strip()
+        section = str(error.get("section") or "").strip()
+        if not detail:
+            return None
+        return f"{section}: {detail}" if section else detail
+
+    text = str(error).strip()
+    return text or None
+
+
+def build_generation_success_payload(
+    *,
+    application_id: str,
+    user_id: str,
+    job_id: str,
+    content_md: str,
+    generation_params: dict[str, Any],
+    sections_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "application_id": application_id,
+        "user_id": user_id,
+        "job_id": job_id,
+        "event": "succeeded",
+        "generated": {
+            "content_md": content_md,
+            "generation_params": generation_params,
+            "sections_snapshot": sections_snapshot,
+        },
+    }
+
+
+def build_generation_failure_payload(
+    *,
+    application_id: str,
+    user_id: str,
+    job_id: str,
+    message: str,
+    terminal_error_code: str,
+    validation_errors: Optional[list[Any]] = None,
+) -> dict[str, Any]:
+    failure_details: dict[str, Any] = {}
+    if validation_errors:
+        normalized = [
+            formatted
+            for formatted in (_normalize_validation_error(error) for error in validation_errors)
+            if formatted
+        ]
+        if normalized:
+            failure_details["validation_errors"] = normalized
+
+    return {
+        "application_id": application_id,
+        "user_id": user_id,
+        "job_id": job_id,
+        "event": "failed",
+        "failure": {
+            "message": message,
+            "terminal_error_code": terminal_error_code,
+            "failure_details": failure_details or None,
+        },
+    }
+
+
 def normalize_origin_from_url(url: str) -> Optional[str]:
     hostname = urlparse(url).hostname or ""
     hostname = hostname.lower()
@@ -243,6 +320,7 @@ def load_workflow_contract() -> dict[str, Any]:
 def build_progress(
     *,
     job_id: str,
+    workflow_kind: str = "extraction",
     state: str,
     message: str,
     percent_complete: int,
@@ -252,7 +330,7 @@ def build_progress(
 ) -> JobProgress:
     return JobProgress(
         job_id=job_id,
-        workflow_kind="extraction",
+        workflow_kind=workflow_kind,
         state=state,
         message=message,
         percent_complete=percent_complete,
@@ -285,13 +363,13 @@ class BackendCallbackClient:
     def __init__(self, settings: WorkerSettingsEnv) -> None:
         self._settings = settings
 
-    async def post(self, payload: dict[str, Any]) -> None:
+    async def post(self, payload: dict[str, Any], *, path: str = "/api/internal/worker/extraction-callback") -> None:
         if not self._settings.worker_callback_secret:
             raise RuntimeError("WORKER_CALLBACK_SECRET is not configured.")
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{self._settings.backend_api_url.rstrip('/')}/api/internal/worker/extraction-callback",
+                f"{self._settings.backend_api_url.rstrip('/')}{path}",
                 json=payload,
                 headers={"X-Worker-Secret": self._settings.worker_callback_secret},
             )
@@ -444,6 +522,7 @@ async def set_progress(
     application_id: str,
     *,
     job_id: str,
+    workflow_kind: str = "extraction",
     state: str,
     message: str,
     percent_complete: int,
@@ -453,6 +532,7 @@ async def set_progress(
     existing = await writer.get(application_id)
     progress = build_progress(
         job_id=job_id,
+        workflow_kind=workflow_kind,
         state=state,
         message=message,
         percent_complete=percent_complete,
@@ -658,7 +738,561 @@ async def run_extraction_job(
         raise
 
 
+# ---------------------------------------------------------------------------
+# Callback path constants
+# ---------------------------------------------------------------------------
+
+GENERATION_CALLBACK_PATH = "/api/internal/worker/generation-callback"
+REGENERATION_CALLBACK_PATH = "/api/internal/worker/regeneration-callback"
+
+
+# ---------------------------------------------------------------------------
+# Generation job
+# ---------------------------------------------------------------------------
+
+
+async def run_generation_job(
+    ctx: dict[str, Any],
+    *,
+    application_id: str,
+    user_id: str,
+    job_id: str,
+    job_title: str,
+    company_name: str,
+    job_description: str,
+    base_resume_content: str,
+    personal_info: dict[str, Any],
+    section_preferences: list[dict[str, Any]],
+    generation_settings: dict[str, Any],
+) -> None:
+    settings = WorkerSettingsEnv()
+    writer = RedisProgressWriter(settings.redis_url)
+    callback = BackendCallbackClient(settings)
+
+    if not settings.openrouter_api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not configured.")
+    if not settings.generation_agent_model:
+        raise RuntimeError("GENERATION_AGENT_MODEL is not configured.")
+    if not settings.generation_agent_fallback_model:
+        raise RuntimeError("GENERATION_AGENT_FALLBACK_MODEL is not configured.")
+    if not settings.validation_agent_model:
+        raise RuntimeError("VALIDATION_AGENT_MODEL is not configured.")
+    if not settings.validation_agent_fallback_model:
+        raise RuntimeError("VALIDATION_AGENT_FALLBACK_MODEL is not configured.")
+
+    async def on_generation_progress(percent: int, message: str) -> None:
+        await set_progress(
+            writer,
+            application_id,
+            job_id=job_id,
+            workflow_kind="generation",
+            state="generating",
+            message=message,
+            percent_complete=percent,
+        )
+
+    try:
+        # 1. Starting
+        await set_progress(
+            writer,
+            application_id,
+            job_id=job_id,
+            workflow_kind="generation",
+            state="generating",
+            message="Starting resume generation",
+            percent_complete=5,
+        )
+        await callback.post(
+            {
+                "application_id": application_id,
+                "user_id": user_id,
+                "job_id": job_id,
+                "event": "started",
+            },
+            path=GENERATION_CALLBACK_PATH,
+        )
+
+        # 2. Generate sections (10-80%)
+        gen_result = await asyncio.wait_for(
+            generate_sections(
+                base_resume_content=base_resume_content,
+                job_title=job_title,
+                company_name=company_name,
+                job_description=job_description,
+                section_preferences=section_preferences,
+                generation_settings=generation_settings,
+                model=settings.generation_agent_model,
+                fallback_model=settings.generation_agent_fallback_model,
+                api_key=settings.openrouter_api_key,
+                base_url=settings.openrouter_base_url,
+                on_progress=on_generation_progress,
+            ),
+            timeout=FULL_GENERATION_TIMEOUT_SECONDS,
+        )
+
+        generated_sections = gen_result["sections"]
+
+        # 3. Validate (85%)
+        await set_progress(
+            writer,
+            application_id,
+            job_id=job_id,
+            workflow_kind="generation",
+            state="generating",
+            message="Validating generated resume",
+            percent_complete=85,
+        )
+
+        validation_result = await validate_resume(
+            generated_sections=generated_sections,
+            base_resume_content=base_resume_content,
+            section_preferences=section_preferences,
+            model=settings.validation_agent_model,
+            fallback_model=settings.validation_agent_fallback_model,
+            api_key=settings.openrouter_api_key,
+            base_url=settings.openrouter_base_url,
+        )
+
+        if not validation_result["valid"]:
+            await set_progress(
+                writer,
+                application_id,
+                job_id=job_id,
+                workflow_kind="generation",
+                state="generation_failed",
+                message="Resume validation failed.",
+                percent_complete=100,
+                completed_at=now_iso(),
+                terminal_error_code="validation_failed",
+            )
+            await callback.post(
+                build_generation_failure_payload(
+                    application_id=application_id,
+                    user_id=user_id,
+                    job_id=job_id,
+                    message="Resume validation failed.",
+                    terminal_error_code="generation_failed",
+                    validation_errors=validation_result["errors"],
+                ),
+                path=GENERATION_CALLBACK_PATH,
+            )
+            return
+
+        # 4. Assemble (95%)
+        await set_progress(
+            writer,
+            application_id,
+            job_id=job_id,
+            workflow_kind="generation",
+            state="generating",
+            message="Assembling final resume",
+            percent_complete=95,
+        )
+
+        content = assemble_resume(
+            personal_info=personal_info,
+            generated_sections=generated_sections,
+        )
+
+        enabled_ordered = sorted(
+            [s for s in section_preferences if s.get("enabled")],
+            key=lambda s: s.get("order", 0),
+        )
+
+        # 5. Done (100%)
+        await set_progress(
+            writer,
+            application_id,
+            job_id=job_id,
+            workflow_kind="generation",
+            state="resume_ready",
+            message="Resume generated",
+            percent_complete=100,
+            completed_at=now_iso(),
+        )
+        await callback.post(
+            build_generation_success_payload(
+                application_id=application_id,
+                user_id=user_id,
+                job_id=job_id,
+                content_md=content,
+                generation_params=generation_settings,
+                sections_snapshot={
+                    "enabled_sections": [s["name"] for s in enabled_ordered],
+                    "section_order": [s["name"] for s in enabled_ordered],
+                },
+            ),
+            path=GENERATION_CALLBACK_PATH,
+        )
+
+    except asyncio.TimeoutError:
+        await set_progress(
+            writer,
+            application_id,
+            job_id=job_id,
+            workflow_kind="generation",
+            state="generation_failed",
+            message="Resume generation timed out. The LLM provider may be slow. Please try again.",
+            percent_complete=100,
+            completed_at=now_iso(),
+            terminal_error_code="generation_timeout",
+        )
+        await callback.post(
+            build_generation_failure_payload(
+                application_id=application_id,
+                user_id=user_id,
+                job_id=job_id,
+                message="Resume generation timed out. The LLM provider may be slow. Please try again.",
+                terminal_error_code="generation_timeout",
+            ),
+            path=GENERATION_CALLBACK_PATH,
+        )
+        raise
+    except Exception:
+        await set_progress(
+            writer,
+            application_id,
+            job_id=job_id,
+            workflow_kind="generation",
+            state="generation_failed",
+            message="Resume generation failed unexpectedly.",
+            percent_complete=100,
+            completed_at=now_iso(),
+            terminal_error_code="generation_error",
+        )
+        await callback.post(
+            build_generation_failure_payload(
+                application_id=application_id,
+                user_id=user_id,
+                job_id=job_id,
+                message="Resume generation failed unexpectedly.",
+                terminal_error_code="generation_failed",
+            ),
+            path=GENERATION_CALLBACK_PATH,
+        )
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Regeneration job
+# ---------------------------------------------------------------------------
+
+
+async def run_regeneration_job(
+    ctx: dict[str, Any],
+    *,
+    application_id: str,
+    user_id: str,
+    job_id: str,
+    current_draft_content: Optional[str] = None,
+    job_title: str,
+    company_name: str,
+    job_description: str,
+    base_resume_content: str,
+    personal_info: dict[str, Any],
+    section_preferences: list[dict[str, Any]],
+    generation_settings: dict[str, Any],
+    regeneration_target: str,
+    regeneration_instructions: Optional[str] = None,
+) -> None:
+    settings = WorkerSettingsEnv()
+    writer = RedisProgressWriter(settings.redis_url)
+    callback = BackendCallbackClient(settings)
+
+    if not settings.openrouter_api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not configured.")
+    if not settings.generation_agent_model:
+        raise RuntimeError("GENERATION_AGENT_MODEL is not configured.")
+    if not settings.generation_agent_fallback_model:
+        raise RuntimeError("GENERATION_AGENT_FALLBACK_MODEL is not configured.")
+    if not settings.validation_agent_model:
+        raise RuntimeError("VALIDATION_AGENT_MODEL is not configured.")
+    if not settings.validation_agent_fallback_model:
+        raise RuntimeError("VALIDATION_AGENT_FALLBACK_MODEL is not configured.")
+
+    is_full_regen = regeneration_target == "full"
+    workflow_kind = "regeneration_full" if is_full_regen else "regeneration_section"
+    workflow_state = "regenerating_full" if is_full_regen else "regenerating_section"
+    section_name = None if is_full_regen else regeneration_target
+    instructions = None if is_full_regen else regeneration_instructions
+
+    try:
+        await set_progress(
+            writer,
+            application_id,
+            job_id=job_id,
+            workflow_kind=workflow_kind,
+            state=workflow_state,
+            message="Starting regeneration",
+            percent_complete=5,
+        )
+        await callback.post(
+            {
+                "application_id": application_id,
+                "user_id": user_id,
+                "job_id": job_id,
+                "event": "started",
+            },
+            path=REGENERATION_CALLBACK_PATH,
+        )
+
+        if is_full_regen:
+            # ---- Full regeneration (same flow as generation) ----
+            async def on_regen_progress(percent: int, message: str) -> None:
+                await set_progress(
+                    writer,
+                    application_id,
+                    job_id=job_id,
+                    workflow_kind=workflow_kind,
+                    state=workflow_state,
+                    message=message,
+                    percent_complete=percent,
+                )
+
+            gen_result = await asyncio.wait_for(
+                generate_sections(
+                    base_resume_content=base_resume_content,
+                    job_title=job_title,
+                    company_name=company_name,
+                    job_description=job_description,
+                    section_preferences=section_preferences,
+                    generation_settings=generation_settings,
+                    model=settings.generation_agent_model,
+                    fallback_model=settings.generation_agent_fallback_model,
+                    api_key=settings.openrouter_api_key,
+                    base_url=settings.openrouter_base_url,
+                    on_progress=on_regen_progress,
+                ),
+                timeout=FULL_GENERATION_TIMEOUT_SECONDS,
+            )
+            generated_sections = gen_result["sections"]
+
+            await set_progress(
+                writer,
+                application_id,
+                job_id=job_id,
+                workflow_kind=workflow_kind,
+                state=workflow_state,
+                message="Validating regenerated resume",
+                percent_complete=85,
+            )
+
+            validation_result = await validate_resume(
+                generated_sections=generated_sections,
+                base_resume_content=base_resume_content,
+                section_preferences=section_preferences,
+                model=settings.validation_agent_model,
+                fallback_model=settings.validation_agent_fallback_model,
+                api_key=settings.openrouter_api_key,
+                base_url=settings.openrouter_base_url,
+            )
+
+            if not validation_result["valid"]:
+                await set_progress(
+                    writer,
+                    application_id,
+                    job_id=job_id,
+                    workflow_kind=workflow_kind,
+                    state="generation_failed",
+                    message="Regeneration validation failed.",
+                    percent_complete=100,
+                    completed_at=now_iso(),
+                    terminal_error_code="validation_failed",
+                )
+                await callback.post(
+                    build_generation_failure_payload(
+                        application_id=application_id,
+                        user_id=user_id,
+                        job_id=job_id,
+                        message="Regeneration validation failed.",
+                        terminal_error_code="regeneration_failed",
+                        validation_errors=validation_result["errors"],
+                    ),
+                    path=REGENERATION_CALLBACK_PATH,
+                )
+                return
+
+            content = assemble_resume(
+                personal_info=personal_info,
+                generated_sections=generated_sections,
+            )
+
+            enabled_ordered = sorted(
+                [s for s in section_preferences if s.get("enabled")],
+                key=lambda s: s.get("order", 0),
+            )
+            sections_snapshot = {
+                "enabled_sections": [s["name"] for s in enabled_ordered],
+                "section_order": [s["name"] for s in enabled_ordered],
+            }
+
+        else:
+            # ---- Single-section regeneration ----
+            if not section_name or not instructions or not current_draft_content:
+                raise ValueError(
+                    "section_name, instructions, and current_draft_content are required "
+                    "for single-section regeneration."
+                )
+
+            await set_progress(
+                writer,
+                application_id,
+                job_id=job_id,
+                workflow_kind=workflow_kind,
+                state=workflow_state,
+                message=f"Regenerating {section_name} section",
+                percent_complete=20,
+            )
+
+            new_section_content = await asyncio.wait_for(
+                regenerate_single_section(
+                    current_draft_content=current_draft_content,
+                    section_name=section_name,
+                    instructions=instructions,
+                    base_resume_content=base_resume_content,
+                    job_title=job_title,
+                    company_name=company_name,
+                    job_description=job_description,
+                    generation_settings=generation_settings,
+                    model=settings.generation_agent_model,
+                    fallback_model=settings.generation_agent_fallback_model,
+                    api_key=settings.openrouter_api_key,
+                    base_url=settings.openrouter_base_url,
+                ),
+                timeout=SECTION_REGENERATION_TIMEOUT_SECONDS,
+            )
+
+            # Validate just this section
+            await set_progress(
+                writer,
+                application_id,
+                job_id=job_id,
+                workflow_kind=workflow_kind,
+                state=workflow_state,
+                message=f"Validating regenerated {section_name} section",
+                percent_complete=70,
+            )
+
+            single_section_prefs = [{"name": section_name, "enabled": True, "order": 0}]
+            validation_result = await validate_resume(
+                generated_sections=[{"name": section_name, "content": new_section_content}],
+                base_resume_content=base_resume_content,
+                section_preferences=single_section_prefs,
+                model=settings.validation_agent_model,
+                fallback_model=settings.validation_agent_fallback_model,
+                api_key=settings.openrouter_api_key,
+                base_url=settings.openrouter_base_url,
+            )
+
+            if not validation_result["valid"]:
+                await set_progress(
+                    writer,
+                    application_id,
+                    job_id=job_id,
+                    workflow_kind=workflow_kind,
+                    state="generation_failed",
+                    message=f"Validation failed for regenerated {section_name} section.",
+                    percent_complete=100,
+                    completed_at=now_iso(),
+                    terminal_error_code="validation_failed",
+                )
+                await callback.post(
+                    build_generation_failure_payload(
+                        application_id=application_id,
+                        user_id=user_id,
+                        job_id=job_id,
+                        message=f"Validation failed for regenerated {section_name} section.",
+                        terminal_error_code="regeneration_failed",
+                        validation_errors=validation_result["errors"],
+                    ),
+                    path=REGENERATION_CALLBACK_PATH,
+                )
+                return
+
+            # Replace section in draft
+            display_name = SECTION_DISPLAY_NAMES.get(
+                section_name, section_name.replace("_", " ").title()
+            )
+            content = _replace_section_in_draft(
+                current_draft_content, section_name, new_section_content, display_name
+            )
+            sections_snapshot = {
+                "enabled_sections": [section_name],
+                "section_order": [section_name],
+            }
+
+        # ---- Success callback (shared by both paths) ----
+        await set_progress(
+            writer,
+            application_id,
+            job_id=job_id,
+            workflow_kind=workflow_kind,
+            state="resume_ready",
+            message="Regeneration complete",
+            percent_complete=100,
+            completed_at=now_iso(),
+        )
+        await callback.post(
+            build_generation_success_payload(
+                application_id=application_id,
+                user_id=user_id,
+                job_id=job_id,
+                content_md=content,
+                generation_params=generation_settings,
+                sections_snapshot=sections_snapshot,
+            ),
+            path=REGENERATION_CALLBACK_PATH,
+        )
+
+    except asyncio.TimeoutError:
+        await set_progress(
+            writer,
+            application_id,
+            job_id=job_id,
+            workflow_kind=workflow_kind,
+            state="generation_failed",
+            message="Regeneration timed out. The LLM provider may be slow. Please try again.",
+            percent_complete=100,
+            completed_at=now_iso(),
+            terminal_error_code="regeneration_timeout",
+        )
+        await callback.post(
+            build_generation_failure_payload(
+                application_id=application_id,
+                user_id=user_id,
+                job_id=job_id,
+                message="Regeneration timed out. The LLM provider may be slow. Please try again.",
+                terminal_error_code="regeneration_failed",
+            ),
+            path=REGENERATION_CALLBACK_PATH,
+        )
+        raise
+    except Exception:
+        await set_progress(
+            writer,
+            application_id,
+            job_id=job_id,
+            workflow_kind=workflow_kind,
+            state="generation_failed",
+            message="Regeneration failed unexpectedly.",
+            percent_complete=100,
+            completed_at=now_iso(),
+            terminal_error_code="regeneration_error",
+        )
+        await callback.post(
+            build_generation_failure_payload(
+                application_id=application_id,
+                user_id=user_id,
+                job_id=job_id,
+                message="Regeneration failed unexpectedly.",
+                terminal_error_code="regeneration_failed",
+            ),
+            path=REGENERATION_CALLBACK_PATH,
+        )
+        raise
+
+
 class WorkerSettings:
-    functions = [report_bootstrap_progress, run_extraction_job]
+    functions = [report_bootstrap_progress, run_extraction_job, run_generation_job, run_regeneration_job]
     redis_settings = RedisSettings.from_dsn(WorkerSettingsEnv().redis_url)
     max_tries = 2

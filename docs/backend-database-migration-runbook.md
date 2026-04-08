@@ -1,7 +1,7 @@
 # Backend and Database Migration Runbook
 
 **Document status:** Baseline rollout guide  
-**Last updated:** 2026-04-07 17:30:00 EDT
+**Last updated:** 2026-04-07
 **Schema source of truth:** `docs/database_schema.md`  
 **Product source of truth:** `docs/resume_builder_PRD_v3.md`
 
@@ -141,3 +141,29 @@ This runbook applies whenever backend or database work changes schema, compatibi
   - setting a default base resume clears the previous default for that user
   - profile PATCH updates persist personal info and section preferences correctly
   - RLS policies enforce per-operation ownership on `base_resumes` and `resume_drafts`
+
+## Current Implementation Note: Phase 3 Generation Pipeline
+
+- Phase 3 adds the migration `supabase/migrations/20260407_000005_phase_3_generation.sql`.
+- This migration adds `applications.generation_failure_details jsonb` to store generation and validation failure diagnostics (message and optional validation_errors array).
+- Rollback: `ALTER TABLE public.applications DROP COLUMN IF EXISTS generation_failure_details;`
+- No backfill is required. Existing applications keep `NULL` generation failure details until generation is attempted.
+- Post-deploy verification for Phase 3 should confirm:
+  - generation success clears `generation_failure_details` and transitions the application to `in_progress` / `resume_ready`
+  - generation or validation failure persists structured failure details and transitions to `needs_action` / `generation_failed`
+  - the draft is created or updated in `resume_drafts` with generation params and sections snapshot
+  - in-app and email notifications fire for generation outcomes
+
+## Current Additive Change Note: Generation Timeout and Cancellation Failure Reasons
+
+- Add the additive migration `supabase/migrations/20260407_000006_phase_4_generation_failure_reasons.sql`.
+- This migration extends `failure_reason_enum` with `generation_timeout` and `generation_cancelled` so backend cancel and timeout recovery paths remain schema-compatible.
+- Rollout order for this change:
+  1. Apply the additive enum migration.
+  2. Deploy backend and worker code that emits the expanded generation failure reasons and the nested worker callback payloads.
+  3. Deploy the frontend generation-state handling fixes so failed `generation_pending` rows render retry UI instead of active progress.
+- No backfill is required. Existing applications may keep prior `generation_failed` values.
+- Post-deploy verification should confirm:
+  - cancelling an active generation returns a retryable application state instead of a `500`
+  - a timed-out generation persists `failure_reason = generation_timeout` with user-safe message text
+  - stale worker callbacks do not overwrite a cancelled or timed-out application because terminal progress uses a new job id
