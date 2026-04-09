@@ -308,6 +308,26 @@ class ApplicationRepository:
             raise LookupError("Application not found.")
         return updated
 
+    def delete_application(
+        self,
+        *,
+        application_id: str,
+        user_id: str,
+    ) -> None:
+        query = """
+        delete from public.applications
+        where id = %s and user_id = %s
+        returning id::text
+        """
+
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(query, (application_id, user_id))
+            row = cursor.fetchone()
+            connection.commit()
+
+        if row is None or row.get("id") is None:
+            raise LookupError("Application not found.")
+
     def _prepare_value(self, field_name: str, value: Any) -> Any:
         if value is None:
             return None

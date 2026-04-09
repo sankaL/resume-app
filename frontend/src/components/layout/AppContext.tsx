@@ -5,7 +5,7 @@ type AppContextValue = {
   bootstrap: SessionBootstrapResponse | null;
   bootstrapError: string | null;
   applications: ApplicationSummary[] | null;
-  refreshApplications: () => Promise<void>;
+  refreshApplications: () => Promise<ApplicationSummary[] | null>;
   needsActionCount: number;
 };
 
@@ -26,8 +26,10 @@ export function AppProvider({ children }: PropsWithChildren) {
     try {
       const response = await listApplications();
       setApplications(response);
+      return response;
     } catch {
       // Preserve the last known shell state when the refresh request fails.
+      return null;
     }
   }
 

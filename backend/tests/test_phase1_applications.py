@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import copy
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from psycopg.types.json import Jsonb
 
+from app.core.auth import AuthVerifier, AuthenticatedUser, get_auth_verifier
 from app.db.applications import (
     ApplicationRepository,
     ApplicationListRecord,
@@ -22,6 +25,7 @@ from app.services.application_manager import (
     SourceCapturePayload,
     WorkerCallbackPayload,
     WorkerSuccessPayload,
+    get_application_service,
 )
 from app.services.progress import ProgressRecord
 
@@ -120,6 +124,12 @@ class FakeApplicationRepository:
         updated = record.model_copy(update={**updates, "updated_at": "2026-04-07T12:10:00+00:00"})
         self.records[application_id] = updated
         return updated
+
+    def delete_application(self, *, application_id: str, user_id: str) -> None:
+        record = self.fetch_application(user_id, application_id)
+        if record is None:
+            raise LookupError("Application not found.")
+        del self.records[application_id]
 
 
 class FakeProfileRepository:
@@ -233,6 +243,9 @@ class FakeProgressStore:
     async def set(self, application_id: str, progress: ProgressRecord, ttl_seconds: int = 86400) -> None:
         self.progress[application_id] = progress
 
+    async def delete(self, application_id: str) -> None:
+        self.progress.pop(application_id, None)
+
 
 class FakeExtractionJobQueue:
     def __init__(self, should_fail: bool = False) -> None:
@@ -340,6 +353,29 @@ class FakeGenerationJobQueue:
     async def enqueue_regeneration(self, **kwargs) -> str:
         self.regenerations.append(kwargs)
         return f"regen-job-{len(self.regenerations)}"
+
+
+class StubVerifier(AuthVerifier):
+    def __init__(self) -> None:
+        pass
+
+    def verify_token(self, token: str) -> AuthenticatedUser:
+        if token != "valid-token":
+            raise HTTPException(status_code=401, detail="Invalid Supabase access token.")
+
+        return AuthenticatedUser(
+            id="user-1",
+            email="invite-only@example.com",
+            role="authenticated",
+            claims={"sub": "user-1"},
+        )
+
+
+@pytest.fixture(autouse=True)
+def clear_dependency_overrides():
+    original = copy.copy(app.dependency_overrides)
+    yield
+    app.dependency_overrides = original
 
 
 def build_service(
@@ -739,6 +775,114 @@ def test_applications_endpoint_requires_authentication():
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Missing bearer token."
+
+
+@pytest.mark.asyncio
+async def test_delete_application_removes_record_and_progress():
+    service, repository, _, progress_store, _, _, _ = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="draft",
+        internal_state="generation_pending",
+    )
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-1",
+            workflow_kind="extraction",
+            state="generation_pending",
+            message="Ready for generation.",
+            percent_complete=100,
+            created_at="2026-04-07T12:00:00+00:00",
+            updated_at="2026-04-07T12:00:00+00:00",
+            completed_at="2026-04-07T12:00:00+00:00",
+            terminal_error_code=None,
+        ),
+    )
+
+    await service.delete_application(user_id="user-1", application_id=created.id)
+
+    assert repository.fetch_application("user-1", created.id) is None
+    assert await progress_store.get(created.id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "internal_state",
+    ["extraction_pending", "extracting", "generating", "regenerating_full", "regenerating_section"],
+)
+async def test_delete_application_blocks_active_async_states(internal_state: str):
+    service, repository, _, _, _, _, _ = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="draft",
+        internal_state=internal_state,
+    )
+
+    with pytest.raises(PermissionError) as exc_info:
+        await service.delete_application(user_id="user-1", application_id=created.id)
+
+    assert str(exc_info.value) == "Application cannot be deleted while background work is still running."
+    assert repository.fetch_application("user-1", created.id) is not None
+
+
+def test_delete_application_endpoint_returns_204_for_owned_idle_record():
+    service, repository, _, _, _, _, _ = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="draft",
+        internal_state="generation_pending",
+    )
+    app.dependency_overrides[get_auth_verifier] = lambda: StubVerifier()
+    app.dependency_overrides[get_application_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.delete(
+        f"/api/applications/{created.id}",
+        headers={"Authorization": "Bearer valid-token"},
+    )
+
+    assert response.status_code == 204
+    assert repository.fetch_application("user-1", created.id) is None
+
+
+def test_delete_application_endpoint_returns_404_for_missing_record():
+    service, _, _, _, _, _, _ = build_service()
+    app.dependency_overrides[get_auth_verifier] = lambda: StubVerifier()
+    app.dependency_overrides[get_application_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.delete(
+        "/api/applications/missing-app",
+        headers={"Authorization": "Bearer valid-token"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Application not found."
+
+
+def test_delete_application_endpoint_returns_409_for_active_record():
+    service, repository, _, _, _, _, _ = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="draft",
+        internal_state="generating",
+    )
+    app.dependency_overrides[get_auth_verifier] = lambda: StubVerifier()
+    app.dependency_overrides[get_application_service] = lambda: service
+    client = TestClient(app)
+
+    response = client.delete(
+        f"/api/applications/{created.id}",
+        headers={"Authorization": "Bearer valid-token"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Application cannot be deleted while background work is still running."
 
 
 @pytest.mark.asyncio

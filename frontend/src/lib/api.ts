@@ -268,6 +268,27 @@ export async function patchApplication(
   });
 }
 
+export async function deleteApplication(applicationId: string): Promise<void> {
+  const token = await getAccessToken();
+  const response = await fetch(`${env.VITE_API_URL}/api/applications/${applicationId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    let detail = "Delete failed.";
+    try {
+      const payload = await response.json();
+      detail = payload.detail ?? detail;
+    } catch {
+      detail = "Delete failed.";
+    }
+    throw new Error(detail);
+  }
+}
+
 export async function retryExtraction(applicationId: string): Promise<ApplicationDetail> {
   return authenticatedRequest<ApplicationDetail>(`/api/applications/${applicationId}/retry-extraction`, {
     method: "POST",

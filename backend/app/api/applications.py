@@ -482,6 +482,23 @@ async def patch_application(
         raise _map_service_error(error) from error
 
 
+@router.delete("/{application_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+async def delete_application(
+    application_id: str,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    service: Annotated[ApplicationService, Depends(get_application_service)],
+) -> Response:
+    try:
+        await service.delete_application(
+            user_id=current_user.id,
+            application_id=application_id,
+        )
+    except Exception as error:
+        raise _map_service_error(error) from error
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/{application_id}/retry-extraction", response_model=ApplicationDetail)
 async def retry_extraction(
     application_id: str,

@@ -9,18 +9,56 @@ import {
   Search,
   TrendingUp,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
-import { SkeletonCard } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
 import { EmptyState } from "@/components/ui/empty-state";
-import { listApplications, type ApplicationSummary } from "@/lib/api";
+import { Select } from "@/components/ui/select";
+import { SkeletonCard } from "@/components/ui/skeleton";
 import { visibleStatusLabels } from "@/lib/application-options";
+import { listApplications, type ApplicationSummary } from "@/lib/api";
 
 type StatusKey = keyof typeof visibleStatusLabels;
+
+type MonthlyDatum = {
+  label: string;
+  created: number;
+  createdAndApplied: number;
+};
+
+type SourceDatum = {
+  origin: string;
+  label: string;
+  count: number;
+  share: number;
+  accent: string;
+  tint: string;
+  icon: LucideIcon;
+};
+
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const MONTHLY_CHART_CONFIG = {
+  created: {
+    label: "Created",
+    color: "rgba(16, 24, 40, 0.42)",
+  },
+  createdAndApplied: {
+    label: "Created and Marked Applied",
+    color: "var(--color-spruce)",
+  },
+} satisfies ChartConfig;
 
 const STATUS_ACCENTS: Record<StatusKey, { fill: string; track: string }> = {
   draft: { fill: "var(--color-ink-25)", track: "var(--color-ink-10)" },
@@ -40,6 +78,17 @@ const SOURCE_META: Record<string, { label: string; icon: LucideIcon; accent: str
   company_website: { label: "Company Website", icon: Globe2, accent: "var(--color-spruce)", tint: "var(--color-spruce-10)" },
   unknown: { label: "Unknown", icon: Globe2, accent: "var(--color-ink-50)", tint: "var(--color-ink-05)" },
 };
+const JOB_SOURCES_CARD_LIMIT = 4;
+const OTHER_JOB_SOURCE_META = {
+  label: "Other",
+  icon: Globe2,
+  accent: "var(--color-ink-50)",
+  tint: "var(--color-ink-05)",
+};
+
+function getCurrentYear() {
+  return new Date().getFullYear();
+}
 
 function getSourceMeta(origin: string) {
   return SOURCE_META[origin] ?? {
@@ -50,10 +99,76 @@ function getSourceMeta(origin: string) {
   };
 }
 
+function buildMonthlyData(applications: ApplicationSummary[], selectedYear: number): MonthlyDatum[] {
+  const monthlyCounts = Array.from({ length: 12 }, (_, monthIndex) => ({
+    label: MONTH_LABELS[monthIndex],
+    created: 0,
+    createdAndApplied: 0,
+  }));
+
+  for (const app of applications) {
+    const createdDate = new Date(app.created_at);
+    if (createdDate.getFullYear() !== selectedYear) continue;
+
+    const monthIndex = createdDate.getMonth();
+    monthlyCounts[monthIndex].created++;
+    if (app.applied) monthlyCounts[monthIndex].createdAndApplied++;
+  }
+
+  return monthlyCounts;
+}
+
+function buildDisplayedJobSources(jobSources: SourceDatum[], totalApplications: number): SourceDatum[] {
+  if (jobSources.length <= JOB_SOURCES_CARD_LIMIT) {
+    return jobSources;
+  }
+
+  const visibleSources = jobSources.slice(0, JOB_SOURCES_CARD_LIMIT - 1);
+  const otherCount = jobSources
+    .slice(JOB_SOURCES_CARD_LIMIT - 1)
+    .reduce((sum, source) => sum + source.count, 0);
+
+  return [
+    ...visibleSources,
+    {
+      origin: "other",
+      label: OTHER_JOB_SOURCE_META.label,
+      count: otherCount,
+      share: Math.round((otherCount / totalApplications) * 100),
+      accent: OTHER_JOB_SOURCE_META.accent,
+      tint: OTHER_JOB_SOURCE_META.tint,
+      icon: OTHER_JOB_SOURCE_META.icon,
+    },
+  ];
+}
+
+function formatPieSlice(
+  cx: number,
+  cy: number,
+  radius: number,
+  startAngle: number,
+  endAngle: number,
+) {
+  const start = polarToCartesian(cx, cy, radius, endAngle);
+  const end = polarToCartesian(cx, cy, radius, startAngle);
+  const largeArcFlag = endAngle - startAngle > 180 ? 1 : 0;
+
+  return [`M ${cx} ${cy}`, `L ${start.x} ${start.y}`, `A ${radius} ${radius} 0 ${largeArcFlag} 0 ${end.x} ${end.y}`, "Z"].join(" ");
+}
+
+function polarToCartesian(cx: number, cy: number, radius: number, angle: number) {
+  const radians = ((angle - 90) * Math.PI) / 180;
+  return {
+    x: cx + radius * Math.cos(radians),
+    y: cy + radius * Math.sin(radians),
+  };
+}
+
 export function DashboardPage() {
   const navigate = useNavigate();
   const [applications, setApplications] = useState<ApplicationSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedYear, setSelectedYear] = useState<number>(() => getCurrentYear());
 
   async function loadApplications() {
     setError(null);
@@ -99,9 +214,9 @@ export function DashboardPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} density="compact" />)}
         </div>
-        <div className="grid gap-4 lg:grid-cols-2">
-          <SkeletonCard density="compact" />
-          <SkeletonCard density="compact" />
+        <SkeletonCard density="compact" />
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} density="compact" />)}
         </div>
       </div>
     );
@@ -144,27 +259,37 @@ export function DashboardPage() {
     const company = app.company?.trim() || "Unknown";
     companyCounts[company] = (companyCounts[company] ?? 0) + 1;
   }
-  const topCompanies = Object.entries(companyCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const topCompanies = Object.entries(companyCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
   const maxCompanyCount = topCompanies[0]?.[1] ?? 1;
 
-  const monthlyCounts: Record<string, { created: number; applied: number }> = {};
-  for (const app of applications) {
-    const d = new Date(app.created_at);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    if (!monthlyCounts[key]) monthlyCounts[key] = { created: 0, applied: 0 };
-    monthlyCounts[key].created++;
-    if (app.applied) monthlyCounts[key].applied++;
-  }
-  const monthlyEntries = Object.entries(monthlyCounts).sort((a, b) => a[0].localeCompare(b[0])).slice(-6);
-  const maxMonthly = Math.max(...monthlyEntries.map(([, value]) => value.created), 1);
+  const availableYears = Array.from(
+    new Set([getCurrentYear(), ...applications.map((app) => new Date(app.created_at).getFullYear())]),
+  ).sort((a, b) => b - a);
+
+  const monthlyData = buildMonthlyData(applications, selectedYear);
+  const totalCreatedForYear = monthlyData.reduce((sum, month) => sum + month.created, 0);
+  const totalCreatedAndAppliedForYear = monthlyData.reduce((sum, month) => sum + month.createdAndApplied, 0);
 
   const originCounts: Record<string, number> = {};
   for (const app of applications) {
     const origin = app.job_posting_origin ?? "unknown";
     originCounts[origin] = (originCounts[origin] ?? 0) + 1;
   }
-  const topOrigins = Object.entries(originCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
-  const maxOriginCount = topOrigins[0]?.[1] ?? 1;
+  const jobSources: SourceDatum[] = Object.entries(originCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([origin, count]) => {
+      const meta = getSourceMeta(origin);
+      return {
+        origin,
+        label: meta.label,
+        count,
+        share: Math.round((count / total) * 100),
+        accent: meta.accent,
+        tint: meta.tint,
+        icon: meta.icon,
+      };
+    });
+  const topJobSources = buildDisplayedJobSources(jobSources, total);
 
   const recentApps = [...applications]
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
@@ -185,116 +310,57 @@ export function DashboardPage() {
         <StatCard label="Extraction Failures" value={failedExtractions} accent="var(--color-amber)" tint="var(--color-amber-10)" icon={Building2} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card density="compact">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--color-ink-40)" }}>
-            Status Breakdown
-          </h3>
-          <div className="mt-4 space-y-2.5">
-            {(Object.keys(statusCounts) as StatusKey[]).map((status) => (
-              <div key={status} className="flex items-center gap-3">
-                <StatusBadge status={status} size="sm" layout="rail" />
-                <div className="flex-1 overflow-hidden rounded-full" style={{ background: STATUS_ACCENTS[status].track }}>
-                  <div
-                    className="h-2.5 rounded-full transition-all"
-                    style={{
-                      width: `${(statusCounts[status] / total) * 100}%`,
-                      minWidth: statusCounts[status] > 0 ? "10px" : "0",
-                      background: STATUS_ACCENTS[status].fill,
-                    }}
-                  />
-                </div>
-                <span className="w-7 text-right text-sm font-semibold tabular-nums" style={{ color: "var(--color-ink)" }}>
-                  {statusCounts[status]}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <Card density="compact">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--color-ink-40)" }}>
-            Monthly Activity
-          </h3>
-          <div className="mt-4 flex items-end gap-2" style={{ height: "118px" }}>
-            {monthlyEntries.map(([month, counts]) => (
-              <div key={month} className="flex flex-1 flex-col items-center gap-1.5">
-                <div className="flex w-full max-w-10 flex-col items-stretch justify-end gap-1" style={{ height: "94px" }}>
-                  <div
-                    className="rounded-t-md transition-all"
-                    style={{
-                      height: `${(counts.created / maxMonthly) * 100}%`,
-                      minHeight: counts.created > 0 ? "6px" : "0",
-                      background: "var(--color-ink-10)",
-                    }}
-                    title={`${counts.created} created`}
-                  />
-                  <div
-                    className="rounded-b-md transition-all"
-                    style={{
-                      height: `${(counts.applied / maxMonthly) * 100}%`,
-                      minHeight: counts.applied > 0 ? "6px" : "0",
-                      background: "var(--color-spruce)",
-                    }}
-                    title={`${counts.applied} applied`}
-                  />
-                </div>
-                <span className="text-[10px] font-semibold tracking-[0.14em]" style={{ color: "var(--color-ink-40)" }}>
-                  {month.split("-")[1]}
-                </span>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 flex items-center gap-4 text-[10px] uppercase tracking-[0.14em]" style={{ color: "var(--color-ink-40)" }}>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: "var(--color-ink-10)" }} />
-              Created
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: "var(--color-spruce)" }} />
-              Applied
-            </span>
-          </div>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card density="compact">
-          <div className="flex items-center justify-between gap-3">
+      <Card density="compact" className="overflow-hidden !p-0">
+        <div
+          className="flex flex-col gap-3 border-b px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6 sm:py-5"
+          style={{ borderColor: "var(--color-border)" }}
+        >
+          <div className="grid flex-1 gap-1">
             <h3 className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--color-ink-40)" }}>
-              Top Companies
+              Monthly Activity
             </h3>
-            <span className="text-[10px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--color-ink-40)" }}>
-              by volume
-            </span>
+            <p className="text-sm" style={{ color: "var(--color-ink-50)" }}>
+              Creation volume and how many of those applications are currently marked applied.
+            </p>
           </div>
-          <div className="mt-4 space-y-3">
-            {topCompanies.map(([company, count]) => (
-              <div key={company} className="space-y-1.5">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="min-w-0 truncate text-sm font-medium" style={{ color: "var(--color-ink)" }}>
-                    {company}
-                  </span>
-                  <span className="text-xs font-semibold tabular-nums" style={{ color: "var(--color-ink-50)" }}>
-                    {count}
-                  </span>
-                </div>
-                <div className="overflow-hidden rounded-full" style={{ background: "var(--color-spruce-10)" }}>
-                  <div
-                    className="h-2.5 rounded-full"
-                    style={{
-                      width: `${(count / maxCompanyCount) * 100}%`,
-                      minWidth: count > 0 ? "10px" : "0",
-                      background: "linear-gradient(90deg, var(--color-spruce) 0%, var(--color-spruce-light) 100%)",
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
+          <div className="w-full sm:w-40">
+            <Select
+              id="dashboard-monthly-year"
+              aria-label="Select monthly activity year"
+              value={String(selectedYear)}
+              onChange={(event) => setSelectedYear(Number(event.target.value))}
+            >
+              {availableYears.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </Select>
           </div>
-        </Card>
+        </div>
 
-        <Card density="compact">
+        <div className="px-2 pb-4 pt-4 sm:px-4 sm:pb-5 sm:pt-5">
+          <MonthlyActivityChart data={monthlyData} year={selectedYear} />
+        </div>
+
+        <div
+          className="flex flex-wrap items-center gap-3 border-t px-4 pb-4 pt-3 text-[10px] font-semibold uppercase tracking-[0.16em] sm:px-6"
+          style={{ color: "var(--color-ink-40)", borderColor: "var(--color-border)" }}
+        >
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: "rgba(16, 24, 40, 0.20)" }} />
+            {totalCreatedForYear} created
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: "rgba(24, 74, 69, 0.78)" }} />
+            {totalCreatedAndAppliedForYear} created + applied
+          </span>
+          <span>{selectedYear} overview</span>
+        </div>
+      </Card>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <Card density="compact" className="h-full min-h-[198px]">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--color-ink-40)" }}>
               Job Sources
@@ -303,49 +369,80 @@ export function DashboardPage() {
               capture mix
             </span>
           </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {topOrigins.map(([origin, count]) => {
-              const meta = getSourceMeta(origin);
-              const Icon = meta.icon;
-              const share = Math.round((count / total) * 100);
+          <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center">
+            <JobSourcesPieChart sources={topJobSources} />
+            <div className="min-w-0 flex-1 space-y-2.5">
+              {topJobSources.map((source) => {
+                const Icon = source.icon;
 
-              return (
-                <div
-                  key={origin}
-                  className="rounded-xl border p-3"
-                  style={{ borderColor: "var(--color-border)", background: "linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(255,255,255,0.88) 100%)" }}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg" style={{ background: meta.tint, color: meta.accent }}>
-                        <Icon size={16} />
+                return (
+                  <div key={source.origin} className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                        style={{ background: source.tint, color: source.accent }}
+                      >
+                        <Icon size={15} />
                       </span>
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium" style={{ color: "var(--color-ink)" }}>
-                          {meta.label}
-                        </div>
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--color-ink-40)" }}>
-                          {share}% share
-                        </div>
+                      <div className="min-w-0 truncate text-sm font-medium" style={{ color: "var(--color-ink)" }}>
+                        {source.label}
+                        <span className="ml-2 text-[10px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--color-ink-40)" }}>
+                          {source.share}%
+                        </span>
                       </div>
                     </div>
-                    <span className="text-lg font-semibold tabular-nums" style={{ color: meta.accent }}>
-                      {count}
+                    <span className="w-8 text-right text-sm font-semibold tabular-nums" style={{ color: source.accent }}>
+                      {source.count}
                     </span>
                   </div>
-                  <div className="mt-3 overflow-hidden rounded-full" style={{ background: meta.tint }}>
-                    <div
-                      className="h-2.5 rounded-full"
-                      style={{
-                        width: `${(count / maxOriginCount) * 100}%`,
-                        minWidth: count > 0 ? "10px" : "0",
-                        background: meta.accent,
-                      }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+          </div>
+        </Card>
+
+        <Card density="compact" className="h-full min-h-[198px]">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--color-ink-40)" }}>
+              Top Companies
+            </h3>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--color-ink-40)" }}>
+              by volume
+            </span>
+          </div>
+          <div className="mt-4 flex h-[calc(100%-2rem)] flex-col justify-evenly gap-3">
+            {topCompanies.map(([company, count]) => (
+              <CompactRailRow
+                key={company}
+                label={
+                  <span className="block truncate text-sm font-medium" style={{ color: "var(--color-ink)" }}>
+                    {company}
+                  </span>
+                }
+                value={count}
+                maxValue={maxCompanyCount}
+                fill="linear-gradient(90deg, var(--color-spruce) 0%, var(--color-spruce-light) 100%)"
+                track="var(--color-spruce-10)"
+              />
+            ))}
+          </div>
+        </Card>
+
+        <Card density="compact" className="h-full min-h-[198px]">
+          <h3 className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--color-ink-40)" }}>
+            Status Breakdown
+          </h3>
+          <div className="mt-4 flex h-[calc(100%-2rem)] flex-col justify-evenly gap-3">
+            {(Object.keys(statusCounts) as StatusKey[]).map((status) => (
+              <CompactRailRow
+                key={status}
+                label={<StatusBadge status={status} size="sm" layout="rail" />}
+                value={statusCounts[status]}
+                maxValue={total}
+                fill={STATUS_ACCENTS[status].fill}
+                track={STATUS_ACCENTS[status].track}
+              />
+            ))}
           </div>
         </Card>
       </div>
@@ -365,8 +462,12 @@ export function DashboardPage() {
               key={app.id}
               className="flex cursor-pointer items-center gap-3 py-2.5 transition-colors first:pt-0 last:pb-0"
               onClick={() => navigate(`/app/applications/${app.id}`)}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--color-ink-05)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              onMouseEnter={(event) => {
+                event.currentTarget.style.background = "var(--color-ink-05)";
+              }}
+              onMouseLeave={(event) => {
+                event.currentTarget.style.background = "transparent";
+              }}
             >
               <StatusBadge status={app.visible_status} size="sm" />
               <div className="min-w-0 flex-1">
@@ -378,7 +479,10 @@ export function DashboardPage() {
                 </div>
               </div>
               {app.applied && (
-                <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--color-spruce)", background: "var(--color-spruce-05)" }}>
+                <span
+                  className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]"
+                  style={{ color: "var(--color-spruce)", background: "var(--color-spruce-05)" }}
+                >
                   Applied
                 </span>
               )}
@@ -386,6 +490,139 @@ export function DashboardPage() {
           ))}
         </div>
       </Card>
+    </div>
+  );
+}
+
+function MonthlyActivityChart({ data, year }: { data: MonthlyDatum[]; year: number }) {
+  return (
+    <ChartContainer
+      config={MONTHLY_CHART_CONFIG}
+      data-testid="monthly-activity-chart"
+      aria-label={`Monthly activity for ${year}`}
+      role="img"
+      className="h-[320px] w-full"
+    >
+      <AreaChart data={data} margin={{ left: 6, right: 6, top: 8, bottom: 0 }}>
+        <defs>
+          <linearGradient id="fillCreated" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="var(--color-created)" stopOpacity={0.46} />
+            <stop offset="95%" stopColor="var(--color-created)" stopOpacity={0.06} />
+          </linearGradient>
+          <linearGradient id="fillApplied" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="var(--color-applied)" stopOpacity={0.42} />
+            <stop offset="95%" stopColor="var(--color-applied)" stopOpacity={0.05} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid vertical={false} stroke="rgba(16, 24, 40, 0.08)" strokeDasharray="4 8" />
+        <XAxis
+          dataKey="label"
+          tickLine={false}
+          axisLine={false}
+          tickMargin={12}
+          interval={0}
+          tick={{ fill: "rgba(16, 24, 40, 0.44)", fontSize: 11, fontWeight: 700 }}
+        />
+        <YAxis hide domain={[0, "dataMax + 1"]} />
+        <ChartTooltip
+          cursor={false}
+          content={<ChartTooltipContent labelFormatter={(value) => `${value} ${year}`} indicator="dot" />}
+        />
+        <Area
+          dataKey="created"
+          type="natural"
+          fill="url(#fillCreated)"
+          stroke="var(--color-created)"
+          strokeWidth={3}
+          activeDot={{ r: 4, fill: "var(--color-created)" }}
+          dot={{ r: 3, fill: "var(--color-created)", strokeWidth: 0 }}
+        />
+        <Area
+          dataKey="createdAndApplied"
+          type="natural"
+          fill="url(#fillApplied)"
+          stroke="var(--color-applied)"
+          strokeWidth={3}
+          activeDot={{ r: 4, fill: "var(--color-applied)" }}
+          dot={{ r: 3, fill: "var(--color-applied)", strokeWidth: 0 }}
+        />
+      </AreaChart>
+    </ChartContainer>
+  );
+}
+
+function JobSourcesPieChart({ sources }: { sources: SourceDatum[] }) {
+  const size = 176;
+  const center = size / 2;
+  const radius = 54;
+  const total = sources.reduce((sum, source) => sum + source.count, 0);
+  let startAngle = -90;
+
+  return (
+    <div className="mx-auto w-full max-w-[176px] shrink-0 text-center">
+      <svg aria-label="Job sources pie chart" className="mx-auto h-[176px] w-[176px]" viewBox={`0 0 ${size} ${size}`} role="img">
+        <circle cx={center} cy={center} r={radius + 14} fill="rgba(16, 24, 40, 0.03)" />
+
+        {sources.length === 1 ? (
+          <circle cx={center} cy={center} r={radius} fill={sources[0].accent}>
+            <title>{`${sources[0].label}: ${sources[0].count} applications (${sources[0].share}%)`}</title>
+          </circle>
+        ) : (
+          sources.map((source) => {
+            const sliceAngle = (source.count / total) * 360;
+            const endAngle = startAngle + sliceAngle;
+            const path = formatPieSlice(center, center, radius, startAngle, endAngle);
+
+            startAngle = endAngle;
+
+            return (
+              <path key={source.origin} d={path} fill={source.accent} stroke="rgba(255,255,255,0.88)" strokeWidth="2.5">
+                <title>{`${source.label}: ${source.count} applications (${source.share}%)`}</title>
+              </path>
+            );
+          })
+        )}
+
+        <circle cx={center} cy={center} r="24" fill="rgba(255,255,255,0.92)" />
+        <text x={center} y={center + 3} textAnchor="middle" fontSize="18" fontWeight="700" fill="var(--color-ink)">
+          {total}
+        </text>
+      </svg>
+    </div>
+  );
+}
+
+function CompactRailRow({
+  label,
+  value,
+  maxValue,
+  fill,
+  track,
+}: {
+  label: ReactNode;
+  value: number;
+  maxValue: number;
+  fill: string;
+  track: string;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-[7.5rem] shrink-0 overflow-hidden">
+        {label}
+      </div>
+      <div className="flex-1 overflow-hidden rounded-full" style={{ background: track }}>
+        <div
+          className="h-2.5 rounded-full transition-all"
+          style={{
+            width: `${(value / Math.max(maxValue, 1)) * 100}%`,
+            minWidth: value > 0 ? "10px" : "0",
+            background: fill,
+          }}
+        />
+      </div>
+      <span className="w-8 text-right text-sm font-semibold tabular-nums" style={{ color: "var(--color-ink)" }}>
+        {value}
+      </span>
     </div>
   );
 }

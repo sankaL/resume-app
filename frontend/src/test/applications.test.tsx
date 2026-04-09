@@ -16,6 +16,7 @@ import { ExtensionPage } from "@/routes/ExtensionPage";
 const api = vi.hoisted(() => ({
   cancelGeneration: vi.fn(),
   createApplication: vi.fn(),
+  deleteApplication: vi.fn(),
   exportPdf: vi.fn(),
   fetchExtensionStatus: vi.fn(),
   fetchApplicationDetail: vi.fn(),
@@ -51,6 +52,29 @@ const defaultBootstrap = {
   profile: null,
   workflow_contract_version: "1",
 };
+
+function buildApplicationSummary(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "app-1",
+    job_url: "https://example.com/job",
+    job_title: "Backend Engineer",
+    company: "Acme",
+    job_posting_origin: "linkedin",
+    visible_status: "in_progress",
+    internal_state: "resume_ready",
+    failure_reason: null,
+    applied: false,
+    duplicate_similarity_score: null,
+    duplicate_resolution_status: null,
+    duplicate_matched_application_id: null,
+    created_at: "2026-04-07T12:00:00Z",
+    updated_at: "2026-04-07T12:05:00Z",
+    base_resume_name: "Default Resume",
+    has_action_required_notification: false,
+    has_unresolved_duplicate: false,
+    ...overrides,
+  };
+}
 
 function renderWithAppProvider(
   ui: ReactNode,
@@ -89,6 +113,155 @@ describe("phase 1 applications UI", () => {
     expect(screen.getAllByRole("button", { name: /new application/i })).not.toHaveLength(0);
   });
 
+  it("supports current-page selection without triggering row navigation", async () => {
+    api.listApplications.mockResolvedValue([
+      buildApplicationSummary({ id: "app-1", job_title: "Backend Engineer" }),
+      buildApplicationSummary({ id: "app-2", job_title: "Platform Engineer", company: "Beta Labs" }),
+    ]);
+
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications" element={<ApplicationsListPage />} />
+        <Route path="/app/applications/:applicationId" element={<div>Detail Route</div>} />
+      </Routes>,
+      { initialEntries: ["/app/applications"] },
+    );
+
+    expect(await screen.findByText("Backend Engineer")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText("Select Backend Engineer"));
+
+    expect(screen.getByText("1 application selected")).toBeInTheDocument();
+    expect(screen.queryByText("Detail Route")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText(/select current page/i));
+
+    expect(screen.getByText("2 applications selected")).toBeInTheDocument();
+    expect(screen.getByLabelText("Select Backend Engineer")).toBeChecked();
+    expect(screen.getByLabelText("Select Platform Engineer")).toBeChecked();
+  });
+
+  it("bulk mark applied updates only selected rows that are not already applied", async () => {
+    const initial = [
+      buildApplicationSummary({ id: "app-1", job_title: "Backend Engineer", applied: false }),
+      buildApplicationSummary({ id: "app-2", job_title: "Platform Engineer", company: "Beta Labs", applied: true }),
+    ];
+    const updated = [
+      buildApplicationSummary({ id: "app-1", job_title: "Backend Engineer", applied: true }),
+      buildApplicationSummary({ id: "app-2", job_title: "Platform Engineer", company: "Beta Labs", applied: true }),
+    ];
+    api.listApplications
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(updated)
+      .mockResolvedValueOnce(updated);
+    api.patchApplication.mockResolvedValue({
+      ...buildApplicationSummary({ id: "app-1", applied: true }),
+      job_description: "Build APIs",
+      extracted_reference_id: null,
+      job_posting_origin_other_text: null,
+      base_resume_id: null,
+      notes: null,
+      extraction_failure_details: null,
+      generation_failure_details: null,
+      duplicate_warning: null,
+    });
+
+    renderWithAppProvider(<ApplicationsListPage />);
+
+    expect(await screen.findByText("Backend Engineer")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText("Select Backend Engineer"));
+    await userEvent.click(screen.getByLabelText("Select Platform Engineer"));
+    await userEvent.click(screen.getAllByRole("button", { name: /mark applied/i })[0]);
+
+    await waitFor(() => expect(api.patchApplication).toHaveBeenCalledTimes(1));
+    expect(api.patchApplication).toHaveBeenCalledWith("app-1", { applied: true });
+    expect(await screen.findByText(/marked 1 application as applied/i)).toBeInTheDocument();
+    expect(screen.queryByText("2 applications selected")).not.toBeInTheDocument();
+  });
+
+  it("shows singular and plural bulk delete confirmation copy", async () => {
+    api.listApplications.mockResolvedValue([
+      buildApplicationSummary({ id: "app-1", job_title: "Backend Engineer" }),
+      buildApplicationSummary({ id: "app-2", job_title: "Platform Engineer", company: "Beta Labs" }),
+    ]);
+
+    renderWithAppProvider(<ApplicationsListPage />);
+
+    expect(await screen.findByText("Backend Engineer")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText("Select Backend Engineer"));
+    await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+
+    expect(await screen.findByText("Delete application?")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    await userEvent.click(screen.getByLabelText("Select Platform Engineer"));
+    await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+
+    expect(await screen.findByText("Delete applications?")).toBeInTheDocument();
+  });
+
+  it("disables bulk delete when selected rows are still processing", async () => {
+    api.listApplications.mockResolvedValue([
+      buildApplicationSummary({ id: "app-1", job_title: "Backend Engineer", internal_state: "generating" }),
+    ]);
+
+    renderWithAppProvider(<ApplicationsListPage />);
+
+    expect(await screen.findByText("Backend Engineer")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText("Select Backend Engineer"));
+
+    expect(screen.getByRole("button", { name: /^delete$/i })).toBeDisabled();
+    expect(screen.getByText(/delete is unavailable while 1 selected application is still processing/i)).toBeInTheDocument();
+  });
+
+  it("keeps failed selections after a partial bulk delete failure", async () => {
+    const initial = [
+      buildApplicationSummary({ id: "app-1", job_title: "Backend Engineer" }),
+      buildApplicationSummary({ id: "app-2", job_title: "Platform Engineer", company: "Beta Labs" }),
+    ];
+    const updated = [buildApplicationSummary({ id: "app-2", job_title: "Platform Engineer", company: "Beta Labs" })];
+    api.listApplications
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(updated)
+      .mockResolvedValueOnce(updated);
+    api.deleteApplication
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("Application cannot be deleted while background work is still running."));
+
+    renderWithAppProvider(<ApplicationsListPage />);
+
+    expect(await screen.findByText("Backend Engineer")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText("Select Backend Engineer"));
+    await userEvent.click(screen.getByLabelText("Select Platform Engineer"));
+    await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /delete applications/i }));
+
+    await waitFor(() => expect(api.deleteApplication).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("1 application selected")).toBeInTheDocument();
+    expect(screen.getByLabelText("Select Platform Engineer")).toBeChecked();
+    expect(await screen.findByText(/1 application failed/i)).toBeInTheDocument();
+  });
+
+  it("renders top-aligned application table cells for the compact list layout", async () => {
+    api.listApplications.mockResolvedValue([
+      buildApplicationSummary({ id: "app-1", job_title: "Backend Engineer" }),
+    ]);
+
+    renderWithAppProvider(<ApplicationsListPage />);
+
+    const titleCell = await screen.findByText("Backend Engineer");
+    const row = titleCell.closest("tr");
+    const firstCell = row?.querySelector("td");
+
+    expect(firstCell?.className).toContain("align-top");
+  });
+
   it("surfaces dashboard load failures instead of showing the empty state", async () => {
     api.listApplications.mockRejectedValueOnce(new Error("Session expired."));
 
@@ -101,6 +274,167 @@ describe("phase 1 applications UI", () => {
     expect(await screen.findByText(/dashboard unavailable/i)).toBeInTheDocument();
     expect(screen.getByText(/session expired/i)).toBeInTheDocument();
     expect(screen.queryByText(/no applications yet/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the monthly activity year selector and updates dashboard analytics for prior years", async () => {
+    const user = userEvent.setup();
+    const currentYear = new Date().getFullYear();
+    const previousYear = currentYear - 1;
+
+    api.listApplications.mockResolvedValue([
+      {
+        id: "app-current-1",
+        job_url: "https://example.com/1",
+        job_title: "Platform Engineer",
+        company: "Northstar",
+        job_posting_origin: "linkedin",
+        visible_status: "in_progress",
+        internal_state: "resume_ready",
+        failure_reason: null,
+        applied: true,
+        duplicate_similarity_score: null,
+        duplicate_resolution_status: null,
+        duplicate_matched_application_id: null,
+        created_at: `${currentYear}-01-12T12:00:00Z`,
+        updated_at: `${currentYear}-01-14T12:00:00Z`,
+        base_resume_name: "Default Resume",
+        has_action_required_notification: false,
+        has_unresolved_duplicate: false,
+      },
+      {
+        id: "app-current-2",
+        job_url: "https://example.com/2",
+        job_title: "Product Analyst",
+        company: "Northstar",
+        job_posting_origin: "indeed",
+        visible_status: "draft",
+        internal_state: "draft_created",
+        failure_reason: null,
+        applied: false,
+        duplicate_similarity_score: null,
+        duplicate_resolution_status: null,
+        duplicate_matched_application_id: null,
+        created_at: `${currentYear}-03-03T12:00:00Z`,
+        updated_at: `${currentYear}-03-03T12:00:00Z`,
+        base_resume_name: "Default Resume",
+        has_action_required_notification: false,
+        has_unresolved_duplicate: false,
+      },
+      {
+        id: "app-previous-1",
+        job_url: "https://example.com/3",
+        job_title: "Backend Engineer",
+        company: "Acme",
+        job_posting_origin: "linkedin",
+        visible_status: "complete",
+        internal_state: "applied",
+        failure_reason: null,
+        applied: true,
+        duplicate_similarity_score: null,
+        duplicate_resolution_status: null,
+        duplicate_matched_application_id: null,
+        created_at: `${previousYear}-02-11T12:00:00Z`,
+        updated_at: `${previousYear}-02-12T12:00:00Z`,
+        base_resume_name: "Default Resume",
+        has_action_required_notification: false,
+        has_unresolved_duplicate: false,
+      },
+      {
+        id: "app-previous-2",
+        job_url: "https://example.com/4",
+        job_title: "ML Engineer",
+        company: "Beacon",
+        job_posting_origin: "company_website",
+        visible_status: "needs_action",
+        internal_state: "manual_entry_required",
+        failure_reason: "extraction_failed",
+        applied: true,
+        duplicate_similarity_score: null,
+        duplicate_resolution_status: null,
+        duplicate_matched_application_id: null,
+        created_at: `${previousYear}-05-08T12:00:00Z`,
+        updated_at: `${previousYear}-05-09T12:00:00Z`,
+        base_resume_name: "Default Resume",
+        has_action_required_notification: true,
+        has_unresolved_duplicate: false,
+      },
+      {
+        id: "app-previous-3",
+        job_url: "https://example.com/5",
+        job_title: "Design Systems Lead",
+        company: "Beacon",
+        job_posting_origin: "glassdoor",
+        visible_status: "in_progress",
+        internal_state: "resume_ready",
+        failure_reason: null,
+        applied: false,
+        duplicate_similarity_score: null,
+        duplicate_resolution_status: null,
+        duplicate_matched_application_id: null,
+        created_at: `${previousYear}-10-02T12:00:00Z`,
+        updated_at: `${previousYear}-10-03T12:00:00Z`,
+        base_resume_name: "Default Resume",
+        has_action_required_notification: false,
+        has_unresolved_duplicate: false,
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Monthly Activity")).toBeInTheDocument();
+    expect(screen.getByText("Job Sources")).toBeInTheDocument();
+    expect(screen.getByText("Top Companies")).toBeInTheDocument();
+    expect(screen.getByText("Status Breakdown")).toBeInTheDocument();
+
+    const yearSelect = screen.getByRole("combobox", { name: /select monthly activity year/i });
+    expect(yearSelect).toHaveValue(String(currentYear));
+    expect(within(yearSelect).getByRole("option", { name: String(previousYear) })).toBeInTheDocument();
+
+    const chart = screen.getByTestId("monthly-activity-chart");
+    expect(chart).toHaveAttribute("aria-label", `Monthly activity for ${currentYear}`);
+    expect(screen.getByText("2 created")).toBeInTheDocument();
+    expect(screen.getByText("1 created + applied")).toBeInTheDocument();
+    expect(screen.getByText(`${currentYear} overview`)).toBeInTheDocument();
+
+    await user.selectOptions(yearSelect, String(previousYear));
+
+    expect(chart).toHaveAttribute("aria-label", `Monthly activity for ${previousYear}`);
+    expect(screen.getByText("3 created")).toBeInTheDocument();
+    expect(screen.getByText("2 created + applied")).toBeInTheDocument();
+    expect(screen.getByText(`${previousYear} overview`)).toBeInTheDocument();
+  });
+
+  it("aggregates lower-volume job sources into an other bucket", async () => {
+    api.listApplications.mockResolvedValue([
+      buildApplicationSummary({ id: "app-1", job_posting_origin: "linkedin" }),
+      buildApplicationSummary({ id: "app-2", job_posting_origin: "linkedin" }),
+      buildApplicationSummary({ id: "app-3", job_posting_origin: "linkedin" }),
+      buildApplicationSummary({ id: "app-4", job_posting_origin: "indeed" }),
+      buildApplicationSummary({ id: "app-5", job_posting_origin: "indeed" }),
+      buildApplicationSummary({ id: "app-6", job_posting_origin: "company_website" }),
+      buildApplicationSummary({ id: "app-7", job_posting_origin: "glassdoor" }),
+      buildApplicationSummary({ id: "app-8", job_posting_origin: "monster" }),
+    ]);
+
+    render(
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Job Sources")).toBeInTheDocument();
+    expect(screen.getByText("LinkedIn")).toBeInTheDocument();
+    expect(screen.getByText("Indeed")).toBeInTheDocument();
+    expect(screen.getByText("Company Website")).toBeInTheDocument();
+    const otherRow = screen.getByText("Other").closest("div.flex.items-center.justify-between.gap-3");
+
+    expect(otherRow).not.toBeNull();
+    expect(screen.getByLabelText("Job sources pie chart")).toHaveTextContent("8");
+    expect(within(otherRow as HTMLElement).getByText("2")).toBeInTheDocument();
   });
 
   it("renders authenticated pages inside the fluid shell without a desktop max-width cap", async () => {

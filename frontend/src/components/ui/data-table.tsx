@@ -5,7 +5,7 @@ type SortableValue = string | number | boolean | Date | null | undefined;
 
 type Column<T> = {
   key: string;
-  header: string;
+  header: ReactNode;
   render: (row: T) => ReactNode;
   sortable?: boolean;
   sortValue?: (row: T) => SortableValue;
@@ -21,6 +21,8 @@ type DataTableProps<T> = {
   emptyState?: ReactNode;
   density?: "default" | "compact";
   tableLayout?: "auto" | "fixed";
+  verticalAlign?: "middle" | "top";
+  onVisibleRowsChange?: (rows: T[]) => void;
 };
 
 export function DataTable<T>({
@@ -32,6 +34,8 @@ export function DataTable<T>({
   emptyState,
   density = "default",
   tableLayout = "auto",
+  verticalAlign = "middle",
+  onVisibleRowsChange,
 }: DataTableProps<T>) {
   const [currentPage, setCurrentPage] = useState(1);
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -83,6 +87,10 @@ export function DataTable<T>({
       setCurrentPage(safeCurrentPage);
     }
   }, [currentPage, safeCurrentPage]);
+
+  useEffect(() => {
+    onVisibleRowsChange?.(pageData);
+  }, [onVisibleRowsChange, pageData]);
 
   function handleSort(key: string) {
     if (sortKey === key) {
@@ -185,7 +193,14 @@ export function DataTable<T>({
                   }}
                 >
                   {columns.map((col) => (
-                    <td key={col.key} className={density === "compact" ? "px-4 py-2.5 align-middle" : "px-4 py-3 align-middle"}>
+                    <td
+                      key={col.key}
+                      className={
+                        density === "compact"
+                          ? `px-4 py-2.5 ${verticalAlign === "top" ? "align-top" : "align-middle"}`
+                          : `px-4 py-3 ${verticalAlign === "top" ? "align-top" : "align-middle"}`
+                      }
+                    >
                       {col.render(row)}
                     </td>
                   ))}

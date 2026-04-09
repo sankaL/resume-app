@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DataTable } from "@/components/ui/data-table";
 
 type Row = {
@@ -103,5 +103,37 @@ describe("data table", () => {
 
     await user.click(screen.getByText("Updated"));
     expect(getBodyRows()).toEqual(["Newest30", "Middle20", "Oldest10"]);
+  });
+
+  it("reports the current page rows when pagination changes", async () => {
+    const user = userEvent.setup();
+    const handleVisibleRowsChange = vi.fn();
+
+    render(
+      <DataTable
+        columns={[
+          {
+            key: "label",
+            header: "Label",
+            render: (row: Row) => row.label,
+          },
+        ]}
+        data={Array.from({ length: 26 }, (_, index) => ({
+          id: `row-${index + 1}`,
+          label: `Role ${index + 1}`,
+          updated: index + 1,
+        }))}
+        getRowKey={(row) => row.id}
+        pageSize={25}
+        onVisibleRowsChange={handleVisibleRowsChange}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /next/i }));
+
+    expect(handleVisibleRowsChange).toHaveBeenCalled();
+    expect(handleVisibleRowsChange.mock.lastCall?.[0]).toEqual([
+      { id: "row-26", label: "Role 26", updated: 26 },
+    ]);
   });
 });

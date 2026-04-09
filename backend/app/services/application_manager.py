@@ -50,6 +50,13 @@ ACTIVE_GENERATION_PROGRESS_STATES = {
     "regenerating_full",
     "regenerating_section",
 }
+ACTIVE_DELETE_BLOCKING_STATES = {
+    "extraction_pending",
+    "extracting",
+    "generating",
+    "regenerating_full",
+    "regenerating_section",
+}
 BLOCKED_PLACEHOLDER_TITLE_PREFIXES = ("blocked - ",)
 BLOCKED_PLACEHOLDER_TITLE_VALUES = {"you have been blocked", "access denied", "attention required"}
 BLOCKED_PLACEHOLDER_DESCRIPTION_MARKERS = (
@@ -308,6 +315,19 @@ class ApplicationService:
             updated = self._refresh(user_id=user_id, application_id=application_id)
 
         return self._detail_payload(updated)
+
+    async def delete_application(
+        self,
+        *,
+        user_id: str,
+        application_id: str,
+    ) -> None:
+        record = self._require_application(user_id=user_id, application_id=application_id)
+        if record.internal_state in ACTIVE_DELETE_BLOCKING_STATES:
+            raise PermissionError("Application cannot be deleted while background work is still running.")
+
+        await self.progress_store.delete(application_id)
+        self.repository.delete_application(application_id=application_id, user_id=user_id)
 
     async def complete_manual_entry(
         self,

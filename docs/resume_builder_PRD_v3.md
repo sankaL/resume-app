@@ -189,6 +189,8 @@ The landing page shows a list of job applications for the logged-in user.
 - Search by company or job title
 - Filter by status
 - Sort by date updated (default: newest first)
+- Delete applications directly from the table
+- Multi-select applications for bulk delete and bulk mark-as-applied actions
 
 **UX requirements:**
 - Skeleton loading while the list is fetching
