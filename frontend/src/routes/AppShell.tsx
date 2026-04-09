@@ -30,8 +30,8 @@ function ShellContent() {
       <div className="main-with-sidebar flex flex-1 flex-col" style={{ marginLeft: "var(--sidebar-width)" }}>
         <TopBar onMenuToggle={() => setMobileSidebarOpen((v) => !v)} />
 
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-10 xl:px-12">
-          <div className="mx-auto max-w-[1440px]">
+        <main className="app-shell-main flex-1">
+          <div className="app-shell-content">
             {bootstrapError ? (
               <Card variant="danger" className="mb-6">
                 <p className="text-sm font-semibold" style={{ color: "var(--color-ember)" }}>

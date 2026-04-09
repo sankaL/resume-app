@@ -41,7 +41,7 @@ export function TopBar({ onMenuToggle }: { onMenuToggle?: () => void }) {
 
   return (
     <header
-      className="sticky top-0 z-20 flex items-center justify-between border-b px-6"
+      className="app-shell-header sticky top-0 z-20 flex items-center justify-between border-b"
       style={{
         height: "var(--topbar-height)",
         background: "var(--color-canvas)",

@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 type StatusBadgeProps = {
   status: keyof typeof visibleStatusLabels;
   size?: "sm" | "md";
+  layout?: "natural" | "rail";
 };
 
 const STATUS_STYLES: Record<string, { bg: string; color: string; dot: string }> = {
@@ -13,14 +14,15 @@ const STATUS_STYLES: Record<string, { bg: string; color: string; dot: string }> 
   complete:     { bg: "var(--color-ink)",         color: "#fff",               dot: "#fff" },
 };
 
-export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
+export function StatusBadge({ status, size = "sm", layout = "natural" }: StatusBadgeProps) {
   const s = STATUS_STYLES[status] ?? STATUS_STYLES.draft;
 
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full font-semibold",
-        size === "sm" ? "px-2.5 py-0.5 text-[11px]" : "px-3 py-1 text-xs",
+        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full font-semibold",
+        size === "sm" ? "h-6 px-2.5 text-[11px]" : "h-7 px-3 text-xs",
+        layout === "rail" && (size === "sm" ? "min-w-[7.25rem] justify-start" : "min-w-[8rem] justify-start"),
       )}
       style={{ background: s.bg, color: s.color }}
     >

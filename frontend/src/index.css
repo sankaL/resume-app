@@ -45,6 +45,7 @@
 
   /* ---- TopBar ---- */
   --topbar-height:    64px;
+  --app-shell-inline-pad: 1rem;
 
   /* ---- Radius ---- */
   --radius-xs:  4px;
@@ -258,11 +259,38 @@ body {
   font-weight: 600;
 }
 
+.resume-preview-markdown h1 {
+  color: var(--color-spruce);
+  letter-spacing: -0.02em;
+}
+
+.resume-preview-markdown h2 {
+  color: var(--color-ember);
+  border-bottom-color: var(--color-sand);
+}
+
+.resume-preview-markdown h3 {
+  color: var(--color-spruce-light);
+}
+
 /* ============================================================
    Page Transition Wrapper
    ============================================================ */
 .page-enter {
   animation: fadeInUp var(--duration-slow) var(--ease-out) both;
+}
+
+.app-shell-header {
+  padding-inline: var(--app-shell-inline-pad);
+}
+
+.app-shell-main {
+  padding: 1.5rem var(--app-shell-inline-pad) 2rem;
+}
+
+.app-shell-content {
+  width: 100%;
+  min-width: 0;
 }
 
 /* ============================================================
@@ -355,6 +383,24 @@ body {
 @media (min-width: 768px) {
   .sidebar-mobile-toggle {
     display: none !important;
+  }
+}
+
+@media (min-width: 640px) {
+  :root {
+    --app-shell-inline-pad: clamp(1.25rem, 1rem + 0.8vw, 1.75rem);
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --app-shell-inline-pad: clamp(1.75rem, 0.75rem + 1.8vw, 2.75rem);
+  }
+}
+
+@media (min-width: 1536px) {
+  :root {
+    --app-shell-inline-pad: clamp(2.25rem, 0.5rem + 2vw, 4rem);
   }
 }
 

@@ -19,6 +19,8 @@ type DataTableProps<T> = {
   onRowClick?: (row: T) => void;
   pageSize?: number;
   emptyState?: ReactNode;
+  density?: "default" | "compact";
+  tableLayout?: "auto" | "fixed";
 };
 
 export function DataTable<T>({
@@ -28,6 +30,8 @@ export function DataTable<T>({
   onRowClick,
   pageSize = 25,
   emptyState,
+  density = "default",
+  tableLayout = "auto",
 }: DataTableProps<T>) {
   const [currentPage, setCurrentPage] = useState(1);
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -100,13 +104,17 @@ export function DataTable<T>({
         style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
       >
         <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ color: "var(--color-ink)" }}>
+          <table className="w-full text-sm" style={{ color: "var(--color-ink)", tableLayout }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--color-border)" }}>
                 {columns.map((col) => (
                   <th
                     key={col.key}
-                    className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider"
+                    className={
+                      density === "compact"
+                        ? "px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.18em]"
+                        : "px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider"
+                    }
                     style={{
                       color: "var(--color-ink-50)",
                       background: "var(--color-ink-05)",
@@ -177,7 +185,7 @@ export function DataTable<T>({
                   }}
                 >
                   {columns.map((col) => (
-                    <td key={col.key} className="px-4 py-3">
+                    <td key={col.key} className={density === "compact" ? "px-4 py-2.5 align-middle" : "px-4 py-3 align-middle"}>
                       {col.render(row)}
                     </td>
                   ))}

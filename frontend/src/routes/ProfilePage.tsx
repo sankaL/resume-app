@@ -117,16 +117,16 @@ export function ProfilePage() {
     }
   }
 
-  if (isLoading) {
-    return (
-      <div className="page-enter space-y-5">
-        <PageHeader title="Profile & Preferences" subtitle="Manage your personal information and resume settings" />
-        <div className="grid gap-5 lg:grid-cols-2">
-          <SkeletonCard />
-          <SkeletonCard />
+    if (isLoading) {
+      return (
+        <div className="page-enter space-y-5">
+          <PageHeader title="Profile & Preferences" subtitle="Manage your personal information and resume settings" />
+        <div className="grid gap-5 xl:grid-cols-2 2xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+            <SkeletonCard density="compact" />
+            <SkeletonCard density="compact" />
+          </div>
         </div>
-      </div>
-    );
+      );
   }
 
   return (
@@ -145,15 +145,15 @@ export function ProfilePage() {
       />
 
       {error && (
-        <Card variant="danger">
+        <Card variant="danger" density="compact">
           <p className="text-sm font-semibold" style={{ color: "var(--color-ember)" }}>Error</p>
           <p className="mt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>{error}</p>
         </Card>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-5 xl:grid-cols-2 2xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
         {/* Personal Information */}
-        <Card>
+        <Card density="compact">
           <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Personal Information</h3>
           <p className="mt-1 text-xs" style={{ color: "var(--color-ink-40)" }}>Used in generated resumes.</p>
           <div className="mt-4 space-y-3">
@@ -178,7 +178,7 @@ export function ProfilePage() {
         </Card>
 
         {/* Section Preferences */}
-        <Card>
+        <Card density="compact">
           <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Section Preferences</h3>
           <p className="mt-1 text-xs" style={{ color: "var(--color-ink-40)" }}>Changes apply to future generations only.</p>
           <div className="mt-4 space-y-1">

@@ -105,23 +105,23 @@ export function ExtensionPage() {
       <PageHeader title="Chrome Extension" subtitle="Capture job postings directly from your browser" />
 
       {error && (
-        <Card variant="danger">
+        <Card variant="danger" density="compact">
           <p className="text-sm font-semibold" style={{ color: "var(--color-ember)" }}>Error</p>
           <p className="mt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>{error}</p>
         </Card>
       )}
 
       {message && (
-        <Card variant="success">
+        <Card variant="success" density="compact">
           <p className="text-sm" style={{ color: "var(--color-spruce)" }}>{message}</p>
         </Card>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-5 xl:grid-cols-2 2xl:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
         {/* Connection Status */}
-        <Card>
+        <Card density="compact" className="flex h-full flex-col">
           <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Connection Status</h3>
-          <div className="mt-4 space-y-3">
+          <div className="mt-3 space-y-2.5">
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full" style={{ background: bridgeDetected ? "var(--color-spruce)" : "var(--color-ink-25)" }} />
               <span className="text-sm" style={{ color: "var(--color-ink)" }}>
@@ -142,7 +142,7 @@ export function ExtensionPage() {
               </div>
             )}
           </div>
-          <div className="mt-5 flex gap-2">
+          <div className="mt-auto flex justify-end gap-2 pt-4">
             <Button size="sm" loading={isConnecting} disabled={isConnecting} onClick={() => void handleConnect()}>
               {status?.connected ? "Rotate Connection" : "Connect Extension"}
             </Button>
@@ -153,9 +153,9 @@ export function ExtensionPage() {
         </Card>
 
         {/* Setup Steps */}
-        <Card>
+        <Card density="compact">
           <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Setup Guide</h3>
-          <div className="mt-4 space-y-4">
+          <div className="mt-3 space-y-3">
             {steps.map((step) => (
               <div key={step.num} className="flex gap-3">
                 <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold" style={{ background: "var(--color-spruce-10)", color: "var(--color-spruce)" }}>

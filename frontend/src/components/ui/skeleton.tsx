@@ -4,6 +4,10 @@ type SkeletonProps = {
   className?: string;
 };
 
+type SkeletonCardProps = SkeletonProps & {
+  density?: "default" | "compact";
+};
+
 export function SkeletonLine({ className }: SkeletonProps) {
   return <div className={cn("animate-skeleton h-3 rounded", className)} />;
 }
@@ -12,10 +16,10 @@ export function SkeletonBlock({ className }: SkeletonProps) {
   return <div className={cn("animate-skeleton h-10 rounded-lg", className)} />;
 }
 
-export function SkeletonCard({ className }: SkeletonProps) {
+export function SkeletonCard({ className, density = "default" }: SkeletonCardProps) {
   return (
     <div
-      className={cn("rounded-xl border p-5", className)}
+      className={cn("rounded-xl border", density === "compact" ? "p-4" : "p-5", className)}
       style={{ borderColor: "var(--color-border)", background: "var(--color-surface)" }}
     >
       <SkeletonLine className="w-24" />

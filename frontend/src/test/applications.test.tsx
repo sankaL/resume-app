@@ -1,13 +1,15 @@
 import type { ReactNode } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppProvider } from "@/components/layout/AppContext";
 import { ToastProvider } from "@/components/ui/toast";
 import { AppBreadcrumbs } from "@/components/layout/Breadcrumbs";
+import { AppShell } from "@/routes/AppShell";
 import { ApplicationDetailPage } from "@/routes/ApplicationDetailPage";
 import { ApplicationsListPage } from "@/routes/ApplicationsListPage";
+import { BaseResumesPage } from "@/routes/BaseResumesPage";
 import { DashboardPage } from "@/routes/DashboardPage";
 import { ExtensionPage } from "@/routes/ExtensionPage";
 
@@ -36,6 +38,13 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api", () => api);
+vi.mock("@/lib/supabase", () => ({
+  getSupabaseBrowserClient: () => ({
+    auth: {
+      signOut: vi.fn(),
+    },
+  }),
+}));
 
 const defaultBootstrap = {
   user: { id: "u1", email: "test@test.com", role: null },
@@ -92,6 +101,61 @@ describe("phase 1 applications UI", () => {
     expect(await screen.findByText(/dashboard unavailable/i)).toBeInTheDocument();
     expect(screen.getByText(/session expired/i)).toBeInTheDocument();
     expect(screen.queryByText(/no applications yet/i)).not.toBeInTheDocument();
+  });
+
+  it("renders authenticated pages inside the fluid shell without a desktop max-width cap", async () => {
+    render(
+      <MemoryRouter initialEntries={["/app"]}>
+        <AppProvider>
+          <ToastProvider>
+            <Routes>
+              <Route path="/app" element={<AppShell />}>
+                <Route index element={<div>Shell Child</div>} />
+              </Route>
+            </Routes>
+          </ToastProvider>
+        </AppProvider>
+      </MemoryRouter>,
+    );
+
+    const shellChild = await screen.findByText("Shell Child");
+    const shellContent = shellChild.closest(".app-shell-content");
+
+    expect(shellContent).not.toBeNull();
+    expect(shellContent?.className).not.toContain("max-w-[1440px]");
+  });
+
+  it("shows only the primary needs-action status in application rows", async () => {
+    api.listApplications.mockResolvedValue([
+      {
+        id: "app-1",
+        job_url: "https://example.com/job",
+        job_title: "Blocked role",
+        company: "Acme",
+        job_posting_origin: "linkedin",
+        visible_status: "needs_action",
+        internal_state: "manual_entry_required",
+        failure_reason: "extraction_failed",
+        applied: false,
+        duplicate_similarity_score: null,
+        duplicate_resolution_status: null,
+        duplicate_matched_application_id: null,
+        created_at: "2026-04-07T12:00:00Z",
+        updated_at: "2026-04-07T12:00:00Z",
+        base_resume_name: "Default Resume",
+        has_action_required_notification: true,
+        has_unresolved_duplicate: false,
+      },
+    ]);
+
+    renderWithAppProvider(<ApplicationsListPage />);
+
+    const titleCell = await screen.findByText("Blocked role");
+    const row = titleCell.closest("tr");
+
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("Needs Action")).toBeInTheDocument();
+    expect(within(row as HTMLElement).queryByText(/action required/i)).not.toBeInTheDocument();
   });
 
   it("shows conditional other-origin input on the manual entry form", async () => {
@@ -206,6 +270,90 @@ describe("phase 1 applications UI", () => {
     expect(screen.getByRole("button", { name: /open existing/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/job title/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/company/i)).toBeInTheDocument();
+  });
+
+  it("renders the wide detail workspace with settings and generated resume panels", async () => {
+    api.listBaseResumes.mockResolvedValue([{ id: "resume-1", name: "Default Resume", is_default: true, created_at: "2026-04-07T12:00:00Z", updated_at: "2026-04-07T12:00:00Z" }]);
+    api.fetchApplicationDetail.mockResolvedValue({
+      id: "app-1",
+      job_url: "https://example.com/job",
+      job_title: "AI & Data Senior Manager",
+      company: "Accenture",
+      job_description: "Lead AI delivery programs.",
+      job_posting_origin: "company_website",
+      job_posting_origin_other_text: null,
+      base_resume_id: "resume-1",
+      base_resume_name: "Default Resume",
+      visible_status: "in_progress",
+      internal_state: "resume_ready",
+      failure_reason: null,
+      applied: false,
+      duplicate_similarity_score: null,
+      duplicate_resolution_status: null,
+      duplicate_matched_application_id: null,
+      notes: null,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:00:00Z",
+      has_action_required_notification: false,
+      extraction_failure_details: null,
+      duplicate_warning: null,
+      generation_failure_details: null,
+    });
+    api.fetchDraft.mockResolvedValue({
+      application_id: "app-1",
+      content_md: "# Resume\n\n## Summary\nGrounded summary",
+      generation_params: {
+        page_length: "1_page",
+        aggressiveness: "medium",
+        additional_instructions: "",
+      },
+      last_generated_at: "2026-04-07T12:10:00Z",
+      last_exported_at: null,
+    });
+
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
+
+    expect(await screen.findByText(/generated resume/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /job description/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /generation settings/i })).toBeInTheDocument();
+    expect(screen.getByText(/grounded summary/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /export pdf/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /mark applied/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /view posting/i })).toBeInTheDocument();
+  });
+
+  it("filters resumes by search term on the resumes page", async () => {
+    api.listBaseResumes.mockResolvedValue([
+      {
+        id: "resume-1",
+        name: "Product Resume",
+        is_default: true,
+        created_at: "2026-04-07T12:00:00Z",
+        updated_at: "2026-04-07T12:00:00Z",
+      },
+      {
+        id: "resume-2",
+        name: "Backend Resume",
+        is_default: false,
+        created_at: "2026-04-07T12:00:00Z",
+        updated_at: "2026-04-07T12:00:00Z",
+      },
+    ]);
+
+    renderWithAppProvider(<BaseResumesPage />);
+
+    expect(await screen.findByText("Product Resume")).toBeInTheDocument();
+    expect(screen.getByText("Backend Resume")).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText(/search resumes/i), "product");
+
+    expect(screen.getByText("Product Resume")).toBeInTheDocument();
+    expect(screen.queryByText("Backend Resume")).not.toBeInTheDocument();
   });
 
   it("shows blocked-source recovery details on the detail page", async () => {
@@ -376,7 +524,7 @@ describe("phase 1 applications UI", () => {
     await userEvent.type(screen.getByLabelText(/job title/i), "Staff Backend Engineer");
     await userEvent.clear(screen.getByLabelText(/company/i));
     await userEvent.type(screen.getByLabelText(/company/i), "Beta Labs");
-    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+    await userEvent.click(screen.getAllByRole("button", { name: /^save$/i })[0]);
 
     expect(await screen.findByText("Beta Labs — Staff Backend Engineer")).toBeInTheDocument();
     await waitFor(() => expect(api.listApplications).toHaveBeenCalledTimes(2));

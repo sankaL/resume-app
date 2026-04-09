@@ -5,6 +5,7 @@ type CardVariant = "default" | "elevated" | "flat" | "danger" | "success" | "war
 
 type CardProps = PropsWithChildren<HTMLAttributes<HTMLDivElement>> & {
   variant?: CardVariant;
+  density?: "default" | "compact";
 };
 
 const VARIANT_STYLES: Record<CardVariant, { bg: string; border: string }> = {
@@ -16,12 +17,12 @@ const VARIANT_STYLES: Record<CardVariant, { bg: string; border: string }> = {
   warning:  { bg: "var(--color-amber-10)",        border: "rgba(180,83,9,0.2)" },
 };
 
-export function Card({ className, variant = "default", style, ...props }: CardProps) {
+export function Card({ className, variant = "default", density = "default", style, ...props }: CardProps) {
   const v = VARIANT_STYLES[variant];
 
   return (
     <div
-      className={cn("rounded-xl border p-5", className)}
+      className={cn("rounded-xl border", density === "compact" ? "p-4" : "p-5", className)}
       style={{
         background: v.bg,
         borderColor: v.border,

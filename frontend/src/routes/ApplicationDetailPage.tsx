@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { useToast } from "@/components/ui/toast";
 import { StatusBadge } from "@/components/StatusBadge";
+import { AppliedToggleButton } from "@/components/AppliedToggleButton";
 import { MarkdownPreview } from "@/components/MarkdownPreview";
 import { GenerationProgress, ResumeSkeleton } from "@/components/ui/generation-progress";
 import { SkeletonCard } from "@/components/ui/skeleton";
@@ -162,8 +163,6 @@ export function ApplicationDetailPage() {
   const [showOptimisticProgress, setShowOptimisticProgress] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [showAppliedConfirm, setShowAppliedConfirm] = useState(false);
-
-  // Ref for measuring left column height
   const leftColumnRef = useRef<HTMLDivElement>(null);
   const [leftColumnHeight, setLeftColumnHeight] = useState<number | null>(null);
 
@@ -615,21 +614,31 @@ export function ApplicationDetailPage() {
   const isPastExtraction =
     detail && !["extraction_pending", "extracting", "manual_entry_required"].includes(detail.internal_state);
   const generationActive = isGenerationWorkflowActive(detail);
+  const workspaceCardClass = "flex min-h-[32rem] flex-col overflow-hidden";
+  const workspaceCardStyle = leftColumnHeight ? { height: `${leftColumnHeight}px` } : undefined;
 
-  // Measure left column height for right column matching
   useLayoutEffect(() => {
     const leftColumn = leftColumnRef.current;
-    if (!leftColumn || !isPastExtraction) return;
+    if (!leftColumn || !isPastExtraction) {
+      setLeftColumnHeight(null);
+      return;
+    }
 
     const updateHeight = () => {
-      const height = leftColumn.offsetHeight;
-      setLeftColumnHeight(height > 0 ? height : null);
+      if (window.innerWidth < 1280) {
+        setLeftColumnHeight(null);
+        return;
+      }
+
+      const height = leftColumn.getBoundingClientRect().height;
+      setLeftColumnHeight(height > 0 ? Math.ceil(height) : null);
     };
 
     updateHeight();
 
     if (typeof ResizeObserver === "undefined") {
-      return;
+      window.addEventListener("resize", updateHeight);
+      return () => window.removeEventListener("resize", updateHeight);
     }
 
     const resizeObserver = new ResizeObserver(() => {
@@ -637,17 +646,19 @@ export function ApplicationDetailPage() {
     });
 
     resizeObserver.observe(leftColumn);
+    window.addEventListener("resize", updateHeight);
 
     return () => {
       resizeObserver.disconnect();
+      window.removeEventListener("resize", updateHeight);
     };
-  }, [isPastExtraction]);
+  }, [isPastExtraction, detail?.internal_state, draft, editMode, notesDraft, additionalInstructions, pageLength, aggressiveness, selectedResumeId, baseResumes.length, jobForm.job_description, jobForm.job_posting_origin, jobForm.job_posting_origin_other_text, jobForm.job_title, jobForm.company]);
 
   return (
     <div className="page-enter space-y-4">
       {/* Error banner */}
       {error && (
-        <Card variant="danger" className="p-4">
+        <Card variant="danger" density="compact" className="p-4">
           <p className="text-sm font-semibold" style={{ color: "var(--color-ember)" }}>Request failed</p>
           <p className="mt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>{error}</p>
         </Card>
@@ -671,44 +682,24 @@ export function ApplicationDetailPage() {
             badge={<StatusBadge status={detail.visible_status} size="md" />}
             actions={
               <div className="flex items-center gap-2">
-                {detail.has_action_required_notification && (
+                {detail.has_action_required_notification && detail.visible_status !== "needs_action" && (
                   <span className="rounded-md px-2 py-1 text-[10px] font-bold uppercase" style={{ background: "var(--color-ember-10)", color: "var(--color-ember)" }}>
                     Action Required
                   </span>
                 )}
-                <button
-                  onClick={handleAppliedButtonClick}
-                  className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all"
-                  style={{
-                    background: detail.applied ? "var(--color-spruce)" : "transparent",
-                    color: detail.applied ? "#fff" : "var(--color-ink-50)",
-                    border: detail.applied ? "1px solid var(--color-spruce)" : "1px solid var(--color-border)",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!detail.applied) {
-                      e.currentTarget.style.borderColor = "var(--color-spruce)";
-                      e.currentTarget.style.color = "var(--color-spruce)";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!detail.applied) {
-                      e.currentTarget.style.borderColor = "var(--color-border)";
-                      e.currentTarget.style.color = "var(--color-ink-50)";
-                    }
-                  }}
+                {draft && (
+                  <Button size="sm" disabled={isExporting || isRegenerating || generationActive} onClick={() => void handleExportPdf()}>
+                    {isExporting ? "Exporting…" : "Export PDF"}
+                  </Button>
+                )}
+                <AppliedToggleButton applied={detail.applied} onClick={() => handleAppliedButtonClick()} />
+                <a
+                  className="inline-flex h-9 items-center justify-center rounded-lg border px-3.5 text-xs font-semibold transition-colors"
+                  style={{ borderColor: "var(--color-border)", color: "var(--color-spruce)", background: "var(--color-white)" }}
+                  href={detail.job_url}
+                  rel="noreferrer"
+                  target="_blank"
                 >
-                  {detail.applied ? (
-                    <>
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M2.5 6.5l2.5 2.5 4.5-5" />
-                      </svg>
-                      Applied
-                    </>
-                  ) : (
-                    "Mark Applied"
-                  )}
-                </button>
-                <a className="text-sm font-medium transition-colors" style={{ color: "var(--color-spruce)" }} href={detail.job_url} rel="noreferrer" target="_blank">
                   View Posting ↗
                 </a>
               </div>
@@ -719,7 +710,7 @@ export function ApplicationDetailPage() {
           
           {/* Extraction Progress */}
           {progress && ["extraction_pending", "extracting"].includes(detail.internal_state) && (
-            <Card variant="success" className="p-4">
+            <Card variant="success" density="compact" className="p-4">
               <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-spruce)" }}>Extraction Progress</h3>
               <div className="mt-3 h-2 overflow-hidden rounded-full" style={{ background: "var(--color-spruce-10)" }}>
                 <div className="h-full rounded-full transition-all" style={{ width: `${progress.percent_complete}%`, background: "var(--color-spruce)" }} />
@@ -730,7 +721,7 @@ export function ApplicationDetailPage() {
 
           {/* Blocked Source */}
           {detail.extraction_failure_details?.kind === "blocked_source" && (
-            <Card variant="danger" className="p-4">
+            <Card variant="danger" density="compact" className="p-4">
               <h3 className="text-sm font-semibold" style={{ color: "var(--color-ember)" }}>Blocked Source</h3>
               <p className="mt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>The job site blocked automated retrieval. Use pasted text or manual entry below.</p>
               <div className="mt-3 grid gap-2 rounded-lg border p-3 text-xs sm:grid-cols-2" style={{ borderColor: "var(--color-border)", color: "var(--color-ink-50)" }}>
@@ -743,7 +734,7 @@ export function ApplicationDetailPage() {
 
           {/* Duplicate Warning */}
           {detail.duplicate_warning && (
-            <Card variant="warning" className="p-4">
+            <Card variant="warning" density="compact" className="p-4">
               <h3 className="text-sm font-semibold" style={{ color: "var(--color-amber)" }}>Duplicate Detected</h3>
               <p className="mt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>
                 Confidence {detail.duplicate_warning.similarity_score.toFixed(2)} based on {detail.duplicate_warning.matched_fields.join(", ")}.
@@ -761,14 +752,14 @@ export function ApplicationDetailPage() {
 
           {/* Company Missing Warning */}
           {!detail.company && detail.internal_state === "generation_pending" && !detail.failure_reason && (
-            <Card variant="success" className="p-4">
+            <Card variant="success" density="compact" className="p-4">
               <p className="text-sm font-medium" style={{ color: "var(--color-spruce)" }}>Company is missing from extraction. Add it to enable duplicate review.</p>
             </Card>
           )}
 
           {/* Generation Timeout */}
           {detail.failure_reason === "generation_timeout" && (
-            <Card variant="warning" className="p-4">
+            <Card variant="warning" density="compact" className="p-4">
               <h3 className="text-sm font-semibold" style={{ color: "var(--color-amber)" }}>Generation Timed Out</h3>
               <p className="mt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>{detail.generation_failure_details?.message ?? "The AI provider may be experiencing delays."}</p>
               <Button className="mt-3" size="sm" onClick={() => void handleTriggerGeneration()}>Retry</Button>
@@ -777,7 +768,7 @@ export function ApplicationDetailPage() {
 
           {/* Generation Cancelled */}
           {detail.failure_reason === "generation_cancelled" && (
-            <Card variant="success" className="p-4">
+            <Card variant="success" density="compact" className="p-4">
               <h3 className="text-sm font-semibold" style={{ color: "var(--color-spruce)" }}>Generation Cancelled</h3>
               <p className="mt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>{detail.generation_failure_details?.message ?? "You can adjust settings and try again."}</p>
               <Button className="mt-3" size="sm" onClick={() => void handleTriggerGeneration()}>Retry</Button>
@@ -786,7 +777,7 @@ export function ApplicationDetailPage() {
 
           {/* Generation Failed */}
           {(detail.failure_reason === "generation_failed" || detail.failure_reason === "regeneration_failed") && (
-            <Card variant="danger" className="p-4">
+            <Card variant="danger" density="compact" className="p-4">
               <h3 className="text-sm font-semibold" style={{ color: "var(--color-ember)" }}>Generation Failed</h3>
               <p className="mt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>{detail.generation_failure_details?.message ?? "Resume generation encountered errors."}</p>
               {detail.generation_failure_details?.validation_errors?.length ? (
@@ -802,9 +793,9 @@ export function ApplicationDetailPage() {
 
           {/* ── Manual Entry Required (shown when in manual_entry_required state, replaces two-column) ── */}
           {detail.internal_state === "manual_entry_required" && (
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)] 2xl:grid-cols-[minmax(0,1.2fr)_minmax(380px,0.8fr)]">
               {/* Job Information */}
-              <Card className="p-4">
+              <Card density="compact" className="p-4">
                 <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Job Information</h3>
                 <form className="mt-3 space-y-3" onSubmit={handleSaveJobInfo}>
                   <div>
@@ -840,7 +831,7 @@ export function ApplicationDetailPage() {
 
               {/* Notes + Manual Entry */}
               <div className="space-y-4">
-                <Card className="p-4">
+                <Card density="compact" className="p-4">
                   <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Notes</h3>
                   <Textarea className="mt-3 min-h-24" placeholder="Add your own notes…" value={notesDraft} onChange={(e) => { setNotesDraft(e.target.value); setNotesState("idle"); }} />
                   <p className="mt-2 text-xs" style={{ color: "var(--color-ink-40)" }}>
@@ -848,7 +839,7 @@ export function ApplicationDetailPage() {
                   </p>
                 </Card>
 
-                <Card variant="danger" className="p-4">
+                <Card variant="danger" density="compact" className="p-4">
                   <h3 className="text-sm font-semibold" style={{ color: "var(--color-ember)" }}>Manual Entry Required</h3>
                   <p className="mt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>
                     {detail.extraction_failure_details?.kind === "blocked_source"
@@ -878,11 +869,11 @@ export function ApplicationDetailPage() {
 
           {/* ── Two-Column Layout (when past extraction and not in manual_entry_required) ── */}
           {isPastExtraction && detail.internal_state !== "manual_entry_required" && (
-            <div className="flex gap-4 items-start">
+            <div className="grid gap-4 xl:items-start xl:[grid-template-columns:minmax(300px,340px)_minmax(0,1fr)] 2xl:[grid-template-columns:minmax(320px,340px)_minmax(0,1fr)]">
               {/* LEFT COLUMN - Settings & Controls */}
-              <div ref={leftColumnRef} className="flex-1 space-y-4 min-w-0" style={{ flex: "1 1 25%", maxWidth: "320px" }}>
+              <div ref={leftColumnRef} className="min-w-0 space-y-4 xl:sticky xl:top-[calc(var(--topbar-height)+1.5rem)] xl:self-start">
                 {/* Job Description Card */}
-                <Card className="p-4">
+                <Card density="compact" className="p-4">
                   <div className="flex justify-between items-center">
                     <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Job Description</h3>
                     <form onSubmit={handleSaveJobInfo}>
@@ -925,9 +916,20 @@ export function ApplicationDetailPage() {
 
                 {/* Generation Settings Card */}
                 {detail.internal_state !== "duplicate_review_required" && (
-                  <Card className="p-4">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Generation Settings</h3>
-                    <form className="mt-3 space-y-3" onSubmit={handleSaveSettings}>
+                  <Card density="compact" className="p-4">
+                    <form className="space-y-3" onSubmit={handleSaveSettings}>
+                      <div className="flex items-start justify-between gap-3">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Generation Settings</h3>
+                        <Button
+                          size="sm"
+                          disabled={isSavingSettings || !selectedResumeId || baseResumes.length === 0 || !settingsDirty}
+                          type="submit"
+                          className={!settingsDirty ? "opacity-50 cursor-not-allowed" : ""}
+                        >
+                          {isSavingSettings ? "Saving…" : "Save"}
+                        </Button>
+                      </div>
+
                       {/* Base Resume */}
                       <div>
                         <div className="flex items-center gap-1.5 mb-1">
@@ -987,24 +989,12 @@ export function ApplicationDetailPage() {
                         </div>
                         <Textarea className="text-sm min-h-16" placeholder="e.g., emphasize API architecture…" value={additionalInstructions} onChange={(e) => setAdditionalInstructions(e.target.value)} />
                       </div>
-
-                      {/* Save Button */}
-                      <div className="pt-2">
-                        <Button
-                          size="sm"
-                          disabled={isSavingSettings || !selectedResumeId || baseResumes.length === 0 || !settingsDirty}
-                          type="submit"
-                          className={!settingsDirty ? "opacity-50 cursor-not-allowed" : ""}
-                        >
-                          {isSavingSettings ? "Saving…" : "Save Settings"}
-                        </Button>
-                      </div>
                     </form>
                   </Card>
                 )}
 
                 {/* Notes Card */}
-                <Card className="p-4">
+                <Card density="compact" className="p-4">
                   <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Notes</h3>
                   <Textarea className="mt-3 text-sm min-h-24" placeholder="Add your own notes…" value={notesDraft} onChange={(e) => { setNotesDraft(e.target.value); setNotesState("idle"); }} />
                   <p className="mt-2 text-xs" style={{ color: "var(--color-ink-40)" }}>
@@ -1014,11 +1004,11 @@ export function ApplicationDetailPage() {
               </div>
 
               {/* RIGHT COLUMN - Resume Preview */}
-              <div className="flex-1 min-w-0" style={{ flex: "3 1 75%", height: leftColumnHeight ? `${leftColumnHeight}px` : undefined }}>
+              <div className="min-w-0">
                 {/* Resume Content Area */}
                 {generationActive || showOptimisticProgress ? (
                   /* Resume Skeleton during generation with overlay */
-                  <Card className="h-full flex flex-col p-0 overflow-hidden relative">
+                  <Card className={`${workspaceCardClass} relative p-0`} style={workspaceCardStyle}>
                     <div className="flex-1 h-full overflow-hidden">
                       <ResumeSkeleton />
                     </div>
@@ -1032,7 +1022,7 @@ export function ApplicationDetailPage() {
                   </Card>
                 ) : draft ? (
                   /* Generated Resume Preview/Editor */
-                  <Card className="h-full flex flex-col p-4">
+                  <Card className={`${workspaceCardClass} p-4`} style={workspaceCardStyle}>
                     <div className="flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
                       <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Generated Resume</h3>
                       <div className="flex items-center gap-3 text-xs" style={{ color: "var(--color-ink-40)" }}>
@@ -1041,11 +1031,43 @@ export function ApplicationDetailPage() {
                       </div>
                     </div>
 
-                    <div className="mt-3 flex flex-wrap items-center gap-2 flex-shrink-0">
-                      <button className="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors" style={{ background: !editMode ? "var(--color-ink)" : "transparent", color: !editMode ? "#fff" : "var(--color-ink-50)", border: editMode ? "1px solid var(--color-border)" : "none" }} type="button" onClick={() => { if (editMode) handleCancelEdit(); }}>Preview</button>
-                      <button className="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors" style={{ background: editMode ? "var(--color-ink)" : "transparent", color: editMode ? "#fff" : "var(--color-ink-50)", border: !editMode ? "1px solid var(--color-border)" : "none" }} type="button" onClick={() => { if (!editMode) handleEnterEditMode(); }}>Edit</button>
+                    <div className="mt-3 flex flex-wrap items-center justify-end gap-2 flex-shrink-0">
+                      <div
+                        className="inline-flex items-center rounded-full border p-1"
+                        style={{
+                          borderColor: editMode ? "var(--color-spruce-10)" : "var(--color-border)",
+                          background: editMode ? "var(--color-spruce-05)" : "var(--color-ink-05)",
+                        }}
+                      >
+                        <button
+                          className="rounded-full px-3 py-1.5 text-xs font-semibold transition-colors"
+                          style={{
+                            background: !editMode ? "var(--color-ink)" : "transparent",
+                            color: !editMode ? "#fff" : "var(--color-ink-50)",
+                          }}
+                          type="button"
+                          onClick={() => {
+                            if (editMode) handleCancelEdit();
+                          }}
+                        >
+                          Preview
+                        </button>
+                        <button
+                          className="rounded-full px-3 py-1.5 text-xs font-semibold transition-colors"
+                          style={{
+                            background: editMode ? "var(--color-sidebar-bg-active)" : "transparent",
+                            color: editMode ? "#fff" : "var(--color-ink-50)",
+                          }}
+                          type="button"
+                          onClick={() => {
+                            if (!editMode) handleEnterEditMode();
+                          }}
+                        >
+                          Edit
+                        </button>
+                      </div>
 
-                      <div className="ml-auto flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         {!generationActive && (
                           <>
                             <Button size="sm" variant="secondary" disabled={isRegenerating || isExporting} onClick={() => setShowSectionRegen(true)}>Regen Section</Button>
@@ -1058,9 +1080,6 @@ export function ApplicationDetailPage() {
                               <Sparkles size={12} />
                               {isRegenerating ? "Starting…" : "Full Regen"}
                             </button>
-                            <Button size="sm" disabled={isExporting || isRegenerating} onClick={() => void handleExportPdf()}>
-                              {isExporting ? "Exporting…" : "Export PDF"}
-                            </Button>
                           </>
                         )}
                       </div>
@@ -1086,19 +1105,19 @@ export function ApplicationDetailPage() {
                       </div>
                     ) : (
                       <div className="mt-4 flex-1 overflow-y-auto min-h-0 rounded-lg border bg-white px-5 py-4" style={{ borderColor: "var(--color-border)" }}>
-                        <MarkdownPreview content={draft.content_md} />
+                        <MarkdownPreview content={draft.content_md} className="resume-preview-markdown" />
                       </div>
                     )}
                   </Card>
                 ) : (
                   /* Empty State - No resume generated yet */
-                  <Card className="h-full flex flex-col p-8 items-center justify-center text-center">
+                  <Card className={`${workspaceCardClass} items-center justify-center p-8 text-center`} style={workspaceCardStyle}>
                     <div className="rounded-full p-4 mb-4" style={{ background: "var(--color-ink-05)" }}>
                       <FileText size={32} style={{ color: "var(--color-ink-40)" }} />
                     </div>
                     <h3 className="text-lg font-semibold mb-2" style={{ color: "var(--color-ink)" }}>No Resume Generated Yet</h3>
                     <p className="text-sm mb-4" style={{ color: "var(--color-ink-50)" }}>
-                      Configure your settings on the left and click "Generate Resume" to get started.
+                      Configure your settings and click "Generate Resume" to get started.
                     </p>
                     <button
                       type="button"

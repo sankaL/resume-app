@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { DataTable } from "@/components/ui/data-table";
 import { StatusBadge } from "@/components/StatusBadge";
+import { AppliedToggleButton } from "@/components/AppliedToggleButton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonTable } from "@/components/ui/skeleton";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -125,17 +126,12 @@ export function ApplicationsListPage() {
     {
       key: "status",
       header: "Status",
-      width: "120px",
+      width: "132px",
       sortable: true,
       sortValue: (app: ApplicationSummary) => STATUS_ORDER[app.visible_status] ?? 99,
       render: (app: ApplicationSummary) => (
-        <div className="flex flex-col gap-1">
-          <StatusBadge status={app.visible_status} size="sm" />
-          {app.has_action_required_notification && (
-            <span className="text-[10px] font-semibold" style={{ color: "var(--color-ember)" }}>
-              Action Required
-            </span>
-          )}
+        <div className="flex min-h-[2.75rem] items-center">
+          <StatusBadge status={app.visible_status} size="sm" layout="rail" />
         </div>
       ),
     },
@@ -145,25 +141,38 @@ export function ApplicationsListPage() {
       sortable: true,
       sortValue: (app: ApplicationSummary) => app.job_title?.toLowerCase() ?? "",
       render: (app: ApplicationSummary) => (
-        <div className="min-w-0">
+        <div className="flex min-h-[2.75rem] min-w-0 flex-col justify-center">
           <div className="truncate text-sm font-medium" style={{ color: "var(--color-ink)" }}>
             {app.job_title ?? "Awaiting extraction"}
           </div>
-          {app.has_unresolved_duplicate && (
-            <span className="text-[10px] font-medium" style={{ color: "var(--color-spruce)" }}>
-              Duplicate Review
-            </span>
-          )}
+          <div
+            className="min-h-[14px] truncate text-[10px] font-medium"
+            style={{
+              color:
+                app.has_action_required_notification && app.visible_status !== "needs_action"
+                  ? "var(--color-ember)"
+                  : app.has_unresolved_duplicate
+                    ? "var(--color-spruce)"
+                    : "var(--color-ink-25)",
+            }}
+          >
+            {app.has_action_required_notification && app.visible_status !== "needs_action"
+              ? "Action required"
+              : app.has_unresolved_duplicate
+                ? "Duplicate review pending"
+                : " "}
+          </div>
         </div>
       ),
     },
     {
       key: "company",
       header: "Company",
+      width: "180px",
       sortable: true,
       sortValue: (app: ApplicationSummary) => app.company?.toLowerCase() ?? "zzz",
       render: (app: ApplicationSummary) => (
-        <span className="text-sm" style={{ color: "var(--color-ink-65)" }}>
+        <span className="block truncate text-sm" style={{ color: "var(--color-ink-65)" }}>
           {app.company ?? "—"}
         </span>
       ),
@@ -171,10 +180,11 @@ export function ApplicationsListPage() {
     {
       key: "resume",
       header: "Base Resume",
+      width: "180px",
       sortable: true,
       sortValue: (app: ApplicationSummary) => app.base_resume_name?.toLowerCase() ?? "zzz",
       render: (app: ApplicationSummary) => (
-        <span className="text-xs" style={{ color: "var(--color-ink-40)" }}>
+        <span className="block truncate text-xs" style={{ color: "var(--color-ink-40)" }}>
           {app.base_resume_name ?? "—"}
         </span>
       ),
@@ -182,7 +192,7 @@ export function ApplicationsListPage() {
     {
       key: "updated",
       header: "Updated",
-      width: "140px",
+      width: "118px",
       sortable: true,
       sortValue: (app: ApplicationSummary) => new Date(app.updated_at).getTime(),
       render: (app: ApplicationSummary) => (
@@ -194,41 +204,10 @@ export function ApplicationsListPage() {
     {
       key: "actions",
       header: "",
-      width: "140px",
+      width: "148px",
       render: (app: ApplicationSummary) => (
-        <div onClick={(e) => e.stopPropagation()}>
-          <button
-            onClick={(e) => handleAppliedClick(app, e)}
-            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-all"
-            style={{
-              background: app.applied ? "var(--color-spruce)" : "transparent",
-              color: app.applied ? "#fff" : "var(--color-ink-50)",
-              border: app.applied ? "1px solid var(--color-spruce)" : "1px solid var(--color-border)",
-            }}
-            onMouseEnter={(e) => {
-              if (!app.applied) {
-                e.currentTarget.style.borderColor = "var(--color-spruce)";
-                e.currentTarget.style.color = "var(--color-spruce)";
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (!app.applied) {
-                e.currentTarget.style.borderColor = "var(--color-border)";
-                e.currentTarget.style.color = "var(--color-ink-50)";
-              }
-            }}
-          >
-            {app.applied ? (
-              <>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M2.5 6.5l2.5 2.5 4.5-5" />
-                </svg>
-                Applied
-              </>
-            ) : (
-              "Mark Applied"
-            )}
-          </button>
+        <div className="flex min-h-[2.75rem] items-center justify-end" onClick={(e) => e.stopPropagation()}>
+          <AppliedToggleButton applied={app.applied} compact onClick={(e) => handleAppliedClick(app, e)} />
         </div>
       ),
     },
@@ -252,7 +231,7 @@ export function ApplicationsListPage() {
 
       {/* New application form (collapsible) */}
       {showNewForm && (
-        <Card variant="elevated" className="animate-scaleIn">
+        <Card variant="elevated" density="compact" className="animate-scaleIn">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold" style={{ color: "var(--color-ink)" }}>
               Create New Application
@@ -265,7 +244,7 @@ export function ApplicationsListPage() {
               ✕
             </button>
           </div>
-          <form className="mt-3 flex gap-3" onSubmit={handleCreateApplication}>
+          <form className="mt-3 flex flex-col gap-3 md:flex-row" onSubmit={handleCreateApplication}>
             <Input
               aria-label="Job URL"
               placeholder="Paste a job posting URL"
@@ -284,7 +263,7 @@ export function ApplicationsListPage() {
 
       {/* Error */}
       {error && (
-        <Card variant="danger">
+        <Card variant="danger" density="compact">
           <p className="text-sm font-semibold" style={{ color: "var(--color-ember)" }}>
             Request failed
           </p>
@@ -293,19 +272,19 @@ export function ApplicationsListPage() {
       )}
 
       {/* Filters — aligned inline */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1.8fr)_minmax(180px,0.8fr)_minmax(160px,0.7fr)] xl:grid-cols-[minmax(320px,2.2fr)_240px_220px]">
         <Input
           aria-label="Search applications"
           placeholder="Search title or company…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="max-w-xs"
+          className="w-full"
         />
         <Select
           aria-label="Filter by status"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="w-36"
+          className="w-full"
         >
           <option value="all">All statuses</option>
           <option value="draft">Draft</option>
@@ -317,7 +296,7 @@ export function ApplicationsListPage() {
           aria-label="Filter by applied"
           value={appliedFilter}
           onChange={(e) => setAppliedFilter(e.target.value)}
-          className="w-32"
+          className="w-full"
         >
           <option value="all">All</option>
           <option value="applied">Applied</option>
@@ -335,6 +314,8 @@ export function ApplicationsListPage() {
           getRowKey={(app) => app.id}
           onRowClick={(app) => navigate(`/app/applications/${app.id}`)}
           pageSize={25}
+          density="compact"
+          tableLayout="fixed"
           emptyState={
             <EmptyState
               title={sourceApplications.length === 0 ? "No applications yet" : "No matching applications"}

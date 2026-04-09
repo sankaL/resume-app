@@ -1,7 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import businessmanIllustration from "@/assets/business-man-illustration.png";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { env } from "@/lib/env";
@@ -36,8 +36,16 @@ export function LoginPage() {
   }
 
   return (
-    <div className="animate-fadeInUp relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-12">
-      {/* Animated gradient blobs */}
+    <div
+      className="animate-fadeInUp relative min-h-screen overflow-hidden"
+      style={{
+        background: `
+          radial-gradient(circle at top left, rgba(159, 58, 22, 0.12), transparent 28%),
+          radial-gradient(circle at 85% 20%, rgba(24, 74, 69, 0.16), transparent 30%),
+          linear-gradient(135deg, rgba(245, 243, 238, 0.98) 0%, rgba(230, 220, 205, 0.94) 100%)
+        `,
+      }}
+    >
       <div
         className="absolute left-[-6rem] top-10 h-64 w-64 rounded-full blur-3xl"
         style={{
@@ -52,96 +60,150 @@ export function LoginPage() {
           animation: "floatBlob2 10s ease-in-out infinite",
         }}
       />
+      <div
+        className="absolute inset-x-0 top-0 h-px"
+        style={{ background: "linear-gradient(90deg, transparent, rgba(16, 24, 40, 0.12), transparent)" }}
+      />
 
-      <Card className="relative w-full max-w-5xl overflow-hidden p-0">
-        <div className="grid md:grid-cols-[1.15fr_0.85fr]">
-          {/* Dark panel */}
-          <div
-            className="relative overflow-hidden px-8 py-10 text-white md:px-12 md:py-14"
-            style={{
-              background: "linear-gradient(160deg, #0e2f2c 0%, #101828 60%, #1a1a2e 100%)",
-            }}
-          >
-            {/* Subtle animated gradient overlay */}
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                background: "radial-gradient(ellipse at 30% 20%, rgba(24, 74, 69, 0.3) 0%, transparent 60%)",
-                animation: "floatBlob1 12s ease-in-out infinite",
-                pointerEvents: "none",
-              }}
-            />
-            <div style={{ position: "relative" }}>
-              <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-white/60">
+      <main className="relative grid min-h-screen lg:grid-cols-[minmax(0,1.08fr)_minmax(480px,0.92fr)]">
+        <section className="flex min-h-screen items-center px-6 py-8 sm:px-10 sm:py-10 lg:px-16 lg:py-6 xl:px-20">
+          <div className="mx-auto w-full max-w-xl">
+            <div className="inline-flex items-center gap-3 rounded-full border border-black/5 bg-white/60 px-3 py-2 shadow-sm backdrop-blur-sm">
+              <div
+                className="flex h-10 w-10 items-center justify-center rounded-2xl text-sm font-bold text-white"
+                style={{
+                  background: "linear-gradient(145deg, var(--color-spruce-light), var(--color-spruce))",
+                  boxShadow: "0 10px 24px rgba(24, 74, 69, 0.18)",
+                }}
+              >
+                RB
+              </div>
+              <div className="leading-tight">
+                <p className="text-sm font-semibold" style={{ color: "var(--color-ink)" }}>
+                  Resume Builder
+                </p>
+                <p className="text-xs uppercase tracking-[0.18em]" style={{ color: "var(--color-ink-50)" }}>
+                  AI Workspace
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-8">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em]" style={{ color: "var(--color-spruce)" }}>
                 Invite-only MVP
               </p>
-              <h1 className="font-display text-4xl leading-tight md:text-5xl">
+              <h1
+                className="mt-3 max-w-lg font-display text-4xl leading-[1.02] sm:text-5xl lg:text-[4rem]"
+                style={{ color: "var(--color-ink)" }}
+              >
                 AI-Powered Resume Tailoring
               </h1>
-              <p className="mt-6 max-w-xl text-lg text-white/75">
+              <p className="mt-5 max-w-lg text-base leading-7 sm:text-lg" style={{ color: "var(--color-ink-65)" }}>
                 Sign in to manage your job applications, generate tailored resumes, and track your progress.
               </p>
               {env.VITE_APP_DEV_MODE && (
-                <div className="mt-8 rounded-3xl border border-white/10 bg-white/5 p-5">
-                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-white/50">
+                <div
+                  className="mt-6 max-w-md rounded-[28px] border px-5 py-4 backdrop-blur-sm"
+                  style={{
+                    background: "rgba(255, 255, 255, 0.68)",
+                    borderColor: "rgba(16, 24, 40, 0.08)",
+                    boxShadow: "0 20px 50px rgba(16, 24, 40, 0.08)",
+                  }}
+                >
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--color-ink-50)" }}>
                     Current environment
                   </p>
-                  <p className="mt-2 text-lg text-white/85">
+                  <p className="mt-2 text-lg font-semibold" style={{ color: "var(--color-spruce)" }}>
                     Local Dockerized dev mode
                   </p>
                 </div>
               )}
             </div>
-          </div>
 
-          {/* Form panel */}
-          <div className="px-8 py-10 md:px-10 md:py-14">
-            <form className="space-y-5" onSubmit={handleSubmit}>
-              <div>
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="invite-only@example.com"
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Your assigned password"
-                  required
-                />
-              </div>
-              {error ? (
-                <div className="rounded-2xl border border-ember/20 bg-ember/5 px-4 py-3 text-sm text-ember">
-                  {error}
+            <div className="mt-8 max-w-md">
+              <form className="space-y-5" onSubmit={handleSubmit}>
+                <div>
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="invite-only@example.com"
+                    required
+                  />
                 </div>
-              ) : null}
-              <Button className="w-full" disabled={isSubmitting} type="submit">
-                {isSubmitting ? "Signing in…" : "Enter the workspace"}
-              </Button>
-            </form>
-            <div className="mt-8 rounded-2xl border border-black/5 bg-canvas px-4 py-4 text-sm text-ink/65">
-              Public signup is intentionally unavailable in MVP. Access is provisioned directly through
-              Supabase Auth.
+                <div>
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder="Your assigned password"
+                    required
+                  />
+                </div>
+                {error ? (
+                  <div className="rounded-2xl border border-ember/20 bg-ember/5 px-4 py-3 text-sm text-ember">
+                    {error}
+                  </div>
+                ) : null}
+                <Button className="w-full" disabled={isSubmitting} type="submit">
+                  {isSubmitting ? "Signing in…" : "Enter the workspace"}
+                </Button>
+              </form>
+              <div
+                className="mt-6 max-w-sm text-sm"
+                style={{
+                  color: "var(--color-ink-65)",
+                }}
+              >
+                Public signup is intentionally unavailable in MVP. Access is provisioned directly through
+                Supabase Auth.
+              </div>
             </div>
           </div>
-        </div>
-      </Card>
+        </section>
 
-      {/* Floating blob animation keyframes */}
+        <section className="flex items-end justify-center px-6 pb-6 pt-0 sm:px-10 lg:min-h-screen lg:justify-end lg:px-0 lg:py-0">
+          <div className="relative flex h-[360px] w-full max-w-[860px] items-end justify-center overflow-visible sm:h-[430px] lg:h-screen lg:max-w-[980px]">
+            <div
+              className="absolute inset-x-2 bottom-0 top-8 rounded-[40px] sm:inset-x-6 lg:bottom-0 lg:left-[18%] lg:right-0 lg:top-0 lg:rounded-[28px_0_0_28px]"
+              style={{
+                background: "linear-gradient(180deg, rgba(128, 177, 210, 0.48) 0%, rgba(190, 216, 233, 0.62) 100%)",
+                border: "1px solid rgba(255, 255, 255, 0.6)",
+                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.5), 0 30px 60px rgba(16, 24, 40, 0.08)",
+              }}
+            />
+            <div
+              className="absolute right-10 top-12 hidden h-32 w-32 rounded-full blur-3xl lg:block"
+              style={{ background: "rgba(24, 74, 69, 0.14)" }}
+            />
+            <div
+              className="absolute bottom-16 left-10 hidden h-24 w-24 rounded-full blur-3xl lg:block"
+              style={{ background: "rgba(159, 58, 22, 0.14)" }}
+            />
+            <div className="relative z-10 max-h-[105%] w-full lg:absolute lg:bottom-[-8%] lg:left-[-20%] lg:h-[118%] lg:w-[118%]">
+              <img
+                src={businessmanIllustration}
+                alt="Businessman seated with a laptop, representing the Resume Builder workspace"
+                className="h-full w-full object-contain drop-shadow-[0_28px_38px_rgba(16,24,40,0.18)] lg:object-cover lg:object-[78%_center]"
+                style={{ animation: "floatBlob1 10s ease-in-out infinite" }}
+              />
+            </div>
+            <div
+              className="absolute bottom-6 left-[52%] h-10 w-[58%] -translate-x-1/2 rounded-full blur-2xl lg:bottom-2 lg:left-[48%] lg:w-[54%]"
+              style={{ background: "rgba(16, 24, 40, 0.18)" }}
+            />
+          </div>
+        </section>
+      </main>
+
       <style>{`
         @keyframes floatBlob1 {
           0%, 100% { transform: translate(0, 0) scale(1); }

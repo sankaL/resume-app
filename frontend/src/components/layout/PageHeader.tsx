@@ -9,9 +9,9 @@ type PageHeaderProps = {
 
 export function PageHeader({ title, subtitle, badge, actions }: PageHeaderProps) {
   return (
-    <div className="animate-fadeIn flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <div className="animate-fadeIn flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
       <div className="min-w-0">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <h1
             className="font-display text-2xl font-semibold tracking-tight"
             style={{ color: "var(--color-ink)" }}
@@ -26,7 +26,7 @@ export function PageHeader({ title, subtitle, badge, actions }: PageHeaderProps)
           </p>
         )}
       </div>
-      {actions && <div className="flex flex-shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:flex-shrink-0 xl:justify-end">{actions}</div>}
     </div>
   );
 }
