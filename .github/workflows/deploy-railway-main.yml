@@ -1,0 +1,99 @@
+name: Deploy Railway (main)
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: railway-main-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    name: Detect changed services
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_backend: ${{ steps.filter.outputs.backend }}
+      deploy_frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect path changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - "backend/**"
+              - "agents/**"
+              - "shared/**"
+              - "supabase/**"
+              - "docker-compose.yml"
+              - ".github/workflows/deploy-railway-main.yml"
+            frontend:
+              - "frontend/**"
+              - "shared/**"
+              - "docker-compose.yml"
+              - ".github/workflows/deploy-railway-main.yml"
+
+  deploy-backend:
+    name: Deploy backend
+    needs: detect-changes
+    if: needs.detect-changes.outputs.deploy_backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli
+
+      - name: Deploy backend service
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          railway up backend \
+            --path-as-root \
+            --ci \
+            --project "${{ secrets.RAILWAY_PROJECT_ID }}" \
+            --environment production \
+            --service "${{ secrets.RAILWAY_BACKEND_SERVICE_ID }}" \
+            --message "deploy backend from main @ ${GITHUB_SHA}"
+
+  deploy-frontend:
+    name: Deploy frontend
+    needs: detect-changes
+    if: needs.detect-changes.outputs.deploy_frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli
+
+      - name: Deploy frontend service
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          railway up frontend \
+            --path-as-root \
+            --ci \
+            --project "${{ secrets.RAILWAY_PROJECT_ID }}" \
+            --environment production \
+            --service "${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }}" \
+            --message "deploy frontend from main @ ${GITHUB_SHA}"

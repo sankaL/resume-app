@@ -1,5 +1,16 @@
 # Decisions Made
 
+## 2026-04-10 17:00:08 EDT — Use GitHub Actions path-filtered Railway CLI deploys for selective push-to-main releases
+
+- Status: Accepted
+- Context: The repo did not have deployment automation from `main` to Railway, and the requirement was to redeploy only services whose code changed (for example backend-only changes should not redeploy frontend).
+- Decision:
+  1. Create a dedicated Railway project `job-app-prod` with separate `backend` and `frontend` services and keep deploy targeting service-specific IDs.
+  2. Add a GitHub Actions workflow (`.github/workflows/deploy-railway-main.yml`) on `push` to `main` that uses path filters to compute changed services.
+  3. Deploy each changed service independently with `railway up <service-path> --path-as-root --service <service-id> --project <project-id> --environment production --ci`.
+  4. Store deploy credentials and identifiers in GitHub secrets (`RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_BACKEND_SERVICE_ID`, `RAILWAY_FRONTEND_SERVICE_ID`).
+- Consequences: Pushes to `main` now trigger automatic Railway deployments while avoiding unnecessary redeploys for untouched services; shared-path changes still redeploy both services by design.
+
 ## 2026-04-10 13:30:00 EDT — Make regeneration structure deterministic, cap non-admin full regenerations, and move generation to slower higher-quality defaults
 
 - Status: Accepted
