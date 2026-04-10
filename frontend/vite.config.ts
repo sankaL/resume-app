@@ -11,9 +11,13 @@ export default defineConfig({
     },
   },
   server: {
+    allowedHosts: [".up.railway.app"],
     fs: {
       allow: [path.resolve(__dirname, "..")],
     },
+  },
+  preview: {
+    allowedHosts: [".up.railway.app"],
   },
   test: {
     environment: "jsdom",
