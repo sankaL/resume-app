@@ -29,7 +29,9 @@ Opus
 - [x] In the extraction some some sections are not being grabbed just a job to description. I want to grab the entire description in the job description. Example Accenture. Not just grab the job description part. I wante tod grab the qualifications everything about the j job also even grab the salary if it's provided I think that should be a new field as part of the application. We need to do a schema change. 
 - [x] add the things that will change in the configuration when the user is selecting low, medium, high so that they know exactly what is what will be affected If it's too much information to put, make the configuration card smaller with a tooltip that shows all the details. 
 - [x] In the aggressiveness high, I wanted to even change the professional experience titles. Not the dates of the titles, but the actual title name to change it to match whatever experience that I'm putting in. low and medium mode do not touch the titles of any of my roles 
-- [] fix the resume output pdf issues
 
+- [] fix the resume output pdf issues - too small now use the latest example. make the job experience bold on pdf.
+- [] seems like companies are striped away from the experience section - test first before fixing to see if its one off thing
 
+- [] Create a test suite integration in pytest with reporting request library - i make the scenarios sanity test suite
 - [] Add sign up flow when only invite only. Where is the invite triggered and what is the flow to sign up for new users and make their account and then log in. Test that out before launch. 

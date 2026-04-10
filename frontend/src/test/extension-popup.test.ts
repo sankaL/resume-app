@@ -31,7 +31,7 @@ describe("chrome extension popup helpers", () => {
   it("keeps the branded popup logo inside the unpacked extension root", () => {
     const popupHtml = readFileSync("public/chrome-extension/popup.html", "utf8");
 
-    expect(popupHtml).toContain('src="./applix-logo.png"');
-    expect(existsSync("public/chrome-extension/applix-logo.png")).toBe(true);
+    expect(popupHtml).toContain('src="./applix-logo.svg"');
+    expect(existsSync("public/chrome-extension/applix-logo.svg")).toBe(true);
   });
 });

@@ -70,7 +70,7 @@ export function LoginPage() {
           <div className="mx-auto w-full max-w-xl">
             <div className="inline-flex items-center gap-3 rounded-full border border-black/5 bg-white/60 px-3 py-2 shadow-sm backdrop-blur-sm">
               <div className="flex h-12 w-12 items-center justify-center overflow-hidden">
-                <img src="/applix-logo.png" alt="Applix logo" className="h-10 w-10 object-contain" />
+                <img src="/applix-logo.svg" alt="Applix logo" className="h-10 w-10 object-contain" />
               </div>
               <div className="leading-tight">
                 <p className="text-sm font-semibold" style={{ color: "var(--color-ink)" }}>
@@ -87,7 +87,7 @@ export function LoginPage() {
                 Invite-only MVP
               </p>
               <h1
-                className="mt-3 max-w-lg font-display text-4xl leading-[1.02] sm:text-5xl lg:text-[4rem]"
+                className="mt-3 max-w-lg font-display text-3xl leading-[1.08] sm:text-4xl lg:text-[2.75rem]"
                 style={{ color: "var(--color-ink)" }}
               >
                 AI-Powered Resume Tailoring
@@ -96,21 +96,20 @@ export function LoginPage() {
                 Sign in to manage your job applications, generate tailored resumes, and track your progress.
               </p>
               {env.VITE_APP_DEV_MODE && (
-                <div
-                  className="mt-6 max-w-md rounded-[28px] border px-5 py-4 backdrop-blur-sm"
+                <span
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
                   style={{
-                    background: "rgba(255, 255, 255, 0.68)",
-                    borderColor: "rgba(16, 24, 40, 0.08)",
-                    boxShadow: "0 20px 50px rgba(16, 24, 40, 0.08)",
+                    background: "rgba(24, 74, 69, 0.10)",
+                    color: "var(--color-spruce)",
+                    border: "1px solid rgba(24, 74, 69, 0.18)",
                   }}
                 >
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em]" style={{ color: "var(--color-ink-50)" }}>
-                    Current environment
-                  </p>
-                  <p className="mt-2 text-lg font-semibold" style={{ color: "var(--color-spruce)" }}>
-                    Local Dockerized dev mode
-                  </p>
-                </div>
+                  <span
+                    className="inline-block h-1.5 w-1.5 rounded-full"
+                    style={{ background: "var(--color-spruce)" }}
+                  />
+                  Local dev
+                </span>
               )}
             </div>
 
@@ -151,15 +150,7 @@ export function LoginPage() {
                   {isSubmitting ? "Signing in…" : "Enter the workspace"}
                 </Button>
               </form>
-              <div
-                className="mt-6 max-w-sm text-sm"
-                style={{
-                  color: "var(--color-ink-65)",
-                }}
-              >
-                Public signup is intentionally unavailable in MVP. Access is provisioned directly through
-                Supabase Auth.
-              </div>
+
             </div>
           </div>
         </section>
@@ -182,12 +173,11 @@ export function LoginPage() {
               className="absolute bottom-16 left-10 hidden h-24 w-24 rounded-full blur-3xl lg:block"
               style={{ background: "rgba(159, 58, 22, 0.14)" }}
             />
-            <div className="relative z-10 max-h-[105%] w-full lg:absolute lg:bottom-[-8%] lg:left-[-20%] lg:h-[118%] lg:w-[118%]">
+            <div className="relative z-10 max-h-[95%] w-full lg:absolute lg:bottom-0 lg:left-[-10%] lg:h-[100%] lg:w-[100%]">
               <img
                 src={businessmanIllustration}
                 alt="Businessman seated with a laptop, representing the Applix workspace"
-                className="h-full w-full object-contain drop-shadow-[0_28px_38px_rgba(16,24,40,0.18)] lg:object-cover lg:object-[78%_center]"
-                style={{ animation: "floatBlob1 10s ease-in-out infinite" }}
+                className="h-full w-full object-contain drop-shadow-[0_28px_38px_rgba(16,24,40,0.18)]"
               />
             </div>
             <div

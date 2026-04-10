@@ -33,14 +33,14 @@ export function Button({
       )}
       style={{
         ...(variant === "primary"
-          ? { background: "var(--color-ink)" }
+          ? { background: "var(--color-ember-light)" }
           : variant === "secondary"
           ? { borderColor: "var(--color-border)", color: "var(--color-ink)" }
           : { borderColor: "var(--color-ember)", color: "var(--color-ember)" }),
       }}
       onMouseEnter={(e) => {
         if (variant === "primary" && !isDisabled) {
-          (e.currentTarget as HTMLButtonElement).style.background = "var(--color-spruce)";
+          (e.currentTarget as HTMLButtonElement).style.background = "var(--color-ember)";
         }
         if (variant === "secondary" && !isDisabled) {
           (e.currentTarget as HTMLButtonElement).style.color = "var(--color-spruce)";
@@ -49,7 +49,7 @@ export function Button({
       }}
       onMouseLeave={(e) => {
         if (variant === "primary" && !isDisabled) {
-          (e.currentTarget as HTMLButtonElement).style.background = "var(--color-ink)";
+          (e.currentTarget as HTMLButtonElement).style.background = "var(--color-ember-light)";
         }
         if (variant === "secondary" && !isDisabled) {
           (e.currentTarget as HTMLButtonElement).style.color = "var(--color-ink)";

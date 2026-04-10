@@ -63,11 +63,12 @@ def test_build_html_uses_point_spacing_units():
         pdf_export.LAYOUT_PRESETS[0],
     )
 
-    assert "margin-top: 11.55pt;" in html
-    assert "margin-bottom: 9.9pt;" in html
-    assert "margin: 4.18pt 0;" in html
-    assert "11.55rem" not in html
-    assert "9.9rem" not in html
+    assert "margin-top: 3.2pt;" in html
+    assert "margin-bottom: 2.2pt;" in html
+    assert "margin: 0 0 0.8pt 0;" in html
+    assert "margin-top: 0;" in html
+    assert "3.2rem" not in html
+    assert "2.2rem" not in html
 
 
 def test_generate_pdf_autofit_retries_until_target_page_count_is_met(monkeypatch):
@@ -107,5 +108,5 @@ def test_generate_pdf_autofit_stops_at_minimum_preset(monkeypatch):
         "1_page",
     )
 
-    assert pdf_bytes == b"preset-3"
-    assert seen_presets == [0, 1, 2, 3]
+    assert pdf_bytes == b"preset-5"
+    assert seen_presets == [0, 1, 2, 3, 4, 5]

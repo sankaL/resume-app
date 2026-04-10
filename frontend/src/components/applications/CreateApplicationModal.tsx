@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import { ArrowRight, BriefcaseBusiness, FileText, Link2, Sparkles, X } from "lucide-react";
+import { ArrowRight, FileText, Link2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,7 +17,7 @@ type CreateApplicationModalProps = {
   onSubmit: (payload: CreateApplicationSubmission) => Promise<void>;
 };
 
-const DIALOG_WIDTH = "min(560px, calc(100vw - 32px))";
+const DIALOG_WIDTH = "min(520px, calc(100vw - 32px))";
 
 export function CreateApplicationModal({ open, onClose, onSubmit }: CreateApplicationModalProps) {
   const titleId = useId();
@@ -125,9 +125,8 @@ export function CreateApplicationModal({ open, onClose, onSubmit }: CreateApplic
         style={{
           position: "absolute",
           inset: 0,
-          background:
-            "radial-gradient(circle at top, rgba(24, 74, 69, 0.16), transparent 42%), rgba(16, 24, 40, 0.56)",
-          backdropFilter: "blur(10px)",
+          background: "rgba(16, 24, 40, 0.48)",
+          backdropFilter: "blur(6px)",
           animation: "fadeIn 220ms var(--ease-out) both",
         }}
       />
@@ -137,142 +136,67 @@ export function CreateApplicationModal({ open, onClose, onSubmit }: CreateApplic
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
-        className="animate-scaleIn overflow-hidden"
+        className="animate-scaleIn"
         style={{
           position: "relative",
           zIndex: 1,
           width: DIALOG_WIDTH,
-          borderRadius: "28px",
-          border: "1px solid rgba(16, 24, 40, 0.08)",
-          background:
-            "linear-gradient(180deg, rgba(250, 248, 242, 0.98) 0%, rgba(255, 255, 255, 0.98) 34%, rgba(255, 255, 255, 1) 100%)",
-          boxShadow: "0 30px 80px rgba(16, 24, 40, 0.18)",
+          borderRadius: "var(--radius-xl)",
+          border: "1px solid var(--color-border)",
+          background: "var(--color-white)",
+          boxShadow: "var(--shadow-panel)",
+          overflow: "hidden",
         }}
       >
+        {/* Header */}
         <div
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            right: "-24px",
-            top: "-24px",
-            height: "160px",
-            width: "160px",
-            borderRadius: "999px",
-            background: "radial-gradient(circle, rgba(24, 74, 69, 0.2) 0%, rgba(24, 74, 69, 0) 72%)",
-          }}
-        />
-        <div
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            left: "-36px",
-            bottom: "-48px",
-            height: "180px",
-            width: "180px",
-            borderRadius: "999px",
-            background: "radial-gradient(circle, rgba(180, 83, 9, 0.12) 0%, rgba(180, 83, 9, 0) 72%)",
-          }}
-        />
-
-        <div className="relative border-b px-6 pb-5 pt-6" style={{ borderColor: "rgba(16, 24, 40, 0.08)" }}>
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-4">
+          className="flex items-start justify-between gap-4 px-6 pb-4 pt-6"
+          style={{ borderBottom: "1px solid var(--color-border)" }}
+        >
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
               <div
-                className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em]"
-                style={{
-                  color: "var(--color-spruce)",
-                  background: "rgba(24, 74, 69, 0.08)",
-                }}
+                className="flex h-7 w-7 items-center justify-center rounded-lg"
+                style={{ background: "var(--color-spruce)", color: "white" }}
               >
-                <Sparkles size={13} aria-hidden="true" />
+                <Link2 size={14} aria-hidden="true" />
+              </div>
+              <h2
+                id={titleId}
+                className="text-base font-semibold"
+                style={{ color: "var(--color-ink)" }}
+              >
                 New Application
-              </div>
-              <div className="space-y-2">
-                <h2
-                  id={titleId}
-                  className="font-display text-[1.75rem] leading-[1.05] sm:text-[2rem]"
-                  style={{ color: "var(--color-ink)" }}
-                >
-                  Start with the job link.
-                </h2>
-                <p
-                  id={descriptionId}
-                  className="max-w-[34rem] text-sm leading-6"
-                  style={{ color: "var(--color-ink-65)" }}
-                >
-                  Paste the posting URL to create the application. If you already copied the job description, you can
-                  reveal a pasted-text field and include it now to kick off extraction with richer source content.
-                </p>
-              </div>
+              </h2>
             </div>
-
-            <button
-              type="button"
-              aria-label="Close new application modal"
-              onClick={handleClose}
-              disabled={isSubmitting}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-full transition-all disabled:cursor-not-allowed disabled:opacity-50"
-              style={{
-                color: "var(--color-ink-50)",
-                background: "rgba(255, 255, 255, 0.72)",
-                border: "1px solid rgba(16, 24, 40, 0.08)",
-              }}
+            <p
+              id={descriptionId}
+              className="text-sm leading-relaxed"
+              style={{ color: "var(--color-ink-50)" }}
             >
-              <X size={16} aria-hidden="true" />
-            </button>
+              Paste the job posting URL to create an application and start extraction.
+            </p>
           </div>
+
+          <button
+            type="button"
+            aria-label="Close new application modal"
+            onClick={handleClose}
+            disabled={isSubmitting}
+            className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg transition-all disabled:cursor-not-allowed disabled:opacity-50"
+            style={{
+              color: "var(--color-ink-40)",
+              background: "transparent",
+              border: "1px solid var(--color-border)",
+            }}
+          >
+            <X size={15} aria-hidden="true" />
+          </button>
         </div>
 
-        <form className="relative px-6 pb-6 pt-5" onSubmit={handleSubmit}>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div
-              className="rounded-2xl border px-4 py-3"
-              style={{
-                borderColor: "rgba(24, 74, 69, 0.12)",
-                background: "rgba(24, 74, 69, 0.05)",
-              }}
-            >
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--color-spruce)" }}>
-                <Link2 size={14} aria-hidden="true" />
-                URL First
-              </div>
-              <p className="mt-2 text-sm leading-5" style={{ color: "var(--color-ink-65)" }}>
-                Keep the source link attached from the start.
-              </p>
-            </div>
-            <div
-              className="rounded-2xl border px-4 py-3"
-              style={{
-                borderColor: "rgba(16, 24, 40, 0.08)",
-                background: "rgba(255, 255, 255, 0.72)",
-              }}
-            >
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--color-ink)" }}>
-                <FileText size={14} aria-hidden="true" />
-                Optional Paste
-              </div>
-              <p className="mt-2 text-sm leading-5" style={{ color: "var(--color-ink-65)" }}>
-                Reveal the textarea only if you already copied the posting text.
-              </p>
-            </div>
-            <div
-              className="rounded-2xl border px-4 py-3"
-              style={{
-                borderColor: "rgba(180, 83, 9, 0.12)",
-                background: "rgba(180, 83, 9, 0.05)",
-              }}
-            >
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--color-ember)" }}>
-                <BriefcaseBusiness size={14} aria-hidden="true" />
-                Direct Intake
-              </div>
-              <p className="mt-2 text-sm leading-5" style={{ color: "var(--color-ink-65)" }}>
-                Submit once and continue on the detail page while extraction runs.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-5 space-y-4">
+        {/* Body */}
+        <form className="px-6 pb-6 pt-5" onSubmit={handleSubmit}>
+          <div className="space-y-4">
             <div>
               <Label htmlFor="new-application-job-url">Job URL</Label>
               <Input
@@ -287,33 +211,29 @@ export function CreateApplicationModal({ open, onClose, onSubmit }: CreateApplic
               />
             </div>
 
+            {/* Source text toggle */}
             <div
-              className="rounded-2xl border px-4 py-4"
+              className="rounded-xl border px-4 py-3.5"
               style={{
-                borderColor: showSourceText ? "rgba(24, 74, 69, 0.18)" : "rgba(16, 24, 40, 0.08)",
-                background: showSourceText ? "rgba(24, 74, 69, 0.04)" : "rgba(16, 24, 40, 0.02)",
+                borderColor: showSourceText ? "rgba(24, 74, 69, 0.16)" : "var(--color-border)",
+                background: showSourceText ? "var(--color-spruce-05)" : "var(--color-ink-05)",
               }}
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold" style={{ color: "var(--color-ink)" }}>
-                    Have the job description copied already?
-                  </p>
-                  <p className="mt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>
-                    Add it now to help extraction start from the exact posting text.
-                  </p>
-                </div>
+                <p className="text-sm" style={{ color: "var(--color-ink-65)" }}>
+                  Already have the job description copied?
+                </p>
                 <button
                   type="button"
                   onClick={() => {
                     setShowSourceText((current) => !current);
                     setError(null);
                   }}
-                  className="inline-flex items-center gap-2 text-sm font-semibold transition-colors"
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold transition-colors"
                   style={{ color: showSourceText ? "var(--color-spruce)" : "var(--color-ink)" }}
                 >
                   {showSourceText ? <X size={14} aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
-                  {showSourceText ? "Hide pasted text" : "Paste job description instead"}
+                  {showSourceText ? "Hide" : "Paste it"}
                 </button>
               </div>
 
@@ -323,12 +243,12 @@ export function CreateApplicationModal({ open, onClose, onSubmit }: CreateApplic
                   <Textarea
                     id="new-application-source-text"
                     aria-label="Pasted Job Description"
-                    className="min-h-[180px]"
-                    placeholder="Paste the job description, qualifications, and any other relevant posting text."
+                    className="min-h-[160px]"
+                    placeholder="Paste the job description, qualifications, and any relevant posting text."
                     value={sourceText}
                     onChange={(event) => setSourceText(event.target.value)}
                   />
-                  <p className="mt-2 text-xs leading-5" style={{ color: "var(--color-ink-50)" }}>
+                  <p className="mt-2 text-xs leading-5" style={{ color: "var(--color-ink-40)" }}>
                     The URL stays attached as the source link. The pasted text is used only to improve extraction
                     startup for this new application.
                   </p>
@@ -338,11 +258,11 @@ export function CreateApplicationModal({ open, onClose, onSubmit }: CreateApplic
 
             {error ? (
               <div
-                className="rounded-2xl border px-4 py-3 text-sm"
+                className="rounded-xl border px-4 py-3 text-sm"
                 style={{
                   color: "var(--color-ember)",
-                  borderColor: "rgba(179, 56, 44, 0.14)",
-                  background: "rgba(179, 56, 44, 0.05)",
+                  borderColor: "var(--color-ember-10)",
+                  background: "var(--color-ember-05)",
                 }}
               >
                 {error}
@@ -350,20 +270,18 @@ export function CreateApplicationModal({ open, onClose, onSubmit }: CreateApplic
             ) : null}
           </div>
 
-          <div className="mt-6 flex flex-col-reverse gap-3 border-t pt-5 sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: "rgba(16, 24, 40, 0.08)" }}>
-            <p className="text-xs leading-5" style={{ color: "var(--color-ink-50)" }}>
-              Extraction begins after submit. You will land on the application detail page immediately.
-            </p>
-            <div className="flex items-center justify-end gap-2">
-              <Button type="button" variant="secondary" onClick={handleClose} disabled={isSubmitting}>
-                <X size={14} aria-hidden="true" />
-                Cancel
-              </Button>
-              <Button type="submit" loading={isSubmitting} disabled={isSubmitting}>
-                {!isSubmitting && <ArrowRight size={14} aria-hidden="true" />}
-                {showSourceText ? "Create With Pasted Text" : "Create Application"}
-              </Button>
-            </div>
+          {/* Footer */}
+          <div
+            className="mt-5 flex items-center justify-end gap-2 border-t pt-5"
+            style={{ borderColor: "var(--color-border)" }}
+          >
+            <Button type="button" variant="secondary" onClick={handleClose} disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={isSubmitting} disabled={isSubmitting}>
+              {!isSubmitting && <ArrowRight size={14} aria-hidden="true" />}
+              {showSourceText ? "Create With Pasted Text" : "Create Application"}
+            </Button>
           </div>
         </form>
       </div>

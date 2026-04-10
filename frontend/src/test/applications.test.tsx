@@ -215,7 +215,7 @@ describe("phase 1 applications UI", () => {
     await screen.findByText(/no applications yet/i);
     await userEvent.click(screen.getAllByRole("button", { name: /new application/i })[0]);
 
-    expect(await screen.findByRole("dialog", { name: /start with the job link/i })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: /new application/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/job url/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/pasted job description/i)).not.toBeInTheDocument();
   });
@@ -227,7 +227,7 @@ describe("phase 1 applications UI", () => {
 
     await screen.findByText(/no applications yet/i);
     await userEvent.click(screen.getAllByRole("button", { name: /new application/i })[0]);
-    await userEvent.click(screen.getByRole("button", { name: /paste job description instead/i }));
+    await userEvent.click(screen.getByRole("button", { name: /paste it/i }));
 
     expect(await screen.findByLabelText(/pasted job description/i)).toBeInTheDocument();
   });
@@ -264,7 +264,7 @@ describe("phase 1 applications UI", () => {
     await screen.findByText(/no applications yet/i);
     await userEvent.click(screen.getAllByRole("button", { name: /new application/i })[0]);
     await userEvent.type(screen.getByLabelText(/job url/i), "https://example.com/jobs/84");
-    await userEvent.click(screen.getByRole("button", { name: /paste job description instead/i }));
+    await userEvent.click(screen.getByRole("button", { name: /paste it/i }));
     await userEvent.type(
       await screen.findByLabelText(/pasted job description/i),
       "Senior Platform Engineer. Build APIs, queues, and internal tools.",

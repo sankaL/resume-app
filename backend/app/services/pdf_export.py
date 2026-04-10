@@ -35,42 +35,44 @@ class LayoutPreset:
 
     @property
     def name_font_size(self) -> float:
-        return round(self.body_font_size * 1.85, 2)
+        return round(self.body_font_size * 1.42, 2)
 
     @property
     def contact_font_size(self) -> float:
-        return round(self.body_font_size * 0.88, 2)
+        return round(self.body_font_size * 0.78, 2)
 
     @property
     def section_heading_size(self) -> float:
-        return round(self.body_font_size * 1.03, 2)
+        return round(self.body_font_size * 0.9, 2)
 
     @property
     def section_margin_top(self) -> float:
-        return round(self.body_font_size * 1.05, 2)
+        return round(self.body_font_size * 0.32, 2)
 
     @property
     def section_margin_bottom(self) -> float:
-        return round(self.body_font_size * 0.4, 2)
+        return round(self.body_font_size * 0.14, 2)
 
     @property
     def paragraph_margin(self) -> float:
-        return round(self.body_font_size * 0.38, 2)
+        return round(self.body_font_size * 0.08, 2)
 
     @property
     def split_row_gap(self) -> float:
-        return round(self.body_font_size * 0.9, 2)
+        return round(self.body_font_size * 0.28, 2)
 
     @property
     def header_margin_bottom(self) -> float:
-        return round(self.body_font_size * 0.9, 2)
+        return round(self.body_font_size * 0.22, 2)
 
 
 LAYOUT_PRESETS = [
-    LayoutPreset(body_font_size=11.0, line_height=1.32, page_margin=0.55),
-    LayoutPreset(body_font_size=10.5, line_height=1.28, page_margin=0.5),
-    LayoutPreset(body_font_size=10.0, line_height=1.24, page_margin=0.45),
-    LayoutPreset(body_font_size=9.5, line_height=1.2, page_margin=0.4),
+    LayoutPreset(body_font_size=10.0, line_height=1.12, page_margin=0.42),
+    LayoutPreset(body_font_size=9.6, line_height=1.09, page_margin=0.36),
+    LayoutPreset(body_font_size=9.2, line_height=1.06, page_margin=0.3),
+    LayoutPreset(body_font_size=8.9, line_height=1.04, page_margin=0.24),
+    LayoutPreset(body_font_size=8.6, line_height=1.02, page_margin=0.2),
+    LayoutPreset(body_font_size=8.3, line_height=1.0, page_margin=0.16),
 ]
 
 
@@ -383,45 +385,50 @@ def _build_html(markdown_content: str, preset: LayoutPreset, *, preset_index: in
     }}
     .resume-header h1 {{
       font-size: {preset.name_font_size}pt;
-      margin: 0 0 3pt 0;
+      margin: 0 0 0.5pt 0;
       font-weight: 700;
-      line-height: 1.05;
+      line-height: 1;
     }}
     .resume-contact {{
       font-size: {preset.contact_font_size}pt;
       margin: 0;
-      line-height: 1.2;
+      line-height: 1.08;
     }}
     .resume-section {{
       margin-top: {preset.section_margin_top}pt;
     }}
+    .resume-section:first-of-type {{
+      margin-top: 0;
+    }}
     .resume-section h2 {{
       margin: 0 0 {preset.section_margin_bottom}pt 0;
-      padding-bottom: 2pt;
+      padding-bottom: 0.5pt;
       font-size: {preset.section_heading_size}pt;
       font-weight: 700;
-      letter-spacing: 0.03em;
+      letter-spacing: 0.015em;
       text-transform: uppercase;
-      border-bottom: 1pt solid #111111;
+      line-height: 1;
+      border-bottom: 0.8pt solid #111111;
     }}
     h3 {{
-      margin: {preset.paragraph_margin}pt 0 2pt 0;
+      margin: 0 0 0.75pt 0;
       font-size: {preset.body_font_size}pt;
       font-weight: 700;
+      line-height: 1.05;
     }}
     p {{
-      margin: {preset.paragraph_margin}pt 0;
+      margin: 0 0 {preset.paragraph_margin}pt 0;
     }}
     ul {{
-      margin: {preset.paragraph_margin}pt 0 {preset.paragraph_margin}pt 14pt;
-      padding-left: 8pt;
+      margin: 0 0 {preset.paragraph_margin}pt 8pt;
+      padding-left: 4pt;
     }}
     li {{
-      margin: 0.08rem 0;
-      padding-left: 0.08rem;
+      margin: 0 0 0.2pt 0;
+      padding-left: 0;
     }}
     .split-group {{
-      margin: {preset.paragraph_margin}pt 0;
+      margin: 0 0 0.75pt 0;
     }}
     .split-row {{
       display: flex;
@@ -439,6 +446,15 @@ def _build_html(markdown_content: str, preset: LayoutPreset, *, preset_index: in
       flex: 0 0 auto;
       text-align: right;
       white-space: nowrap;
+    }}
+    .split-group + ul {{
+      margin-top: 0;
+    }}
+    .split-group + .split-group {{
+      margin-top: 0.75pt;
+    }}
+    .resume-section > :last-child {{
+      margin-bottom: 0;
     }}
     strong {{
       font-weight: 700;

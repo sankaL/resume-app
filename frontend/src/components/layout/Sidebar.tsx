@@ -85,7 +85,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       {/* Brand */}
       <div className="flex h-16 items-center gap-2.5 px-5" style={{ borderBottom: "1px solid var(--color-sidebar-border)" }}>
         <div className="flex h-10 w-10 items-center justify-center overflow-hidden">
-          <img src="/applix-logo.png" alt="Applix logo" className="h-8 w-8 object-contain" />
+          <img src="/applix-logo.svg" alt="Applix logo" className="h-8 w-8 object-contain" />
         </div>
         <div>
           <div className="text-sm font-semibold" style={{ color: "var(--color-sidebar-text-active)" }}>
