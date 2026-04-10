@@ -5,8 +5,10 @@
 - [backend/app/core/config.py](file://backend/app/core/config.py)
 - [backend/app/core/auth.py](file://backend/app/core/auth.py)
 - [backend/app/core/security.py](file://backend/app/core/security.py)
+- [backend/app/core/access.py](file://backend/app/core/access.py)
 - [backend/app/main.py](file://backend/app/main.py)
 - [backend/app/api/session.py](file://backend/app/api/session.py)
+- [backend/app/services/admin.py](file://backend/app/services/admin.py)
 - [frontend/src/lib/env.ts](file://frontend/src/lib/env.ts)
 - [frontend/src/lib/supabase.ts](file://frontend/src/lib/supabase.ts)
 - [frontend/src/routes/ProtectedRoute.tsx](file://frontend/src/routes/ProtectedRoute.tsx)
@@ -14,12 +16,21 @@
 - [frontend/public/chrome-extension/manifest.json](file://frontend/public/chrome-extension/manifest.json)
 - [frontend/public/chrome-extension/popup.js](file://frontend/public/chrome-extension/popup.js)
 - [docker-compose.yml](file://docker-compose.yml)
+- [scripts/seed_local_user.sh](file://scripts/seed_local_user.sh)
 - [backend/Dockerfile](file://backend/Dockerfile)
 - [agents/Dockerfile](file://agents/Dockerfile)
 - [agents/pyproject.toml](file://agents/pyproject.toml)
 - [backend/pyproject.toml](file://backend/pyproject.toml)
 - [frontend/package.json](file://frontend/package.json)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Added documentation for new environment variables: SUPABASE_INTERNAL_URL, ADMIN_EMAILS, INVITE_LINK_EXPIRY_HOURS, and LOCAL_DEV_USER_IS_ADMIN
+- Updated backend configuration section to include new admin email management and invite expiration settings
+- Enhanced frontend environment validation to cover new admin-related configurations
+- Added documentation for local development user administration features
+- Updated dependency analysis to reflect new environment variable relationships
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -63,7 +74,9 @@ BE_Main["FastAPI App & CORS<br/>backend/app/main.py"]
 BE_Config["Settings & Validation<br/>backend/app/core/config.py"]
 BE_Auth["JWT Verifier<br/>backend/app/core/auth.py"]
 BE_Sec["Worker Secret & Extension Token<br/>backend/app/core/security.py"]
+BE_Access["Admin Access Control<br/>backend/app/core/access.py"]
 BE_Session["Session Bootstrap<br/>backend/app/api/session.py"]
+BE_Admin["Admin Service<br/>backend/app/services/admin.py"]
 end
 subgraph "Agents"
 AG_Worker["Worker Settings & Jobs<br/>agents/worker.py"]
@@ -72,6 +85,7 @@ end
 subgraph "Compose"
 DC["docker-compose.yml"]
 BE_Docker["Backend Dockerfile<br/>backend/Dockerfile"]
+SEED["Seed Script<br/>scripts/seed_local_user.sh"]
 end
 FE_Env --> FE_Supa
 FE_Supa --> FE_API
@@ -82,9 +96,11 @@ BE_Main --> BE_Auth
 BE_Main --> BE_Sec
 BE_Auth --> BE_Session
 BE_Sec --> AG_Worker
+BE_Access --> BE_Admin
 DC --> FE_Env
 DC --> BE_Config
 DC --> AG_Worker
+DC --> SEED
 BE_Docker --> BE_Main
 AG_Docker --> AG_Worker
 ```
@@ -99,14 +115,17 @@ AG_Docker --> AG_Worker
 - [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
 - [backend/app/core/auth.py:22-69](file://backend/app/core/auth.py#L22-L69)
 - [backend/app/core/security.py:13-54](file://backend/app/core/security.py#L13-L54)
+- [backend/app/core/access.py:20-30](file://backend/app/core/access.py#L20-L30)
 - [backend/app/api/session.py:27-44](file://backend/app/api/session.py#L27-L44)
+- [backend/app/services/admin.py:119-200](file://backend/app/services/admin.py#L119-L200)
 - [agents/worker.py:290-305](file://agents/worker.py#L290-L305)
-- [docker-compose.yml:1-191](file://docker-compose.yml#L1-L191)
+- [docker-compose.yml:1-194](file://docker-compose.yml#L1-L194)
+- [scripts/seed_local_user.sh:64-96](file://scripts/seed_local_user.sh#L64-L96)
 - [backend/Dockerfile:1-18](file://backend/Dockerfile#L1-L18)
 - [agents/Dockerfile:1-14](file://agents/Dockerfile#L1-L14)
 
 **Section sources**
-- [docker-compose.yml:1-191](file://docker-compose.yml#L1-L191)
+- [docker-compose.yml:1-194](file://docker-compose.yml#L1-L194)
 - [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
 
@@ -114,10 +133,11 @@ AG_Docker --> AG_Worker
 This section documents environment configuration management, validation, and secret handling across components.
 
 - Backend Settings and Validation
-  - Centralized settings model defines environment variables for app environment, dev mode, API port, app URL, database URL, Redis URL, CORS origins, Supabase URLs, JWT configuration, worker callback secret, duplicate similarity threshold, email notifications, shared contract path, and OpenRouter configuration.
+  - Centralized settings model defines environment variables for app environment, dev mode, API port, app URL, database URL, Redis URL, CORS origins, Supabase URLs, JWT configuration, worker callback secret, duplicate similarity threshold, email notifications, shared contract path, OpenRouter configuration, admin emails, and invite link expiry hours.
   - Email settings are validated to ensure required keys are present when notifications are enabled.
   - CORS origins are parsed into a list for middleware configuration.
   - Settings are cached via a factory function for reuse.
+  - **Updated**: New admin_email_list property parses comma-separated admin email addresses for access control.
 
 - Frontend Environment Validation
   - Zod schema enforces presence and shape of environment variables for app environment, dev mode, Supabase URL, Supabase anonymous key, and API URL.
@@ -170,9 +190,10 @@ Note over FE,BE : "CORS and middleware configured in backend"
 
 ### Backend Configuration and Security
 - Settings Model
-  - Defines environment variables for app, database, Redis, CORS, Supabase, JWT, worker callback, email, shared contract, and OpenRouter.
+  - Defines environment variables for app, database, Redis, CORS, Supabase, JWT, worker callback, email, shared contract, OpenRouter, admin emails, and invite link expiry hours.
   - Validates email settings when notifications are enabled.
   - Parses CORS origins into a list for middleware.
+  - **Updated**: New admin_email_list property converts comma-separated admin emails to lowercase list for access control.
 
 - CORS Middleware
   - Configured with allow_origins from settings, regex support for chrome-extension, credentials, and wildcard methods/headers.
@@ -186,6 +207,9 @@ Note over FE,BE : "CORS and middleware configured in backend"
 
 - Extension Token Verification
   - Hashes extension token and validates against stored hashes in the database.
+
+- Admin Access Control
+  - **New**: Uses admin_email_list setting to determine administrative privileges for users.
 
 ```mermaid
 classDiagram
@@ -211,22 +235,26 @@ class Settings {
 +string shared_contract_path
 +string openrouter_api_key
 +string openrouter_cleanup_model
++string admin_emails
++int invite_link_expiry_hours
++admin_email_list() string[]
 +cors_origin_list() string[]
 }
 class AuthVerifier {
 +verify_token(token) AuthenticatedUser
 -_decode(token) dict
 }
-class ExtensionAuthenticatedUser {
-+string id
-+string email
+class AccessControl {
++is_admin(user_email) bool
 }
 Settings <.. AuthVerifier : "provides JWKS/JWT config"
+Settings <.. AccessControl : "provides admin_email_list"
 ```
 
 **Diagram sources**
 - [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
 - [backend/app/core/auth.py:22-69](file://backend/app/core/auth.py#L22-L69)
+- [backend/app/core/access.py:20-30](file://backend/app/core/access.py#L20-L30)
 - [backend/app/core/security.py:25-54](file://backend/app/core/security.py#L25-L54)
 
 **Section sources**
@@ -234,6 +262,7 @@ Settings <.. AuthVerifier : "provides JWKS/JWT config"
 - [backend/app/main.py:14-22](file://backend/app/main.py#L14-L22)
 - [backend/app/core/auth.py:22-69](file://backend/app/core/auth.py#L22-L69)
 - [backend/app/core/security.py:13-54](file://backend/app/core/security.py#L13-L54)
+- [backend/app/core/access.py:20-30](file://backend/app/core/access.py#L20-L30)
 
 ### Frontend Environment and Authentication
 - Environment Validation
@@ -332,6 +361,14 @@ D --> F["Backend verifies secret and processes event"]
 - [agents/worker.py:54-71](file://agents/worker.py#L54-L71)
 - [agents/worker.py:290-305](file://agents/worker.py#L290-L305)
 
+### Local Development Administration
+- **New**: Local development user administration enables automatic admin promotion during development setup.
+- Seed script reads LOCAL_DEV_USER_IS_ADMIN environment variable to determine if created users should be promoted to admin status.
+- Default behavior promotes local development users to administrators for streamlined testing.
+
+**Section sources**
+- [scripts/seed_local_user.sh:64-96](file://scripts/seed_local_user.sh#L64-L96)
+
 ## Dependency Analysis
 This section maps environment variable dependencies across components and highlights integration points.
 
@@ -339,25 +376,30 @@ This section maps environment variable dependencies across components and highli
 graph TB
 subgraph "Environment Variables"
 ENV_FE["VITE_SUPABASE_URL<br/>VITE_SUPABASE_ANON_KEY<br/>VITE_API_URL"]
-ENV_BE["APP_ENV<br/>APP_DEV_MODE<br/>API_PORT<br/>APP_URL<br/>DATABASE_URL<br/>REDIS_URL<br/>CORS_ORIGINS<br/>SUPABASE_URL<br/>SUPABASE_EXTERNAL_URL<br/>SUPABASE_AUTH_JWKS_URL<br/>SUPABASE_JWT_SECRET<br/>SUPABASE_JWT_AUDIENCE<br/>SUPABASE_JWT_ISSUER<br/>WORKER_CALLBACK_SECRET<br/>EMAIL_NOTIFICATIONS_ENABLED<br/>RESEND_API_KEY<br/>EMAIL_FROM<br/>SHARED_CONTRACT_PATH<br/>OPENROUTER_API_KEY<br/>OPENROUTER_CLEANUP_MODEL"]
+ENV_BE["APP_ENV<br/>APP_DEV_MODE<br/>API_PORT<br/>APP_URL<br/>DATABASE_URL<br/>REDIS_URL<br/>CORS_ORIGINS<br/>SUPABASE_URL<br/>SUPABASE_EXTERNAL_URL<br/>SUPABASE_AUTH_JWKS_URL<br/>SUPABASE_JWT_SECRET<br/>SUPABASE_JWT_AUDIENCE<br/>SUPABASE_JWT_ISSUER<br/>WORKER_CALLBACK_SECRET<br/>EMAIL_NOTIFICATIONS_ENABLED<br/>RESEND_API_KEY<br/>EMAIL_FROM<br/>SHARED_CONTRACT_PATH<br/>OPENROUTER_API_KEY<br/>OPENROUTER_CLEANUP_MODEL<br/>ADMIN_EMAILS<br/>INVITE_LINK_EXPIRY_HOURS"]
 ENV_AG["APP_ENV<br/>APP_DEV_MODE<br/>REDIS_URL<br/>BACKEND_API_URL<br/>WORKER_CALLBACK_SECRET<br/>OPENROUTER_API_KEY<br/>OPENROUTER_BASE_URL<br/>EXTRACTION_AGENT_MODEL<br/>EXTRACTION_AGENT_FALLBACK_MODEL<br/>GENERATION_AGENT_MODEL<br/>GENERATION_AGENT_FALLBACK_MODEL<br/>VALIDATION_AGENT_MODEL<br/>VALIDATION_AGENT_FALLBACK_MODEL"]
+ENV_SEED["LOCAL_DEV_USER_EMAIL<br/>LOCAL_DEV_USER_PASSWORD<br/>LOCAL_DEV_USER_IS_ADMIN<br/>SERVICE_ROLE_KEY<br/>SUPABASE_URL"]
 end
 FE["frontend/src/lib/env.ts"] --> BE["backend/app/core/config.py"]
 FE --> AG["agents/worker.py"]
 BE --> AG
 BE --> SUPA["Supabase Services"]
 FE --> SUPA
+SEED --> BE
+SEED --> SUPA
 ```
 
 **Diagram sources**
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
 - [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
 - [agents/worker.py:54-71](file://agents/worker.py#L54-L71)
+- [scripts/seed_local_user.sh:15-27](file://scripts/seed_local_user.sh#L15-L27)
 
 **Section sources**
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
 - [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
 - [agents/worker.py:54-71](file://agents/worker.py#L54-L71)
+- [scripts/seed_local_user.sh:15-27](file://scripts/seed_local_user.sh#L15-L27)
 
 ## Performance Considerations
 - Environment caching
@@ -368,16 +410,16 @@ FE --> SUPA
   - Frontend uses sessionStorage for auth state and auto-refresh tokens to minimize re-authentication friction.
 - Worker callbacks
   - Short timeouts and explicit error handling prevent long-running tasks from blocking the pipeline.
-
-[No sources needed since this section provides general guidance]
+- **Updated**: Admin email list processing is optimized through cached property to avoid repeated string parsing.
 
 ## Troubleshooting Guide
 Common configuration issues and resolutions:
 
 - Missing or invalid environment variables
   - Frontend: Ensure VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_API_URL are present and valid. The Zod schema will fail early if missing.
-  - Backend: Validate DATABASE_URL, REDIS_URL, SUPABASE_AUTH_JWKS_URL, SUPABASE_JWT_SECRET, WORKER_CALLBACK_SECRET, and email notification settings when enabled.
+  - Backend: Validate DATABASE_URL, REDIS_URL, SUPABASE_AUTH_JWKS_URL, SUPABASE_JWT_SECRET, WORKER_CALLBACK_SECRET, ADMIN_EMAILS, INVITE_LINK_EXPIRY_HOURS, and email notification settings when enabled.
   - Agents: Confirm OPENROUTER_API_KEY and model names are set; otherwise, runtime errors will occur during job execution.
+  - **New**: Seed script requires LOCAL_DEV_USER_EMAIL, LOCAL_DEV_USER_PASSWORD, and SERVICE_ROLE_KEY for local development user creation.
 
 - CORS errors
   - Verify CORS_ORIGINS includes the frontend origin and that APP_URL matches the frontend host. Backend CORS middleware uses allow_origins and allow_origin_regex.
@@ -394,6 +436,15 @@ Common configuration issues and resolutions:
 - Supabase service misconfiguration
   - Ensure GOTRUE_SITE_URL, GOTRUE_URI_ALLOW_LIST, and SUPABASE_URL align with APP_URL and APP_ENV. Kong gateway must be healthy and configured with the correct keys.
 
+- **New**: Admin access denied
+  - Verify ADMIN_EMAILS contains the user's email in lowercase format. Emails are automatically converted to lowercase for comparison.
+
+- **New**: Invite link expiration issues
+  - Check INVITE_LINK_EXPIRY_HOURS setting. Default is 168 hours (one week). Adjust based on organizational requirements.
+
+- **New**: Local development user not promoted to admin
+  - Ensure LOCAL_DEV_USER_IS_ADMIN is set to "true" in the .env.compose file. Default behavior promotes local users to administrators.
+
 **Section sources**
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
 - [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
@@ -401,11 +452,11 @@ Common configuration issues and resolutions:
 - [backend/app/core/security.py:13-54](file://backend/app/core/security.py#L13-L54)
 - [agents/worker.py:290-305](file://agents/worker.py#L290-L305)
 - [frontend/public/chrome-extension/popup.js:118-126](file://frontend/public/chrome-extension/popup.js#L118-L126)
+- [backend/app/core/access.py:20-30](file://backend/app/core/access.py#L20-L30)
+- [scripts/seed_local_user.sh:64-96](file://scripts/seed_local_user.sh#L64-L96)
 
 ## Conclusion
-This document outlined the configuration and environment setup across the frontend, backend, and agents. By validating environment variables early, securing worker callbacks, enforcing CORS policies, and integrating Supabase authentication, the system achieves robust operation across development and production environments. Adhering to the best practices and troubleshooting steps herein will help maintain a secure and reliable deployment.
-
-[No sources needed since this section summarizes without analyzing specific files]
+This document outlined the configuration and environment setup across the frontend, backend, and agents. By validating environment variables early, securing worker callbacks, enforcing CORS policies, and integrating Supabase authentication, the system achieves robust operation across development and production environments. The addition of admin email management, invite expiration controls, and local development administration enhances the system's operational capabilities while maintaining security and reliability.
 
 ## Appendices
 
@@ -440,6 +491,8 @@ This document outlined the configuration and environment setup across the fronte
   - SHARED_CONTRACT_PATH: string, default shared path
   - OPENROUTER_API_KEY: string, optional
   - OPENROUTER_CLEANUP_MODEL: string, default model
+  - **NEW**: ADMIN_EMAILS: string, default empty (comma-separated admin email addresses)
+  - **NEW**: INVITE_LINK_EXPIRY_HOURS: int, default 168 (hours until invite links expire)
 
 - Agents (Python)
   - APP_ENV: string, default "development"
@@ -456,7 +509,15 @@ This document outlined the configuration and environment setup across the fronte
   - VALIDATION_AGENT_MODEL: string, optional
   - VALIDATION_AGENT_FALLBACK_MODEL: string, optional
 
+- **New**: Local Development
+  - LOCAL_DEV_USER_EMAIL: string, required for seed script
+  - LOCAL_DEV_USER_PASSWORD: string, required for seed script
+  - LOCAL_DEV_USER_IS_ADMIN: string, default "true" (boolean as string)
+  - SERVICE_ROLE_KEY: string, required for Supabase admin operations
+  - SUPABASE_URL: string, default local Supabase URL
+
 **Section sources**
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
 - [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
 - [agents/worker.py:54-71](file://agents/worker.py#L54-L71)
+- [scripts/seed_local_user.sh:15-27](file://scripts/seed_local_user.sh#L15-L27)

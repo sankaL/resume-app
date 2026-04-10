@@ -16,6 +16,7 @@ jobs:
     outputs:
       deploy_backend: ${{ steps.filter.outputs.backend }}
       deploy_frontend: ${{ steps.filter.outputs.frontend }}
+      deploy_agents: ${{ steps.filter.outputs.agents }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,13 +30,17 @@ jobs:
           filters: |
             backend:
               - "backend/**"
-              - "agents/**"
               - "shared/**"
               - "supabase/**"
               - "docker-compose.yml"
               - ".github/workflows/deploy-railway-main.yml"
             frontend:
               - "frontend/**"
+              - "shared/**"
+              - "docker-compose.yml"
+              - ".github/workflows/deploy-railway-main.yml"
+            agents:
+              - "agents/**"
               - "shared/**"
               - "docker-compose.yml"
               - ".github/workflows/deploy-railway-main.yml"
@@ -97,3 +102,32 @@ jobs:
             --environment production \
             --service "${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }}" \
             --message "deploy frontend from main @ ${GITHUB_SHA}"
+
+  deploy-agents:
+    name: Deploy agents
+    needs: detect-changes
+    if: needs.detect-changes.outputs.deploy_agents == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli
+
+      - name: Deploy agents service
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          railway up agents \
+            --path-as-root \
+            --ci \
+            --project "${{ secrets.RAILWAY_PROJECT_ID }}" \
+            --environment production \
+            --service "${{ secrets.RAILWAY_AGENTS_SERVICE_ID }}" \
+            --message "deploy agents from main @ ${GITHUB_SHA}"
