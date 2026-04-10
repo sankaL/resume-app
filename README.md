@@ -1,5 +1,7 @@
 # Applix — AI-Powered Resume Builder
 
+**Owner:** SankaL
+
 [![License](https://img.shields.io/badge/license-Proprietary-red)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/sankal/job-app)
 [![Built with](https://img.shields.io/badge/built%20with-React%20%2B%20FastAPI-green)](https://github.com/sankal/job-app)
@@ -66,15 +68,17 @@ Applix is a private, AI-powered resume builder that helps job seekers create per
 ### Login Screen
 Beautiful, branded login experience with illustration-led design
 
-![Login Screen](/docs/design/sample-login.png)
+![Login Screen](/docs/design/01-login-page.png)
 
-### Application Dashboard
+### Applications Dashboard
 Track all your job applications with status badges, search, and analytics
 
-![Dashboard](/docs/design/business-man-illustration.png)
+![Applications Dashboard](/docs/design/02-applications-dashboard.png)
 
-### Resume Workspace
-Edit, preview, and regenerate your tailored resume in one place
+### Applications List
+Search, filter, and manage your job applications with inline status badges and action buttons
+
+![Applications List](/docs/design/03-applications-list.png)
 
 ---
 
