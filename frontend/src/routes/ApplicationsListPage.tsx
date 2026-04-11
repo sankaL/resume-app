@@ -366,7 +366,7 @@ export function ApplicationsListPage() {
     {
       key: "select",
       header: (
-        <div className="flex items-start pt-1.5">
+        <div className="flex items-start">
           <SelectionCheckbox
             checked={allVisibleSelected}
             indeterminate={someVisibleSelected}
@@ -378,7 +378,7 @@ export function ApplicationsListPage() {
       ),
       width: "56px",
       render: (app: ApplicationSummary) => (
-        <div className="flex items-start pt-1.5" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start" onClick={(event) => event.stopPropagation()}>
           <SelectionCheckbox
             checked={selectedSet.has(app.id)}
             ariaLabel={`Select ${app.job_title ?? app.company ?? "application"}`}
@@ -394,7 +394,7 @@ export function ApplicationsListPage() {
       sortable: true,
       sortValue: (app: ApplicationSummary) => STATUS_ORDER[app.visible_status] ?? 99,
       render: (app: ApplicationSummary) => (
-        <div className="flex items-start pt-0.5">
+        <div className="flex items-start">
           <StatusBadge status={app.visible_status} size="sm" layout="rail" />
         </div>
       ),
@@ -403,29 +403,30 @@ export function ApplicationsListPage() {
       key: "title",
       header: "Job Title",
       sortable: true,
+      width: "minmax(200px, 1fr)",
       sortValue: (app: ApplicationSummary) => app.job_title?.toLowerCase() ?? "",
       render: (app: ApplicationSummary) => (
-        <div className="flex min-w-0 flex-col gap-1 pt-0.5">
-          <div className="truncate text-sm font-medium" style={{ color: "var(--color-ink)" }}>
+        <div className="flex min-w-0 flex-col justify-center">
+          <div className="truncate whitespace-nowrap text-sm font-medium" style={{ color: "var(--color-ink)" }}>
             {app.job_title ?? "Awaiting extraction"}
           </div>
-          <div
-            className="min-h-[14px] truncate text-[10px] font-medium leading-[1.2]"
-            style={{
-              color:
-                app.has_action_required_notification && app.visible_status !== "needs_action"
-                  ? "var(--color-ember)"
-                  : app.has_unresolved_duplicate
-                    ? "var(--color-spruce)"
-                    : "var(--color-ink-25)",
-            }}
-          >
-            {app.has_action_required_notification && app.visible_status !== "needs_action"
-              ? "Action required"
-              : app.has_unresolved_duplicate
-                ? "Duplicate review pending"
-                : " "}
-          </div>
+          {(app.has_action_required_notification && app.visible_status !== "needs_action") || app.has_unresolved_duplicate ? (
+            <div
+              className="truncate text-[10px] font-medium leading-[1.2]"
+              style={{
+                color:
+                  app.has_action_required_notification && app.visible_status !== "needs_action"
+                    ? "var(--color-ember)"
+                    : app.has_unresolved_duplicate
+                      ? "var(--color-spruce)"
+                      : "var(--color-ink-25)",
+              }}
+            >
+              {app.has_action_required_notification && app.visible_status !== "needs_action"
+                ? "Action required"
+                : "Duplicate review pending"}
+            </div>
+          ) : null}
         </div>
       ),
     },
@@ -436,7 +437,7 @@ export function ApplicationsListPage() {
       sortable: true,
       sortValue: (app: ApplicationSummary) => app.company?.toLowerCase() ?? "zzz",
       render: (app: ApplicationSummary) => (
-        <span className="block truncate pt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>
+        <span className="block truncate text-sm" style={{ color: "var(--color-ink-65)" }}>
           {app.company ?? "—"}
         </span>
       ),
@@ -448,7 +449,7 @@ export function ApplicationsListPage() {
       sortable: true,
       sortValue: (app: ApplicationSummary) => app.base_resume_name?.toLowerCase() ?? "zzz",
       render: (app: ApplicationSummary) => (
-        <span className="block truncate pt-1 text-xs" style={{ color: "var(--color-ink-40)" }}>
+        <span className="block truncate text-xs" style={{ color: "var(--color-ink-40)" }}>
           {app.base_resume_name ?? "—"}
         </span>
       ),
@@ -460,7 +461,7 @@ export function ApplicationsListPage() {
       sortable: true,
       sortValue: (app: ApplicationSummary) => new Date(app.updated_at).getTime(),
       render: (app: ApplicationSummary) => (
-        <span className="block pt-1 text-xs tabular-nums" style={{ color: "var(--color-ink-40)" }}>
+        <span className="block text-xs tabular-nums" style={{ color: "var(--color-ink-40)" }}>
           {new Date(app.updated_at).toLocaleDateString()}
         </span>
       ),
@@ -470,7 +471,7 @@ export function ApplicationsListPage() {
       header: "",
       width: "196px",
       render: (app: ApplicationSummary) => (
-        <div className="flex items-start justify-end gap-2 pt-0.5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
           <AppliedToggleButton applied={app.applied} compact onClick={(e) => handleAppliedClick(app, e)} />
           {ACTIVE_EXTRACTION_STATES.has(app.internal_state) ? (
             <IconButton
@@ -611,7 +612,7 @@ export function ApplicationsListPage() {
           pageSize={25}
           density="compact"
           tableLayout="fixed"
-          verticalAlign="top"
+          verticalAlign="middle"
           onVisibleRowsChange={handleVisibleRowsChange}
           emptyState={
             <EmptyState

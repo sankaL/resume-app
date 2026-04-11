@@ -1884,6 +1884,61 @@ describe("phase 1 applications UI", () => {
     expect(api.fetchApplicationDetail).toHaveBeenCalledTimes(2);
   });
 
+  it("stops extraction polling and shows manual-entry fallback when terminal extraction progress cannot sync detail state", async () => {
+    vi.useFakeTimers();
+    api.fetchApplicationDetail
+      .mockResolvedValueOnce(
+        buildApplicationDetail({
+          id: "app-1",
+          visible_status: "draft",
+          internal_state: "extracting",
+          failure_reason: null,
+        }),
+      )
+      .mockResolvedValueOnce(
+        buildApplicationDetail({
+          id: "app-1",
+          visible_status: "draft",
+          internal_state: "extracting",
+          failure_reason: null,
+        }),
+      );
+    api.fetchApplicationProgress.mockResolvedValue({
+      job_id: "job-1",
+      workflow_kind: "extraction",
+      state: "manual_entry_required",
+      message: "Automatic extraction failed. Manual entry is required.",
+      percent_complete: 100,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:05:00Z",
+      completed_at: "2026-04-07T12:05:00Z",
+      terminal_error_code: "extraction_failed",
+    });
+
+    await act(async () => {
+      renderWithAppProvider(
+        <Routes>
+          <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+        </Routes>,
+        { initialEntries: ["/app/applications/app-1"] },
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1);
+    expect(api.fetchApplicationDetail).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("heading", { name: /manual entry required/i })).toBeInTheDocument();
+    expect(screen.getByText(/automatic extraction failed\. manual entry is required\./i)).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8000);
+    });
+
+    expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1);
+  });
+
   it("shows contact-administrator guidance when full regeneration is capped", async () => {
     const user = userEvent.setup();
     api.fetchApplicationDetail.mockResolvedValue(

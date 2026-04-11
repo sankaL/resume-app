@@ -19,16 +19,19 @@
 - [supabase/kong/kong-entrypoint.sh](file://supabase/kong/kong-entrypoint.sh)
 - [shared/workflow-contract.json](file://shared/workflow-contract.json)
 - [backend/app/core/config.py](file://backend/app/core/config.py)
+- [backend/app/core/workflow-contract.json](file://backend/app/core/workflow-contract.json)
 - [frontend/vite.config.ts](file://frontend/vite.config.ts)
 - [frontend/src/lib/env.ts](file://frontend/src/lib/env.ts)
+- [agents/worker.py](file://agents/worker.py)
 - [.env.compose.example](file://.env.compose.example)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Enhanced Railway runtime routing documentation with backend port binding to $PORT
+- Enhanced deployment troubleshooting documentation with systematic guidance for production session bootstrap failures, Redis connectivity issues, and workflow contract path resolution problems
+- Added comprehensive troubleshooting procedures for common deployment challenges
+- Updated Railway runtime routing documentation with backend port binding to $PORT
 - Added frontend custom domain host checks for applix.ca
-- Updated environment variable configuration documentation
 - Revised deployment pipeline documentation to reflect enhanced routing fixes
 
 ## Table of Contents
@@ -48,7 +51,7 @@
 ## Introduction
 This document describes the Build Plan for the AI Resume Builder project. It consolidates the roadmap, implementation status, and operational build practices across the frontend, backend, agents (workers), and local development stack. It also documents the containerized local environment, deployment automation, and configuration contracts that ensure reproducible builds and reliable CI/CD on Railway.
 
-**Updated** Enhanced with improved Railway runtime routing fixes, including backend port binding to $PORT and frontend custom domain host checks for applix.ca.
+**Updated** Enhanced with improved Railway runtime routing fixes, including backend port binding to $PORT and frontend custom domain host checks for applix.ca. Added comprehensive deployment troubleshooting documentation covering production session bootstrap failures, Redis connectivity issues, and workflow contract path resolution problems.
 
 ## Project Structure
 The project is organized into layered services:
@@ -99,7 +102,7 @@ R_AG --> R_KV
 - [.github/workflows/deploy-railway-main.yml:1-134](file://.github/workflows/deploy-railway-main.yml#L1-L134)
 
 **Section sources**
-- [docs/build-plan.md:1-502](file://docs/build-plan.md#L1-L502)
+- [docs/build-plan.md:1-505](file://docs/build-plan.md#L1-L505)
 - [docker-compose.yml:1-194](file://docker-compose.yml#L1-L194)
 
 ## Core Components
@@ -350,10 +353,21 @@ The frontend includes enhanced host validation for custom domains:
 
 **Updated** Added custom domain host checks for applix.ca to support production deployments.
 
+### Workflow Contract Path Resolution
+The backend now includes enhanced workflow contract path resolution for production environments:
+
+- **Container Packaging**: Workflow contract is bundled within backend/app/core for containerized deployments
+- **Fallback Mechanism**: Maintains repo-root fallback for local development workflows
+- **Path Resolution Logic**: Automatically detects and uses the packaged path by default, falling back to shared path when unavailable
+
+**Updated** Added systematic guidance for fixing workflow contract path resolution problems in production deployments.
+
 **Section sources**
 - [backend/app/core/config.py:39-40](file://backend/app/core/config.py#L39-L40)
+- [backend/app/core/config.py:69-71](file://backend/app/core/config.py#L69-L71)
 - [frontend/vite.config.ts:13-21](file://frontend/vite.config.ts#L13-L21)
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
+- [agents/worker.py:324-329](file://agents/worker.py#L324-L329)
 
 ## Deployment Pipeline
 
@@ -419,26 +433,117 @@ REST --> DB
 - Enhanced port binding reduces connection overhead in dynamic environments
 
 ## Troubleshooting Guide
-Common issues and remedies:
-- Empty JWKS during JWT verification: backend now treats empty JWKS like key-fetch failures and falls back to configured shared secret
-- Local Supabase health: use healthcheck script to verify auth, backend, and frontend endpoints
-- Migrations not applied: migration runner creates schema_meta and tracks applied migrations; ensure DB readiness loop completes
-- Local user creation: seed script requires Supabase health and service role key; handles existence and admin promotion
-- Railway connectivity: agents require REDIS_URL wired in production; ensure service-to-service env vars are set
-- **Railway Port Issues**: Backend now automatically uses $PORT when available, falling back to 8000 for local development
-- **Custom Domain Access**: Frontend validates hosts against allowed list including applix.ca for production deployments
 
-**Updated** Added troubleshooting guidance for Railway port binding and custom domain validation issues.
+### Production Session Bootstrap Failures
+**Problem**: `/api/session/bootstrap` endpoint returns 500 errors due to missing workflow contract file
+**Root Cause**: Workflow contract path resolution fails in containerized backend deployments
+**Solution**: 
+1. Verify backend container includes `backend/app/core/workflow-contract.json`
+2. Check `SHARED_CONTRACT_PATH` environment variable is set to `/app/app/core/workflow-contract.json`
+3. Confirm fallback mechanism works for local development paths
+4. Restart backend service after verifying file placement
+
+**Prevention**: 
+- Include workflow contract in backend Dockerfile build process
+- Test path resolution in staging environment before production deployment
 
 **Section sources**
-- [docs/build-plan.md:43-43](file://docs/build-plan.md#L43-L43)
-- [scripts/healthcheck.sh:21-35](file://scripts/healthcheck.sh#L21-L35)
-- [scripts/run_migrations.sh:13-39](file://scripts/run_migrations.sh#L13-L39)
-- [scripts/seed_local_user.sh:31-97](file://scripts/seed_local_user.sh#L31-L97)
-- [docs/build-plan.md:151-151](file://docs/build-plan.md#L151-L151)
+- [docs/build-plan.md:151](file://docs/build-plan.md#L151)
+- [backend/app/core/config.py:69-71](file://backend/app/core/config.py#L69-L71)
+- [backend/app/core/workflow-contract.json:1-122](file://backend/app/core/workflow-contract.json#L1-122)
+
+### Redis Connectivity Issues
+**Problem**: Agents cannot connect to Redis in production, causing extraction failures
+**Root Cause**: Service-to-service Redis URL not configured for Railway environment
+**Solution**:
+1. Set `REDIS_URL=redis://redis.railway.internal:6379/0` in both backend and agents services
+2. Verify Redis service is running in Railway environment
+3. Check network connectivity between backend and Redis services
+4. Monitor ARQ worker logs for connection errors
+
+**Prevention**:
+- Configure Redis URL in environment variables for all production services
+- Test Redis connectivity during deployment verification
+- Implement health checks for Redis connectivity
+
+**Section sources**
+- [docs/build-plan.md:154](file://docs/build-plan.md#L154)
+- [agents/worker.py:357-358](file://agents/worker.py#L357-L358)
+
+### Workflow Contract Path Resolution Problems
+**Problem**: Backend fails to locate workflow-contract.json in containerized environment
+**Root Cause**: Incorrect file path resolution between containerized and local development
+**Solution**:
+1. Verify workflow contract is included in backend container build
+2. Check `load_workflow_contract()` function path resolution logic
+3. Confirm packaged path takes precedence over shared path fallback
+4. Validate file permissions in container filesystem
+
+**Prevention**:
+- Include workflow contract in backend Dockerfile COPY instructions
+- Test path resolution in multiple environments (development, staging, production)
+- Add logging for path resolution failures
+
+**Section sources**
+- [docs/build-plan.md:151](file://docs/build-plan.md#L151)
+- [agents/worker.py:324-329](file://agents/worker.py#L324-L329)
+
+### Railway Runtime Routing Issues
+**Problem**: Backend not accessible on Railway due to incorrect port binding
+**Root Cause**: Backend not binding to Railway's assigned $PORT environment variable
+**Solution**:
+1. Update backend Docker CMD to bind to `$PORT` environment variable
+2. Set fallback to port 8000 for local development
+3. Verify Railway service configuration includes port mapping
+4. Test connectivity using curl or browser access
+
+**Prevention**:
+- Implement dynamic port binding in backend configuration
+- Test deployment pipeline with different port scenarios
+- Add health check endpoints for monitoring
+
+**Section sources**
+- [docs/build-plan.md:153](file://docs/build-plan.md#L153)
+- [backend/app/core/config.py:39-40](file://backend/app/core/config.py#L39-L40)
+
+### Custom Domain Access Issues
+**Problem**: Frontend blocked from accessing application on custom domain (applix.ca)
+**Root Cause**: Vite allowedHosts configuration not including custom domain
+**Solution**:
+1. Add `"applix.ca"` to Vite `server.allowedHosts` and `preview.allowedHosts`
+2. Verify domain is properly configured in DNS settings
+3. Check SSL certificate configuration for custom domain
+4. Test access from different networks and devices
+
+**Prevention**:
+- Include custom domain in development configuration
+- Test domain access during deployment verification
+- Monitor domain accessibility in production
+
+**Section sources**
+- [docs/build-plan.md:153](file://docs/build-plan.md#L153)
+- [frontend/vite.config.ts:14-20](file://frontend/vite.config.ts#L14-L20)
+
+### Systematic Deployment Troubleshooting Procedures
+**Production Deployment Checklist**:
+1. Verify all environment variables are correctly set in Railway
+2. Test Redis connectivity using `redis-cli` from backend container
+3. Check workflow contract file availability in backend container
+4. Validate port binding using `netstat` or `ss` commands
+5. Monitor service logs for error patterns
+6. Test critical endpoints: `/api/session/bootstrap`, `/health`, `/api/applications`
+
+**Common Error Patterns**:
+- **File Not Found Errors**: Typically indicate missing workflow contract or incorrect path resolution
+- **Connection Refused**: Usually indicates Redis connectivity issues or wrong service URLs
+- **Port Binding Errors**: Suggest backend not using $PORT environment variable
+- **Host Validation Errors**: Indicate frontend allowedHosts configuration issues
+
+**Section sources**
+- [docs/build-plan.md:151-154](file://docs/build-plan.md#L151-L154)
 
 ## Conclusion
-The Build Plan establishes a robust, reproducible local development environment and a streamlined CI/CD pipeline for production. The shared workflow contract and containerized stack ensure consistent behavior across frontend, backend, and agents. The path-filtered Railway deployments minimize disruption while enabling rapid iteration across services. Recent enhancements include improved Railway runtime routing with dynamic port binding and enhanced frontend custom domain validation for production deployments.
+The Build Plan establishes a robust, reproducible local development environment and a streamlined CI/CD pipeline for production. The shared workflow contract and containerized stack ensure consistent behavior across frontend, backend, and agents. The path-filtered Railway deployments minimize disruption while enabling rapid iteration across services. Recent enhancements include improved Railway runtime routing with dynamic port binding, enhanced frontend custom domain validation for production deployments, and comprehensive deployment troubleshooting documentation covering production session bootstrap failures, Redis connectivity issues, and workflow contract path resolution problems.
 
 ## Appendices
 
@@ -458,12 +563,16 @@ The Build Plan establishes a robust, reproducible local development environment 
 - FRONTEND_PORT, BACKEND_HOST_PORT, SUPABASE_DB_HOST_PORT, SUPABASE_GATEWAY_PORT
 - POSTGRES_PASSWORD, OPENROUTER_API_KEY, OPENROUTER_BASE_URL, EXTRACTION_AGENT_MODEL, GENERATION_AGENT_MODEL, VALIDATION_AGENT_MODEL
 - **$PORT**: Railway's dynamic port assignment (automatically detected by backend)
+- **REDIS_URL**: Service-to-service Redis connection string for production deployments
+- **SHARED_CONTRACT_PATH**: Backend workflow contract file path in containerized environments
 
-**Updated** Added $PORT environment variable for Railway runtime compatibility.
+**Updated** Added $PORT, REDIS_URL, and SHARED_CONTRACT_PATH environment variables for Railway runtime compatibility.
 
 **Section sources**
 - [docker-compose.yml:26-77](file://docker-compose.yml#L26-L77)
 - [backend/app/core/config.py:40](file://backend/app/core/config.py#L40)
+- [backend/app/core/config.py:46](file://backend/app/core/config.py#L46)
+- [backend/app/core/config.py:69-71](file://backend/app/core/config.py#L69-L71)
 - [.env.compose.example:1-50](file://.env.compose.example#L1-L50)
 
 ### Custom Domain Configuration
@@ -476,3 +585,16 @@ The Build Plan establishes a robust, reproducible local development environment 
 **Section sources**
 - [frontend/vite.config.ts:13-21](file://frontend/vite.config.ts#L13-L21)
 - [backend/app/core/config.py:39-40](file://backend/app/core/config.py#L39-L40)
+
+### Deployment Verification Checklist
+- [ ] Backend service responds to health checks on $PORT
+- [ ] Redis connectivity verified from backend container
+- [ ] Workflow contract file accessible in backend container
+- [ ] Frontend loads successfully on custom domain
+- [ ] ARQ worker connects to Redis successfully
+- [ ] Session bootstrap endpoint returns 200 status
+- [ ] Database migrations applied successfully
+- [ ] Supabase authentication working correctly
+
+**Section sources**
+- [docs/build-plan.md:151-154](file://docs/build-plan.md#L151-L154)

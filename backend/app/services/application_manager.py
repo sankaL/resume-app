@@ -60,6 +60,9 @@ ACTIVE_DELETE_BLOCKING_STATES = {
     "regenerating_full",
     "regenerating_section",
 }
+EXTRACTION_CALLBACK_SYNC_FAILURE_MESSAGE = (
+    "Extraction finished, but results could not be synchronized. Retry extraction or complete manual entry."
+)
 BLOCKED_PLACEHOLDER_TITLE_PREFIXES = ("blocked - ",)
 BLOCKED_PLACEHOLDER_TITLE_VALUES = {"you have been blocked", "access denied", "attention required"}
 BLOCKED_PLACEHOLDER_DESCRIPTION_MARKERS = (
@@ -718,6 +721,133 @@ class ApplicationService:
             logger.exception("Failed reconciling terminal generation notifications for %s", record.id)
         return updated
 
+    async def _reconcile_terminal_extraction_progress(
+        self,
+        record: ApplicationRecord,
+        progress: Optional[ProgressRecord],
+    ) -> ApplicationRecord:
+        if progress is None or progress.workflow_kind != "extraction":
+            return record
+
+        is_terminal_failure = progress.terminal_error_code is not None
+        is_terminal_success = (
+            progress.state == "generation_pending"
+            and progress.terminal_error_code is None
+            and progress.completed_at is not None
+        )
+        if not is_terminal_failure and not is_terminal_success:
+            return record
+
+        if is_terminal_success:
+            if record.internal_state == "generation_pending" and record.failure_reason is None:
+                return record
+
+            failure_details = record.extraction_failure_details
+            if not isinstance(failure_details, dict):
+                failure_details = None
+            if failure_details is None:
+                failure_details = {
+                    "kind": "callback_delivery_failed",
+                    "provider": None,
+                    "reference_id": None,
+                    "blocked_url": record.job_url,
+                    "detected_at": datetime.now(timezone.utc).isoformat(),
+                }
+
+            if (
+                record.internal_state == "manual_entry_required"
+                and record.failure_reason == "extraction_failed"
+                and record.extraction_failure_details == failure_details
+            ):
+                return record
+
+            updated = self.repository.update_application(
+                application_id=record.id,
+                user_id=record.user_id,
+                updates=self._workflow_updates(
+                    internal_state="manual_entry_required",
+                    failure_reason="extraction_failed",
+                    extraction_failure_details=failure_details,
+                ),
+            )
+            await self._set_terminal_extraction_progress(
+                record=updated,
+                previous_progress=progress,
+                message=EXTRACTION_CALLBACK_SYNC_FAILURE_MESSAGE,
+                terminal_error_code="extraction_failed",
+            )
+            try:
+                self.notification_repository.clear_action_required(
+                    user_id=record.user_id,
+                    application_id=record.id,
+                )
+                self.notification_repository.create_notification(
+                    user_id=record.user_id,
+                    application_id=record.id,
+                    notification_type="error",
+                    message=EXTRACTION_CALLBACK_SYNC_FAILURE_MESSAGE,
+                    action_required=True,
+                )
+            except Exception:
+                logger.exception("Failed reconciling extraction sync failure notifications for %s", record.id)
+            self._record_usage_event(
+                user_id=record.user_id,
+                application_id=record.id,
+                event_type="extraction",
+                event_status="failure",
+            )
+            return updated
+
+        failure_details = record.extraction_failure_details
+        if not isinstance(failure_details, dict):
+            failure_details = None
+        if failure_details is None and progress.terminal_error_code == "blocked_source":
+            failure_details = {
+                "kind": "blocked_source",
+                "provider": record.job_posting_origin,
+                "reference_id": None,
+                "blocked_url": record.job_url,
+                "detected_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        if (
+            record.internal_state == "manual_entry_required"
+            and record.failure_reason == "extraction_failed"
+            and record.extraction_failure_details == failure_details
+        ):
+            return record
+
+        updated = self.repository.update_application(
+            application_id=record.id,
+            user_id=record.user_id,
+            updates=self._workflow_updates(
+                internal_state="manual_entry_required",
+                failure_reason="extraction_failed",
+                extraction_failure_details=failure_details,
+            ),
+        )
+        try:
+            self.notification_repository.clear_action_required(
+                user_id=record.user_id,
+                application_id=record.id,
+            )
+            self.notification_repository.create_notification(
+                user_id=record.user_id,
+                application_id=record.id,
+                notification_type="error",
+                message=progress.message,
+                action_required=True,
+            )
+        except Exception:
+            logger.exception("Failed reconciling terminal extraction notifications for %s", record.id)
+        self._record_usage_event(
+            user_id=record.user_id,
+            application_id=record.id,
+            event_type="extraction",
+            event_status="failure",
+        )
+        return updated
+
     def _terminal_failure_reason(
         self,
         *,
@@ -739,6 +869,8 @@ class ApplicationService:
     async def get_progress(self, *, user_id: str, application_id: str) -> ProgressRecord:
         record = self._require_application(user_id=user_id, application_id=application_id)
         record = await self._recover_stuck_generation_if_needed(record)
+        progress = await self.progress_store.get(application_id)
+        record = await self._reconcile_terminal_extraction_progress(record, progress)
         progress = await self.progress_store.get(application_id)
         if progress is not None:
             if (

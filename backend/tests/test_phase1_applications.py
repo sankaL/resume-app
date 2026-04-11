@@ -1971,6 +1971,83 @@ async def test_get_progress_reconciles_terminal_generation_progress_without_time
 
 
 @pytest.mark.asyncio
+async def test_get_progress_reconciles_terminal_extraction_failure_progress():
+    service, repository, notifications, progress_store, _, _, _ = build_service()
+    now = datetime.now(timezone.utc)
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://www.indeed.com/viewjob?jk=abc123",
+        visible_status="draft",
+        internal_state="extracting",
+    )
+    repository.records[created.id] = created.model_copy(update={"updated_at": (now - timedelta(seconds=60)).isoformat()})
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-7",
+            workflow_kind="extraction",
+            state="manual_entry_required",
+            message="This source blocked automated retrieval. Paste the job text or complete manual entry.",
+            percent_complete=100,
+            created_at=(now - timedelta(seconds=90)).isoformat(),
+            updated_at=(now - timedelta(seconds=45)).isoformat(),
+            completed_at=(now - timedelta(seconds=45)).isoformat(),
+            terminal_error_code="blocked_source",
+        ),
+    )
+
+    progress = await service.get_progress(user_id="user-1", application_id=created.id)
+
+    assert progress.terminal_error_code == "blocked_source"
+    updated = repository.fetch_application("user-1", created.id)
+    assert updated is not None
+    assert updated.internal_state == "manual_entry_required"
+    assert updated.failure_reason == "extraction_failed"
+    assert updated.extraction_failure_details is not None
+    assert updated.extraction_failure_details["kind"] == "blocked_source"
+    assert notifications.notifications[-1]["message"].startswith("This source blocked automated retrieval")
+
+
+@pytest.mark.asyncio
+async def test_get_progress_fails_closed_when_extraction_success_progress_has_no_callback_sync():
+    service, repository, notifications, progress_store, _, _, _ = build_service()
+    now = datetime.now(timezone.utc)
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/7",
+        visible_status="draft",
+        internal_state="extracting",
+    )
+    repository.records[created.id] = created.model_copy(update={"updated_at": (now - timedelta(seconds=30)).isoformat()})
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-8",
+            workflow_kind="extraction",
+            state="generation_pending",
+            message="Extraction completed.",
+            percent_complete=100,
+            created_at=(now - timedelta(seconds=90)).isoformat(),
+            updated_at=(now - timedelta(seconds=20)).isoformat(),
+            completed_at=(now - timedelta(seconds=20)).isoformat(),
+            terminal_error_code=None,
+        ),
+    )
+
+    progress = await service.get_progress(user_id="user-1", application_id=created.id)
+
+    assert progress.state == "manual_entry_required"
+    assert progress.terminal_error_code == "extraction_failed"
+    updated = repository.fetch_application("user-1", created.id)
+    assert updated is not None
+    assert updated.internal_state == "manual_entry_required"
+    assert updated.failure_reason == "extraction_failed"
+    assert updated.extraction_failure_details is not None
+    assert updated.extraction_failure_details["kind"] == "callback_delivery_failed"
+    assert "could not be synchronized" in notifications.notifications[-1]["message"].lower()
+
+
+@pytest.mark.asyncio
 async def test_get_progress_prefers_terminal_application_state_over_stale_active_progress():
     service, repository, _, progress_store, _, _, _ = build_service()
     created = repository.create_application(

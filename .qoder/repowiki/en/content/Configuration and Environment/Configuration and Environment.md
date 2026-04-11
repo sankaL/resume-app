@@ -23,14 +23,16 @@
 - [agents/Dockerfile](file://agents/Dockerfile)
 - [agents/pyproject.toml](file://agents/pyproject.toml)
 - [backend/pyproject.toml](file://backend/pyproject.toml)
+- [.github/workflows/deploy-railway-main.yml](file://.github/workflows/deploy-railway-main.yml)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Updated Vite configuration documentation to reflect the expanded allowed hosts list with `applix.ca` domain support for custom domain access
-- Added documentation for Railway deployment configuration and custom domain support
-- Enhanced frontend development server configuration to support custom domain access
-- Updated deployment strategy documentation to include selective Railway deployments
+- Updated backend configuration to document enhanced Railway hosting compatibility with dynamic $PORT environment variable handling
+- Added documentation for new admin_email_list and cors_origin_list properties in backend settings
+- Enhanced Railway deployment configuration documentation with selective service deployments
+- Updated Vite configuration documentation to reflect expanded allowed hosts list with custom domain support
+- Added comprehensive Uvicorn server binding configuration documentation for production environments
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -117,7 +119,7 @@ RAILWAY --> FE_Vite
 - [frontend/public/chrome-extension/popup.js:109-135](file://frontend/public/chrome-extension/popup.js#L109-L135)
 - [frontend/vite.config.ts:13-21](file://frontend/vite.config.ts#L13-L21)
 - [backend/app/main.py:14-22](file://backend/app/main.py#L14-L22)
-- [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
+- [backend/app/core/config.py:35-108](file://backend/app/core/config.py#L35-L108)
 - [backend/app/core/auth.py:22-69](file://backend/app/core/auth.py#L22-L69)
 - [backend/app/core/security.py:13-54](file://backend/app/core/security.py#L13-L54)
 - [backend/app/core/access.py:20-30](file://backend/app/core/access.py#L20-L30)
@@ -132,7 +134,7 @@ RAILWAY --> FE_Vite
 
 **Section sources**
 - [docker-compose.yml:1-194](file://docker-compose.yml#L1-L194)
-- [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
+- [backend/app/core/config.py:35-108](file://backend/app/core/config.py#L35-L108)
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
 - [frontend/vite.config.ts:13-21](file://frontend/vite.config.ts#L13-L21)
 
@@ -145,6 +147,7 @@ This section documents environment configuration management, validation, and sec
   - CORS origins are parsed into a list for middleware configuration.
   - Settings are cached via a factory function for reuse.
   - **Updated**: New admin_email_list property parses comma-separated admin email addresses for access control.
+  - **Updated**: New cors_origin_list property converts comma-separated CORS origins to lowercase list for middleware configuration.
 
 - Frontend Environment Validation
   - Zod schema enforces presence and shape of environment variables for app environment, dev mode, Supabase URL, Supabase anonymous key, and API URL.
@@ -166,7 +169,7 @@ This section documents environment configuration management, validation, and sec
   - Supabase JWT verification supports JWK-based verification and falls back to a shared secret when configured.
 
 **Section sources**
-- [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
+- [backend/app/core/config.py:35-108](file://backend/app/core/config.py#L35-L108)
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
 - [frontend/vite.config.ts:13-21](file://frontend/vite.config.ts#L13-L21)
 - [agents/worker.py:54-71](file://agents/worker.py#L54-L71)
@@ -207,6 +210,7 @@ Note over FE,BE : "CORS and middleware configured in backend"
   - Validates email settings when notifications are enabled.
   - Parses CORS origins into a list for middleware.
   - **Updated**: New admin_email_list property converts comma-separated admin emails to lowercase list for access control.
+  - **Updated**: New cors_origin_list property converts comma-separated CORS origins to lowercase list for middleware configuration.
 
 - CORS Middleware
   - Configured with allow_origins from settings, regex support for chrome-extension, credentials, and wildcard methods/headers.
@@ -265,13 +269,13 @@ Settings <.. AccessControl : "provides admin_email_list"
 ```
 
 **Diagram sources**
-- [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
+- [backend/app/core/config.py:35-108](file://backend/app/core/config.py#L35-L108)
 - [backend/app/core/auth.py:22-69](file://backend/app/core/auth.py#L22-L69)
 - [backend/app/core/access.py:20-30](file://backend/app/core/access.py#L20-L30)
 - [backend/app/core/security.py:25-54](file://backend/app/core/security.py#L25-L54)
 
 **Section sources**
-- [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
+- [backend/app/core/config.py:35-108](file://backend/app/core/config.py#L35-L108)
 - [backend/app/main.py:14-22](file://backend/app/main.py#L14-L22)
 - [backend/app/core/auth.py:22-69](file://backend/app/core/auth.py#L22-L69)
 - [backend/app/core/security.py:13-54](file://backend/app/core/security.py#L13-L54)
@@ -382,16 +386,18 @@ D --> F["Backend verifies secret and processes event"]
 - [agents/worker.py:290-305](file://agents/worker.py#L290-L305)
 
 ### Railway Deployment and Custom Domain Support
-- **Updated**: Expanded allowed hosts configuration to support custom domain access
-- Development server now allows connections from both Railway-generated domains (`.up.railway.app`) and custom Applix domain (`applix.ca`)
+- **Updated**: Enhanced Railway hosting compatibility with dynamic $PORT environment variable handling
+- Backend Docker configuration now uses `--port ${PORT:-8000}` allowing dynamic port assignment from Railway's environment
+- Development server allows connections from both Railway-generated domains (`.up.railway.app`) and custom Applix domain (`applix.ca`)
 - Preview server mirrors development configuration for production builds
 - Path-filtered GitHub Actions workflow enables selective deployments to Railway services
-- Backend Docker configuration binds to `$PORT` for Railway edge routing
+- Backend settings now include optimized admin_email_list and cors_origin_list properties for production environments
 
 **Section sources**
 - [frontend/vite.config.ts:13-21](file://frontend/vite.config.ts#L13-L21)
 - [.github/workflows/deploy-railway-main.yml:1-133](file://.github/workflows/deploy-railway-main.yml#L1-L133)
-- [docs/build-plan.md:147-174](file://docs/build-plan.md#L147-L174)
+- [backend/Dockerfile:17](file://backend/Dockerfile#L17)
+- [backend/app/core/config.py:96-102](file://backend/app/core/config.py#L96-L102)
 
 ### Local Development Administration
 - **New**: Local development user administration enables automatic admin promotion during development setup.
@@ -426,14 +432,14 @@ RAILWAY --> BE
 
 **Diagram sources**
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
-- [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
+- [backend/app/core/config.py:35-108](file://backend/app/core/config.py#L35-L108)
 - [agents/worker.py:54-71](file://agents/worker.py#L54-L71)
 - [scripts/seed_local_user.sh:15-27](file://scripts/seed_local_user.sh#L15-L27)
 - [.github/workflows/deploy-railway-main.yml:62-104](file://.github/workflows/deploy-railway-main.yml#L62-L104)
 
 **Section sources**
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
-- [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
+- [backend/app/core/config.py:35-108](file://backend/app/core/config.py#L35-L108)
 - [agents/worker.py:54-71](file://agents/worker.py#L54-L71)
 - [scripts/seed_local_user.sh:15-27](file://scripts/seed_local_user.sh#L15-L27)
 - [.github/workflows/deploy-railway-main.yml:62-104](file://.github/workflows/deploy-railway-main.yml#L62-L104)
@@ -449,6 +455,7 @@ RAILWAY --> BE
   - Short timeouts and explicit error handling prevent long-running tasks from blocking the pipeline.
 - **Updated**: Admin email list processing is optimized through cached property to avoid repeated string parsing.
 - **Updated**: Vite allowed hosts configuration prevents development server host-check blocking for custom domains and Railway-generated domains.
+- **Updated**: Dynamic port handling in backend Dockerfile ensures optimal performance in production environments with Railway's edge routing.
 
 ## Troubleshooting Guide
 Common configuration issues and resolutions:
@@ -489,10 +496,15 @@ Common configuration issues and resolutions:
 - **New**: Railway deployment issues
   - Verify GitHub Actions workflow has proper secrets configured (RAILWAY_TOKEN, RAILWAY_PROJECT_ID, service IDs).
   - Check that path filters correctly identify changed services for selective deployments.
+  - **New**: Ensure PORT environment variable is properly set in Railway deployment configuration for dynamic port binding.
+
+- **New**: Backend server binding issues
+  - Verify that the backend Dockerfile uses `--port ${PORT:-8000}` for proper Railway integration.
+  - Check that API_PORT environment variable is set correctly in development environments.
 
 **Section sources**
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
-- [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
+- [backend/app/core/config.py:35-108](file://backend/app/core/config.py#L35-L108)
 - [backend/app/core/auth.py:22-69](file://backend/app/core/auth.py#L22-L69)
 - [backend/app/core/security.py:13-54](file://backend/app/core/security.py#L13-L54)
 - [agents/worker.py:290-305](file://agents/worker.py#L290-L305)
@@ -501,9 +513,10 @@ Common configuration issues and resolutions:
 - [scripts/seed_local_user.sh:64-96](file://scripts/seed_local_user.sh#L64-L96)
 - [frontend/vite.config.ts:13-21](file://frontend/vite.config.ts#L13-L21)
 - [.github/workflows/deploy-railway-main.yml:62-104](file://.github/workflows/deploy-railway-main.yml#L62-L104)
+- [backend/Dockerfile:17](file://backend/Dockerfile#L17)
 
 ## Conclusion
-This document outlined the configuration and environment setup across the frontend, backend, and agents. By validating environment variables early, securing worker callbacks, enforcing CORS policies, and integrating Supabase authentication, the system achieves robust operation across development and production environments. The addition of admin email management, invite expiration controls, local development administration, and custom domain support enhances the system's operational capabilities while maintaining security and reliability.
+This document outlined the configuration and environment setup across the frontend, backend, and agents. By validating environment variables early, securing worker callbacks, enforcing CORS policies, and integrating Supabase authentication, the system achieves robust operation across development and production environments. The addition of admin email management, invite expiration controls, local development administration, custom domain support, and enhanced Railway hosting compatibility improves the system's operational capabilities while maintaining security and reliability.
 
 ## Appendices
 
@@ -570,9 +583,14 @@ This document outlined the configuration and environment setup across the fronte
   - RAILWAY_FRONTEND_SERVICE_ID: string, required for frontend service targeting
   - RAILWAY_AGENTS_SERVICE_ID: string, required for agents service targeting
 
+- **New**: Production Environment Variables
+  - PORT: int, default 8000 (Railway's dynamic port assignment)
+  - API_PORT: int, default 8000 (development fallback)
+
 **Section sources**
 - [frontend/src/lib/env.ts:1-15](file://frontend/src/lib/env.ts#L1-L15)
-- [backend/app/core/config.py:35-96](file://backend/app/core/config.py#L35-L96)
+- [backend/app/core/config.py:35-108](file://backend/app/core/config.py#L35-L108)
 - [agents/worker.py:54-71](file://agents/worker.py#L54-L71)
 - [scripts/seed_local_user.sh:15-27](file://scripts/seed_local_user.sh#L15-L27)
 - [.github/workflows/deploy-railway-main.yml:62-104](file://.github/workflows/deploy-railway-main.yml#L62-L104)
+- [backend/Dockerfile:17](file://backend/Dockerfile#L17)

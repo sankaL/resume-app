@@ -64,6 +64,8 @@ const ACTIVE_GENERATION_PROGRESS_STATES = [
   "regenerating_full",
   "regenerating_section",
 ];
+const EXTRACTION_DETAIL_REFRESH_FALLBACK_MESSAGE =
+  "Extraction finished, but results could not be synchronized. Retry extraction or complete manual entry.";
 
 function isGenerationWorkflowActive(detail: ApplicationDetail | null) {
   return Boolean(detail && !detail.failure_reason && ACTIVE_GENERATION_STATES.includes(detail.internal_state));
@@ -119,6 +121,46 @@ function applyTerminalGenerationProgress(
         }
       : null,
     has_action_required_notification: failureReason ? true : current.has_action_required_notification,
+  };
+}
+
+function inferExtractionFailureDetails(
+  current: ApplicationDetail,
+  progress: ExtractionProgress,
+): ApplicationDetail["extraction_failure_details"] {
+  if (current.extraction_failure_details) return current.extraction_failure_details;
+
+  const isBlockedSource = progress.terminal_error_code === "blocked_source";
+  return {
+    kind: isBlockedSource ? "blocked_source" : "callback_delivery_failed",
+    provider: isBlockedSource ? current.job_posting_origin : null,
+    reference_id: null,
+    blocked_url: current.job_url,
+    detected_at: progress.updated_at,
+  };
+}
+
+function extractionFallbackMessage(progress: ExtractionProgress): string {
+  if (progress.terminal_error_code === null && progress.state === "generation_pending") {
+    return EXTRACTION_DETAIL_REFRESH_FALLBACK_MESSAGE;
+  }
+  return progress.message || EXTRACTION_DETAIL_REFRESH_FALLBACK_MESSAGE;
+}
+
+function applyTerminalExtractionProgress(
+  current: ApplicationDetail,
+  progress: ExtractionProgress,
+): ApplicationDetail {
+  const failureReason = "extraction_failed";
+  const internalState = "manual_entry_required";
+
+  return {
+    ...current,
+    internal_state: internalState,
+    visible_status: deriveVisibleStatus(current.visible_status, internalState, failureReason),
+    failure_reason: failureReason,
+    extraction_failure_details: inferExtractionFailureDetails(current, progress),
+    has_action_required_notification: true,
   };
 }
 
@@ -260,6 +302,11 @@ export function ApplicationDetailPage() {
     setShowOptimisticProgress(false);
   }
 
+  function applyTerminalExtractionFallback(nextProgress: ExtractionProgress) {
+    setDetail((current) => (current ? applyTerminalExtractionProgress(current, nextProgress) : current));
+    setIsCancellingExtraction(false);
+  }
+
   function applyDraftState(response: ResumeDraft | null) {
     setDraft(response);
     if (!response) return;
@@ -308,8 +355,25 @@ export function ApplicationDetailPage() {
         setProgress(nextProgress);
         if (!EXTRACTION_POLL_STATES.includes(nextProgress.state) || nextProgress.completed_at || nextProgress.terminal_error_code) {
           if (isCancelled) return;
-          const response = await fetchApplicationDetail(applicationId);
-          if (!isCancelled) applyDetailState(response, { refreshShell: true });
+          try {
+            const response = await fetchApplicationDetail(applicationId);
+            if (isCancelled) return;
+            applyDetailState(response, { refreshShell: true });
+            if (EXTRACTION_POLL_STATES.includes(response.internal_state) && response.failure_reason === null) {
+              applyTerminalExtractionFallback(nextProgress);
+              setError(extractionFallbackMessage(nextProgress));
+            } else {
+              setError(null);
+            }
+          } catch (requestError) {
+            if (isCancelled) return;
+            applyTerminalExtractionFallback(nextProgress);
+            setError(
+              requestError instanceof Error
+                ? requestError.message
+                : extractionFallbackMessage(nextProgress),
+            );
+          }
         }
       } catch { /* retry on next interval */ }
     };
