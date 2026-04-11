@@ -212,6 +212,20 @@ async def test_set_progress_ignores_stale_job_id():
             del ttl_seconds
             self.saved.append(progress)
 
+        async def clear_extracted_result(self, _application_id: str) -> None:
+            return None
+
+        async def set_extracted_result(
+            self,
+            _application_id: str,
+            *,
+            job_id: str,
+            extracted: dict[str, object],
+            ttl_seconds: int = 86400,
+        ) -> None:
+            del job_id, extracted, ttl_seconds
+            return None
+
     writer = FakeWriter()
     result = await set_progress(
         writer,
@@ -275,6 +289,7 @@ async def test_run_extraction_job_continues_when_started_callback_fails(monkeypa
     class FakeWriter:
         def __init__(self) -> None:
             self.progress_by_app: dict[str, JobProgress] = {}
+            self.extracted_by_app: dict[str, dict[str, object]] = {}
 
         async def get(self, application_id: str):
             return self.progress_by_app.get(application_id)
@@ -282,6 +297,20 @@ async def test_run_extraction_job_continues_when_started_callback_fails(monkeypa
         async def set(self, application_id: str, progress: JobProgress, ttl_seconds: int = 86400):
             del ttl_seconds
             self.progress_by_app[application_id] = progress
+
+        async def clear_extracted_result(self, application_id: str) -> None:
+            self.extracted_by_app.pop(application_id, None)
+
+        async def set_extracted_result(
+            self,
+            application_id: str,
+            *,
+            job_id: str,
+            extracted: dict[str, object],
+            ttl_seconds: int = 86400,
+        ) -> None:
+            del ttl_seconds
+            self.extracted_by_app[application_id] = {"job_id": job_id, "extracted": extracted}
 
     class FakeCallback:
         def __init__(self) -> None:
@@ -341,6 +370,7 @@ async def test_run_extraction_job_returns_success_when_success_callback_fails(mo
     class FakeWriter:
         def __init__(self) -> None:
             self.progress_by_app: dict[str, JobProgress] = {}
+            self.extracted_by_app: dict[str, dict[str, object]] = {}
 
         async def get(self, application_id: str):
             return self.progress_by_app.get(application_id)
@@ -348,6 +378,20 @@ async def test_run_extraction_job_returns_success_when_success_callback_fails(mo
         async def set(self, application_id: str, progress: JobProgress, ttl_seconds: int = 86400):
             del ttl_seconds
             self.progress_by_app[application_id] = progress
+
+        async def clear_extracted_result(self, application_id: str) -> None:
+            self.extracted_by_app.pop(application_id, None)
+
+        async def set_extracted_result(
+            self,
+            application_id: str,
+            *,
+            job_id: str,
+            extracted: dict[str, object],
+            ttl_seconds: int = 86400,
+        ) -> None:
+            del ttl_seconds
+            self.extracted_by_app[application_id] = {"job_id": job_id, "extracted": extracted}
 
     class FakeCallback:
         def __init__(self) -> None:

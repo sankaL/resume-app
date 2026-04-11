@@ -254,6 +254,7 @@ class FakeNotificationRepository:
 class FakeProgressStore:
     def __init__(self) -> None:
         self.progress: dict[str, ProgressRecord] = {}
+        self.extraction_results: dict[str, dict[str, Any]] = {}
 
     async def get(self, application_id: str) -> Optional[ProgressRecord]:
         return self.progress.get(application_id)
@@ -263,6 +264,13 @@ class FakeProgressStore:
 
     async def delete(self, application_id: str) -> None:
         self.progress.pop(application_id, None)
+        self.extraction_results.pop(application_id, None)
+
+    async def get_extraction_result(self, application_id: str) -> Optional[dict[str, Any]]:
+        return self.extraction_results.get(application_id)
+
+    async def clear_extraction_result(self, application_id: str) -> None:
+        self.extraction_results.pop(application_id, None)
 
 
 class FakeExtractionJobQueue:
@@ -2045,6 +2053,59 @@ async def test_get_progress_fails_closed_when_extraction_success_progress_has_no
     assert updated.extraction_failure_details is not None
     assert updated.extraction_failure_details["kind"] == "callback_delivery_failed"
     assert "could not be synchronized" in notifications.notifications[-1]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_get_progress_recovers_extraction_success_from_cached_result_when_callback_missed():
+    service, repository, notifications, progress_store, _, _, _ = build_service()
+    now = datetime.now(timezone.utc)
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/8",
+        visible_status="draft",
+        internal_state="extracting",
+    )
+    repository.records[created.id] = created.model_copy(update={"updated_at": (now - timedelta(seconds=30)).isoformat()})
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-9",
+            workflow_kind="extraction",
+            state="generation_pending",
+            message="Extraction completed.",
+            percent_complete=100,
+            created_at=(now - timedelta(seconds=90)).isoformat(),
+            updated_at=(now - timedelta(seconds=20)).isoformat(),
+            completed_at=(now - timedelta(seconds=20)).isoformat(),
+            terminal_error_code=None,
+        ),
+    )
+    progress_store.extraction_results[created.id] = {
+        "job_id": "job-9",
+        "captured_at": now.isoformat(),
+        "extracted": {
+            "job_title": "Senior Backend Engineer",
+            "job_description": "Build APIs and background systems.",
+            "company": "Acme",
+            "job_location_text": "Toronto, ON",
+            "compensation_text": "$140,000 - $170,000",
+            "job_posting_origin": "linkedin",
+            "job_posting_origin_other_text": None,
+            "extracted_reference_id": "1234567890",
+        },
+    }
+
+    progress = await service.get_progress(user_id="user-1", application_id=created.id)
+
+    assert progress.state == "generation_pending"
+    updated = repository.fetch_application("user-1", created.id)
+    assert updated is not None
+    assert updated.internal_state == "generation_pending"
+    assert updated.failure_reason is None
+    assert updated.job_title == "Senior Backend Engineer"
+    assert updated.company == "Acme"
+    assert created.id not in progress_store.extraction_results
+    assert notifications.notifications == []
 
 
 @pytest.mark.asyncio

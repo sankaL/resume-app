@@ -742,6 +742,13 @@ class ApplicationService:
             if record.internal_state == "generation_pending" and record.failure_reason is None:
                 return record
 
+            recovered_success = await self._reconcile_extraction_success_from_progress_cache(
+                record=record,
+                progress=progress,
+            )
+            if recovered_success is not None:
+                return recovered_success
+
             failure_details = record.extraction_failure_details
             if not isinstance(failure_details, dict):
                 failure_details = None
@@ -847,6 +854,62 @@ class ApplicationService:
             event_status="failure",
         )
         return updated
+
+    async def _reconcile_extraction_success_from_progress_cache(
+        self,
+        *,
+        record: ApplicationRecord,
+        progress: ProgressRecord,
+    ) -> Optional[ApplicationRecord]:
+        cached_result = await self.progress_store.get_extraction_result(record.id)
+        if not isinstance(cached_result, dict):
+            return None
+
+        cached_job_id = str(cached_result.get("job_id") or "").strip()
+        if not cached_job_id or cached_job_id != progress.job_id:
+            return None
+
+        extracted_payload = cached_result.get("extracted")
+        if not isinstance(extracted_payload, dict):
+            return None
+
+        try:
+            extracted = WorkerSuccessPayload.model_validate(extracted_payload)
+        except Exception:
+            logger.exception("Failed validating cached extraction payload for %s", record.id)
+            return None
+
+        updated = self.repository.update_application(
+            application_id=record.id,
+            user_id=record.user_id,
+            updates={
+                "job_title": extracted.job_title,
+                "company": extracted.company,
+                "job_description": extracted.job_description,
+                "job_location_text": extracted.job_location_text,
+                "compensation_text": extracted.compensation_text,
+                "extracted_reference_id": extracted.extracted_reference_id,
+                "job_posting_origin": extracted.job_posting_origin,
+                "job_posting_origin_other_text": extracted.job_posting_origin_other_text,
+                **self._workflow_updates(
+                    internal_state="generation_pending",
+                    failure_reason=None,
+                    extraction_failure_details=None,
+                    duplicate_similarity_score=None,
+                    duplicate_match_fields=None,
+                    duplicate_resolution_status=None,
+                    duplicate_matched_application_id=None,
+                ),
+            },
+        )
+        await self.progress_store.clear_extraction_result(record.id)
+        self._record_usage_event(
+            user_id=record.user_id,
+            application_id=record.id,
+            event_type="extraction",
+            event_status="success",
+        )
+        return await self._run_duplicate_resolution_flow(updated)
 
     def _terminal_failure_reason(
         self,

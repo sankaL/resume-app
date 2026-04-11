@@ -368,6 +368,10 @@ class RedisProgressWriter:
     def _key(application_id: str) -> str:
         return f"phase1:applications:{application_id}:progress"
 
+    @staticmethod
+    def _extraction_result_key(application_id: str) -> str:
+        return f"phase1:applications:{application_id}:extracted"
+
     async def get(self, application_id: str) -> Optional[JobProgress]:
         payload = await self._redis.get(self._key(application_id))
         if payload is None:
@@ -376,6 +380,24 @@ class RedisProgressWriter:
 
     async def set(self, application_id: str, progress: JobProgress, ttl_seconds: int = 86400) -> None:
         await self._redis.set(self._key(application_id), progress.model_dump_json(), ex=ttl_seconds)
+
+    async def set_extracted_result(
+        self,
+        application_id: str,
+        *,
+        job_id: str,
+        extracted: dict[str, Any],
+        ttl_seconds: int = 86400,
+    ) -> None:
+        payload = {
+            "job_id": job_id,
+            "extracted": extracted,
+            "captured_at": now_iso(),
+        }
+        await self._redis.set(self._extraction_result_key(application_id), json.dumps(payload), ex=ttl_seconds)
+
+    async def clear_extracted_result(self, application_id: str) -> None:
+        await self._redis.delete(self._extraction_result_key(application_id))
 
 
 class BackendCallbackClient:
@@ -652,6 +674,7 @@ async def report_failure(
         completed_at=completed_at,
         terminal_error_code=terminal_error_code,
     )
+    await writer.clear_extracted_result(application_id)
     try:
         await callback.post(
             {
@@ -710,6 +733,7 @@ async def run_extraction_job(
         message="Opening the job posting.",
         percent_complete=10,
     )
+    await writer.clear_extracted_result(application_id)
     try:
         await callback.post(
             {
@@ -807,6 +831,11 @@ async def run_extraction_job(
             completed_at=completed_at,
         )
         success_payload = finalized.model_dump()
+        await writer.set_extracted_result(
+            application_id,
+            job_id=job_id,
+            extracted=success_payload,
+        )
     except PlaywrightTimeoutError as error:
         await report_failure(
             writer=writer,
