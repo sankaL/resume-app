@@ -11,13 +11,13 @@ export default defineConfig({
     },
   },
   server: {
-    allowedHosts: [".up.railway.app"],
+    allowedHosts: [".up.railway.app", "applix.ca"],
     fs: {
       allow: [path.resolve(__dirname, "..")],
     },
   },
   preview: {
-    allowedHosts: [".up.railway.app"],
+    allowedHosts: [".up.railway.app", "applix.ca"],
   },
   test: {
     environment: "jsdom",
