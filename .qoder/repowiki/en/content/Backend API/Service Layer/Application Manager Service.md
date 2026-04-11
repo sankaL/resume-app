@@ -21,11 +21,11 @@
 
 ## Update Summary
 **Changes Made**
-- Enhanced extraction progress reconciliation with new `_reconcile_terminal_extraction_progress` method
-- Added sophisticated backend reconciliation logic for terminal extraction states
-- Improved handling of cases where extraction callbacks fail to deliver but extraction completes successfully
-- Enhanced fallback mechanisms for extraction completion synchronization failures
-- Updated progress polling logic to include terminal extraction reconciliation
+- Enhanced extraction progress reconciliation with new `_reconcile_extraction_success_from_progress_cache` method
+- Added comprehensive backend reconciliation logic for terminal extraction states
+- Enhanced progress store with extraction result caching capabilities through Redis
+- Improved error handling for callback delivery failures with extraction result cache fallback
+- Updated progress polling logic to include terminal extraction reconciliation with cache validation
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -40,16 +40,16 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document describes the Application Manager Service that orchestrates the entire job application workflow. It manages application lifecycle stages, coordinates extraction and generation jobs, detects and resolves duplicates, tracks progress via Redis, and handles worker callbacks. The service now includes sophisticated stuck generation recovery mechanisms with dual-timing approach featuring separate idle timeout and maximum wall-clock timeout parameters for both full generation and section regeneration workflows. Additionally, it features enhanced extraction progress reconciliation with backend reconciliation logic for terminal states.
+This document describes the Application Manager Service that orchestrates the entire job application workflow. It manages application lifecycle stages, coordinates extraction and generation jobs, detects and resolves duplicates, tracks progress via Redis, and handles worker callbacks. The service now includes sophisticated stuck generation recovery mechanisms with dual-timing approach featuring separate idle timeout and maximum wall-clock timeout parameters for both full generation and section regeneration workflows. Additionally, it features enhanced extraction progress reconciliation with backend reconciliation logic for terminal states and comprehensive extraction result caching capabilities.
 
 ## Project Structure
 The Application Manager Service spans backend APIs, services, repositories, and worker agents:
 - Backend API routes expose application CRUD and workflow actions.
-- ApplicationService encapsulates orchestration logic with enhanced timeout handling and extraction reconciliation.
+- ApplicationService encapsulates orchestration logic with enhanced timeout handling, extraction reconciliation, and extraction result caching.
 - Repositories manage persistence for applications, drafts, and notifications.
 - Job queues enqueue asynchronous tasks for extraction and generation.
-- Workers execute jobs and report progress and outcomes with timeout awareness.
-- Progress store persists transient workflow progress in Redis with recovery mechanisms.
+- Workers execute jobs and report progress and outcomes with timeout awareness and extraction result caching.
+- Progress store persists transient workflow progress in Redis with recovery mechanisms and extraction result caching.
 - Duplicate detector evaluates potential duplicates based on configurable thresholds.
 
 ```mermaid
@@ -115,12 +115,12 @@ GENW --> LLM
 - [validation.py:231-292](file://agents/validation.py#L231-L292)
 
 ## Core Components
-- ApplicationService: Central orchestrator for application lifecycle, state transitions, duplicate detection, progress tracking, worker callbacks, sophisticated stuck generation recovery with dual-timing timeout mechanisms, and enhanced extraction progress reconciliation.
+- ApplicationService: Central orchestrator for application lifecycle, state transitions, duplicate detection, progress tracking, worker callbacks, sophisticated stuck generation recovery with dual-timing timeout mechanisms, and enhanced extraction progress reconciliation with extraction result caching.
 - ApplicationRepository: Database access for applications, including listing, creating, fetching, and updating records.
 - DuplicateDetector: Evaluates potential duplicates using similarity thresholds and match basis heuristics.
-- RedisProgressStore: Stores and retrieves transient progress for applications with recovery capabilities.
+- RedisProgressStore: Stores and retrieves transient progress for applications with recovery capabilities and extraction result caching.
 - Job queues: Enqueue extraction and generation/regeneration jobs to workers with timeout awareness.
-- Worker agents: Execute extraction, generation, and validation with individual timeout constraints and comprehensive error handling.
+- Worker agents: Execute extraction, generation, and validation with individual timeout constraints and comprehensive error handling including extraction result caching.
 
 Key responsibilities:
 - Creation: From URL or browser capture, enqueue extraction, and initialize progress.
@@ -129,10 +129,11 @@ Key responsibilities:
 - Retry: Re-queue extraction after failures.
 - Generation: Trigger generation with base resume and profile preferences; track progress and outcomes with timeout recovery.
 - Regeneration: Full or section-specific regeneration with validation and timeout-aware recovery.
-- Progress: Poll progress from Redis; fallback to derived messages with recovery mechanisms including terminal extraction reconciliation.
+- Progress: Poll progress from Redis; fallback to derived messages with recovery mechanisms including terminal extraction reconciliation with cache validation.
 - Callbacks: Handle worker events to update state and notify users with timeout handling.
 - Timeout Recovery: Detect and recover from stuck generation jobs using dual-timing approach.
-- **Enhanced**: Extraction reconciliation: Handle cases where extraction callbacks fail to deliver but extraction completes successfully.
+- **Enhanced**: Extraction reconciliation: Handle cases where extraction callbacks fail to deliver but extraction completes successfully using extraction result cache validation.
+- **Enhanced**: Extraction result caching: Store extraction payloads in Redis cache for recovery when callback delivery fails.
 
 **Section sources**
 - [application_manager.py:143-1543](file://backend/app/services/application_manager.py#L143-L1543)
@@ -146,7 +147,7 @@ Key responsibilities:
 The Application Manager Service integrates:
 - FastAPI endpoints that delegate to ApplicationService.
 - ApplicationService coordinating repositories, job queues, progress store, and duplicate detection with timeout recovery mechanisms and extraction reconciliation.
-- Workers consuming jobs from ARQ queues, reporting progress to Redis, and invoking LLM providers with individual timeout constraints.
+- Workers consuming jobs from ARQ queues, reporting progress to Redis, caching extraction results, and invoking LLM providers with individual timeout constraints.
 - Contract-driven status derivation mapping internal states to visible statuses with timeout-aware transitions.
 
 ```mermaid
@@ -165,6 +166,7 @@ Svc->>Q : enqueue(application_id, user_id, job_url)
 Q-->>W : run_extraction_job(...)
 Svc->>R : set(job_id, state="extraction_pending", percent=0)
 W->>R : set(state="extracting", percent=...)
+W->>R : set_extracted_result(job_id, extracted_payload)
 W-->>Svc : callback(event="started")
 W-->>Svc : callback(event="succeeded"|event="failed")
 Svc->>Repo : update_application(internal_state, fields)
@@ -196,7 +198,8 @@ ApplicationService is the central orchestrator with enhanced timeout recovery ca
 - Validates outcomes, updates progress, and manages sophisticated stuck generation recovery.
 - Processes worker callbacks to advance state and notify users with timeout handling.
 - Derives visible status from internal state and failure reasons with timeout awareness.
-- **Enhanced**: Performs terminal extraction progress reconciliation to handle callback delivery failures.
+- **Enhanced**: Performs terminal extraction progress reconciliation to handle callback delivery failures using extraction result cache validation.
+- **Enhanced**: Validates extraction result cache before applying cached extraction data to ensure job ID consistency.
 
 Key methods and flows:
 - Creation from URL: create_application
@@ -207,10 +210,11 @@ Key methods and flows:
 - Duplicate resolution: resolve_duplicate
 - Generation triggers: trigger_generation, trigger_full_regeneration, trigger_section_regeneration
 - Callback handlers: handle_worker_callback, handle_generation_callback, handle_regeneration_callback
-- Progress polling: get_progress with automatic timeout recovery and terminal extraction reconciliation
+- Progress polling: get_progress with automatic timeout recovery and terminal extraction reconciliation with cache validation
 - Draft management: get_draft, save_draft_edit, export_pdf
 - Timeout recovery: _detect_and_recover_stuck_generation, _recover_stuck_generation_if_needed
 - **Enhanced**: Terminal extraction reconciliation: _reconcile_terminal_extraction_progress
+- **Enhanced**: Extraction result cache validation: _reconcile_extraction_success_from_progress_cache
 
 ```mermaid
 classDiagram
@@ -238,6 +242,7 @@ class ApplicationService {
 -_recover_stuck_generation_if_needed(record) ApplicationRecord
 -_generation_timeout_seconds(record, progress) tuple[int, int]
 -**_reconcile_terminal_extraction_progress(record, progress) ApplicationRecord**
+-**_reconcile_extraction_success_from_progress_cache(record, progress) ApplicationRecord?**
 }
 ```
 
@@ -248,7 +253,7 @@ class ApplicationService {
 - [application_manager.py:143-1543](file://backend/app/services/application_manager.py#L143-L1543)
 
 ### Enhanced Extraction Progress Reconciliation
-The Application Manager Service now includes sophisticated extraction progress reconciliation with backend reconciliation logic for terminal states:
+The Application Manager Service now includes sophisticated extraction progress reconciliation with backend reconciliation logic for terminal states and extraction result caching:
 
 #### Terminal Extraction Progress Reconciliation
 The `_reconcile_terminal_extraction_progress` method handles cases where extraction callbacks fail to deliver but extraction completes successfully:
@@ -261,7 +266,12 @@ CheckProgress --> |Yes| CheckTerminal{"Terminal state?<br/>- Success: generation
 CheckTerminal --> |No| Return
 CheckTerminal --> |Yes| CheckState{"State matches expectation?"}
 CheckState --> |Yes| Return
-CheckState --> |No| Update["Update application state<br/>to manual_entry_required<br/>with extraction_failed"]
+CheckState --> |No| CheckCache["Validate extraction result cache<br/>for job_id consistency"]
+CheckCache --> CacheExists{"Cache exists and job_id matches?"}
+CacheExists --> |Yes| UseCache["Apply cached extraction data<br/>and clear cache"]
+CacheExists --> |No| UseFallback["Use fallback extraction failure details"]
+UseCache --> Update["Update application state<br/>to generation_pending"]
+UseFallback --> Update
 Update --> SetProgress["Set terminal extraction progress<br/>with callback_delivery_failed"]
 SetProgress --> Notify["Create action-required notification<br/>with fallback message"]
 Notify --> RecordUsage["Record usage event<br/>as extraction failure"]
@@ -269,23 +279,54 @@ RecordUsage --> End(["Return updated record"])
 ```
 
 **Diagram sources**
-- [application_manager.py:724-849](file://backend/app/services/application_manager.py#L724-L849)
+- [application_manager.py:724-850](file://backend/app/services/application_manager.py#L724-L850)
 
-#### Key Features of Terminal Extraction Reconciliation
+#### Extraction Result Cache Validation
+The `_reconcile_extraction_success_from_progress_cache` method provides robust extraction result caching with validation:
+
+```mermaid
+flowchart TD
+Start(["Validate Extraction Result Cache"]) --> GetCache["Get cached extraction result<br/>from Redis"]
+GetCache --> CacheValid{"Cache exists and is dict?"}
+CacheValid --> |No| ReturnNone(["Return None"])
+CacheValid --> |Yes| CheckJobId["Validate job_id matches progress"]
+CheckJobId --> JobMatch{"Job IDs match?"}
+JobMatch --> |No| ReturnNone
+JobMatch --> |Yes| CheckExtracted["Validate extracted payload"]
+CheckExtracted --> PayloadValid{"Extracted payload is dict?"}
+PayloadValid --> |No| ReturnNone
+PayloadValid --> |Yes| ValidatePayload["Validate WorkerSuccessPayload"]
+ValidatePayload --> Valid{"Payload valid?"}
+Valid --> |No| ReturnNone
+Valid --> |Yes| UpdateApp["Update application with extracted fields"]
+UpdateApp --> ClearCache["Clear extraction result cache"]
+ClearCache --> RecordEvent["Record usage event"]
+RecordEvent --> RunDupFlow["Run duplicate resolution flow"]
+RunDupFlow --> End(["Return updated record"])
+```
+
+**Diagram sources**
+- [application_manager.py:858-912](file://backend/app/services/application_manager.py#L858-L912)
+
+#### Key Features of Enhanced Extraction Reconciliation
 - **Success Case Handling**: Detects when extraction completes successfully but callback fails to synchronize
+- **Cache Validation**: Validates extraction result cache with job ID consistency checks before applying cached data
 - **Failure Case Handling**: Handles various extraction failure scenarios with appropriate error codes
 - **State Synchronization**: Ensures application state matches progress state even when callbacks are delayed
 - **Fallback Mechanisms**: Provides clear user-facing messages for extraction completion synchronization failures
 - **Usage Tracking**: Records extraction failures appropriately for analytics and monitoring
+- **Robust Error Handling**: Comprehensive validation and error handling for cached extraction payloads
 
 #### Error Handling Scenarios
 - **Callback Delivery Failed**: Extraction completed but callback couldn't be delivered
 - **Blocked Source**: Extraction blocked by source website
 - **User Cancelled**: User intentionally stopped extraction
 - **Other Failures**: Various other extraction failure conditions
+- **Cache Validation Failed**: Cached extraction payload invalid or job ID mismatch
 
 **Section sources**
-- [application_manager.py:724-849](file://backend/app/services/application_manager.py#L724-L849)
+- [application_manager.py:724-850](file://backend/app/services/application_manager.py#L724-L850)
+- [application_manager.py:858-912](file://backend/app/services/application_manager.py#L858-L912)
 - [test_phase1_applications.py:1973-2048](file://backend/tests/test_phase1_applications.py#L1973-L2048)
 
 ### Enhanced Timeout Recovery Mechanisms
@@ -388,8 +429,8 @@ Update --> End
 - [duplicates.py:79-184](file://backend/app/services/duplicates.py#L79-L184)
 - [application_manager.py:1185-1268](file://backend/app/services/application_manager.py#L1185-L1268)
 
-### Progress Tracking and Callback Handling
-Progress tracking uses Redis to store transient progress keyed by application ID. ApplicationService sets initial progress upon creation and updates it during extraction and generation. Worker agents report progress and outcomes via callbacks with timeout awareness. The service now includes terminal extraction reconciliation to handle callback delivery failures.
+### Enhanced Progress Tracking and Callback Handling
+Progress tracking uses Redis to store transient progress keyed by application ID. ApplicationService sets initial progress upon creation and updates it during extraction and generation. Worker agents report progress and outcomes via callbacks with timeout awareness and cache extraction results. The service now includes terminal extraction reconciliation with extraction result cache validation to handle callback delivery failures.
 
 ```mermaid
 sequenceDiagram
@@ -399,10 +440,12 @@ participant W as "Worker"
 participant API as "Backend Callback Endpoint"
 Svc->>Prog : set(job_id, state="extraction_pending", percent=0)
 W->>Prog : set(state="extracting", percent=...)
+W->>Prog : set_extracted_result(job_id, extracted_payload)
 W->>API : POST /api/internal/worker/extraction-callback (event="started")
 API-->>Svc : handle_worker_callback(event="started")
 W->>API : POST /api/internal/worker/extraction-callback (event="succeeded"|event="failed")
 API-->>Svc : handle_worker_callback(event="succeeded"|event="failed")
+Note over Svc,W : If callback fails, service validates cache<br/>and applies cached extraction data
 Svc->>Prog : set(state="generation_pending"|state="manual_entry_required", percent=100)
 ```
 
@@ -503,10 +546,10 @@ class SectionRegenerationRequest {
 ApplicationService depends on:
 - Repositories for persistence
 - Job queues for asynchronous processing
-- Progress store for transient state with timeout recovery and extraction reconciliation
+- Progress store for transient state with timeout recovery, extraction reconciliation, and extraction result caching
 - Duplicate detector for duplicate evaluation
 - Workflow status derivation for visible status mapping
-- Worker agents with timeout-aware processing
+- Worker agents with timeout-aware processing and extraction result caching
 
 ```mermaid
 graph LR
@@ -517,11 +560,13 @@ SVC --> JOBQ["ExtractionJobQueue / GenerationJobQueue"]
 SVC --> WF["derive_visible_status"]
 SVC --> TIMEOUT["Timeout Recovery Mechanisms"]
 SVC --> EXTRACT_RECON["Extraction Reconciliation Logic"]
+SVC --> CACHE_VALID["Extraction Result Cache Validation"]
 JOBQ --> ARQ["ARQ Redis"]
 PROG --> REDIS["Redis"]
 DUPS --> REPO
 TIMEOUT --> PROG
 EXTRACT_RECON --> PROG
+CACHE_VALID --> PROG
 ```
 
 **Diagram sources**
@@ -548,6 +593,8 @@ EXTRACT_RECON --> PROG
 - **Enhanced**: Separate idle and maximum wall-clock timeouts prevent both false positives and resource starvation.
 - **Enhanced**: Sophisticated recovery mechanisms ensure stuck jobs are properly terminated and users are notified.
 - **Enhanced**: Backend extraction reconciliation reduces user confusion by properly handling callback delivery failures.
+- **Enhanced**: Extraction result caching provides reliable fallback when callback delivery fails, improving system resilience.
+- **Enhanced**: Cache validation ensures only valid, job-consistent extraction data is applied, preventing data corruption.
 
 ## Troubleshooting Guide
 Common issues and recovery steps:
@@ -556,17 +603,19 @@ Common issues and recovery steps:
 - Generation timeout or validation failure: Worker reports failure; ApplicationService marks generation failed and notifies the user.
 - **Enhanced**: Stuck generation detection: System automatically detects stalled jobs and recovers them with appropriate timeout codes.
 - **Enhanced**: Dual-timing timeout handling: Different timeout parameters for full generation (90s idle, 300s max) vs section regeneration (45s idle, 90s max).
-- **Enhanced**: Extraction callback delivery failure: Backend reconciliation detects successful extraction completion despite missing callbacks and transitions to manual entry with appropriate error details.
+- **Enhanced**: Extraction callback delivery failure: Backend reconciliation detects successful extraction completion despite missing callbacks, validates cache, and transitions to generation_pending with cached extraction data.
+- **Enhanced**: Extraction result cache validation: System validates cached extraction payloads and job IDs before applying cached data to prevent data corruption.
 - Export failure: ApplicationService updates state to resume_ready with failure reason and creates an action-required notification.
 
 Operational tips:
-- Verify Redis connectivity for progress storage.
+- Verify Redis connectivity for progress storage and extraction result caching.
 - Confirm ARQ queue availability and worker health.
 - Check LLM provider keys and model configurations.
 - Review duplicate resolution status before generation.
 - **Enhanced**: Monitor timeout recovery logs for stuck job detection and recovery.
 - **Enhanced**: Verify timeout parameters are appropriate for your workload patterns.
 - **Enhanced**: Monitor extraction reconciliation logs for callback delivery failures and proper state synchronization.
+- **Enhanced**: Verify extraction result cache integrity and job ID consistency for reliable fallback mechanisms.
 
 **Section sources**
 - [application_manager.py:1270-1324](file://backend/app/services/application_manager.py#L1270-L1324)
@@ -574,10 +623,11 @@ Operational tips:
 - [worker.py:856-905](file://agents/worker.py#L856-L905)
 - [application_manager.py:1150-1184](file://backend/app/services/application_manager.py#L1150-L1184)
 - [application_manager.py:493-566](file://backend/app/services/application_manager.py#L493-L566)
-- [application_manager.py:724-849](file://backend/app/services/application_manager.py#L724-L849)
+- [application_manager.py:724-850](file://backend/app/services/application_manager.py#L724-L850)
+- [application_manager.py:858-912](file://backend/app/services/application_manager.py#L858-L912)
 
 ## Conclusion
-The Application Manager Service provides a robust, asynchronous workflow for job application intake, extraction, generation, and regeneration. It integrates cleanly with job queues and Redis-backed progress tracking, supports duplicate detection and resolution, and offers comprehensive error handling and recovery. The enhanced timeout recovery mechanisms with dual-timing approach ensure that stuck generation jobs are properly detected and recovered, preventing infinite loops while allowing legitimate long-running operations to complete successfully. The new extraction progress reconciliation logic provides improved reliability by handling callback delivery failures gracefully and ensuring proper state synchronization between application records and progress store.
+The Application Manager Service provides a robust, asynchronous workflow for job application intake, extraction, generation, and regeneration. It integrates cleanly with job queues and Redis-backed progress tracking, supports duplicate detection and resolution, and offers comprehensive error handling and recovery. The enhanced timeout recovery mechanisms with dual-timing approach ensure that stuck generation jobs are properly detected and recovered, preventing infinite loops while allowing legitimate long-running operations to complete successfully. The new extraction progress reconciliation logic with extraction result caching provides improved reliability by handling callback delivery failures gracefully, validating cached data for consistency, and ensuring proper state synchronization between application records and progress store. The extraction result cache validation mechanism adds an additional layer of resilience by providing reliable fallback when worker callback delivery fails, while comprehensive error handling prevents data corruption and maintains system integrity.
 
 ## Appendices
 
@@ -647,6 +697,13 @@ regenerating_full --> resume_ready : "succeeded"
   - `terminal_error_code is not None` for extraction progress
   - Various extraction failure scenarios (blocked source, user cancelled, etc.)
 
+#### Extraction Result Cache Validation
+- **Cache Storage**: Extraction results stored in Redis with job_id, extracted payload, and captured timestamp
+- **Cache Retrieval**: ApplicationService retrieves cached extraction results during reconciliation
+- **Job ID Validation**: Ensures cached extraction result matches current progress job_id before applying
+- **Payload Validation**: Validates WorkerSuccessPayload structure and required fields
+- **Cache Cleanup**: Clears extraction result cache after successful application update
+
 #### Error Details Handling
 - **Callback Delivery Failed**: Automatically populated with `kind: "callback_delivery_failed"`
 - **Blocked Source**: Uses existing blocked source detection and preserves provider information
@@ -658,7 +715,8 @@ regenerating_full --> resume_ready : "succeeded"
 - **User-Facing Error Messages**: Clear guidance for users on next steps
 
 **Section sources**
-- [application_manager.py:724-849](file://backend/app/services/application_manager.py#L724-L849)
+- [application_manager.py:724-850](file://backend/app/services/application_manager.py#L724-L850)
+- [application_manager.py:858-912](file://backend/app/services/application_manager.py#L858-L912)
 - [test_phase1_applications.py:1973-2048](file://backend/tests/test_phase1_applications.py#L1973-L2048)
 - [ApplicationDetailPage.tsx:67-68](file://frontend/src/routes/ApplicationDetailPage.tsx#L67-L68)
 
@@ -699,8 +757,8 @@ regenerating_full --> resume_ready : "succeeded"
 
 - Progress polling
   - Endpoint: GET /api/applications/{id}/progress
-  - Service: get_progress with automatic timeout recovery and terminal extraction reconciliation
-  - Outcome: Returns Redis-stored progress or derived progress record; automatically recovers stuck generation jobs; handles extraction callback delivery failures.
+  - Service: get_progress with automatic timeout recovery and terminal extraction reconciliation with cache validation
+  - Outcome: Returns Redis-stored progress or derived progress record; automatically recovers stuck generation jobs; handles extraction callback delivery failures with cache validation.
 
 - PDF export
   - Endpoint: GET /api/applications/{id}/export-pdf
@@ -723,8 +781,8 @@ regenerating_full --> resume_ready : "succeeded"
 - [application_manager.py:358-411](file://backend/app/services/application_manager.py#L358-L411)
 - [application_manager.py:412-437](file://backend/app/services/application_manager.py#L412-L437)
 - [application_manager.py:513-602](file://backend/app/services/application_manager.py#L513-L602)
-- [application_manager.py:724-849](file://backend/app/services/application_manager.py#L724-L849)
-- [application_manager.py:815-905](file://backend/app/services/application_manager.py#L815-L905)
+- [application_manager.py:724-850](file://backend/app/services/application_manager.py#L724-L850)
+- [application_manager.py:858-912](file://backend/app/services/application_manager.py#L858-L912)
 - [application_manager.py:439-454](file://backend/app/services/application_manager.py#L439-L454)
 - [application_manager.py:1069-1148](file://backend/app/services/application_manager.py#L1069-L1148)
 - [application_manager.py:493-566](file://backend/app/services/application_manager.py#L493-L566)

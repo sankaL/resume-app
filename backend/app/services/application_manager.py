@@ -292,6 +292,9 @@ class ApplicationService:
     ) -> ApplicationDetailPayload:
         record = self._require_application(user_id=user_id, application_id=application_id)
         record = await self._recover_stuck_generation_if_needed(record)
+        progress = await self.progress_store.get(record.id)
+        record = await self._reconcile_terminal_extraction_progress(record, progress)
+        record = await self._reconcile_terminal_generation_progress(record, progress)
 
         return self._detail_payload(record)
 

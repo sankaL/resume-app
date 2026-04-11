@@ -2109,6 +2109,56 @@ async def test_get_progress_recovers_extraction_success_from_cached_result_when_
 
 
 @pytest.mark.asyncio
+async def test_get_application_detail_recovers_extraction_success_from_cached_result_when_callback_missed():
+    service, repository, notifications, progress_store, _, _, _ = build_service()
+    now = datetime.now(timezone.utc)
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/9",
+        visible_status="draft",
+        internal_state="extracting",
+    )
+    repository.records[created.id] = created.model_copy(update={"updated_at": (now - timedelta(seconds=30)).isoformat()})
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-10",
+            workflow_kind="extraction",
+            state="generation_pending",
+            message="Extraction completed.",
+            percent_complete=100,
+            created_at=(now - timedelta(seconds=90)).isoformat(),
+            updated_at=(now - timedelta(seconds=20)).isoformat(),
+            completed_at=(now - timedelta(seconds=20)).isoformat(),
+            terminal_error_code=None,
+        ),
+    )
+    progress_store.extraction_results[created.id] = {
+        "job_id": "job-10",
+        "captured_at": now.isoformat(),
+        "extracted": {
+            "job_title": "Data Modeling and Analytics Architect",
+            "job_description": "Design enterprise data models and analytics platforms.",
+            "company": "Acme",
+            "job_location_text": "Toronto, ON",
+            "compensation_text": "$170,000 - $210,000",
+            "job_posting_origin": "linkedin",
+            "job_posting_origin_other_text": None,
+            "extracted_reference_id": "ref-10",
+        },
+    }
+
+    detail = await service.get_application_detail(user_id="user-1", application_id=created.id)
+
+    assert detail.application.internal_state == "generation_pending"
+    assert detail.application.failure_reason is None
+    assert detail.application.job_title == "Data Modeling and Analytics Architect"
+    assert detail.application.company == "Acme"
+    assert created.id not in progress_store.extraction_results
+    assert notifications.notifications == []
+
+
+@pytest.mark.asyncio
 async def test_get_progress_prefers_terminal_application_state_over_stale_active_progress():
     service, repository, _, progress_store, _, _, _ = build_service()
     created = repository.create_application(

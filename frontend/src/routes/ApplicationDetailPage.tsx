@@ -147,10 +147,24 @@ function extractionFallbackMessage(progress: ExtractionProgress): string {
   return progress.message || EXTRACTION_DETAIL_REFRESH_FALLBACK_MESSAGE;
 }
 
+function isTerminalExtractionSuccess(progress: ExtractionProgress): boolean {
+  return progress.terminal_error_code === null && progress.state === "generation_pending";
+}
+
 function applyTerminalExtractionProgress(
   current: ApplicationDetail,
   progress: ExtractionProgress,
 ): ApplicationDetail {
+  if (progress.terminal_error_code === null && progress.state === "generation_pending") {
+    return {
+      ...current,
+      internal_state: "generation_pending",
+      visible_status: deriveVisibleStatus(current.visible_status, "generation_pending", null),
+      failure_reason: null,
+      extraction_failure_details: null,
+    };
+  }
+
   const failureReason = "extraction_failed";
   const internalState = "manual_entry_required";
 
@@ -361,18 +375,26 @@ export function ApplicationDetailPage() {
             applyDetailState(response, { refreshShell: true });
             if (EXTRACTION_POLL_STATES.includes(response.internal_state) && response.failure_reason === null) {
               applyTerminalExtractionFallback(nextProgress);
-              setError(extractionFallbackMessage(nextProgress));
+              if (isTerminalExtractionSuccess(nextProgress)) {
+                setError(null);
+              } else {
+                setError(extractionFallbackMessage(nextProgress));
+              }
             } else {
               setError(null);
             }
           } catch (requestError) {
             if (isCancelled) return;
             applyTerminalExtractionFallback(nextProgress);
-            setError(
-              requestError instanceof Error
-                ? requestError.message
-                : extractionFallbackMessage(nextProgress),
-            );
+            if (isTerminalExtractionSuccess(nextProgress)) {
+              setError(null);
+            } else {
+              setError(
+                requestError instanceof Error
+                  ? requestError.message
+                  : extractionFallbackMessage(nextProgress),
+              );
+            }
           }
         }
       } catch { /* retry on next interval */ }

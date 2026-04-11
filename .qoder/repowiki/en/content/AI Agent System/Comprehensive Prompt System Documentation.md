@@ -15,14 +15,18 @@
 - [internal_worker.py](file://backend/app/api/internal_worker.py)
 - [test_worker.py](file://agents/tests/test_worker.py)
 - [application_manager.py](file://backend/app/services/application_manager.py)
+- [progress.py](file://backend/app/services/progress.py)
 </cite>
 
 ## Update Summary
 **Changes Made**
 - Updated extraction callback resilience documentation to reflect best-effort callback behavior
-- Added documentation for enhanced extraction reliability measures
-- Updated callback error handling and recovery mechanisms
+- Added documentation for comprehensive retry/backoff system with exponential backoff
+- Enhanced extraction reliability measures with automatic retry/backoff for backend callback delivery
+- Updated callback error handling and recovery mechanisms with terminal progress reconciliation
 - Enhanced extraction job continuation logic when callbacks fail
+- Documented Redis-based progress tracking improvements and terminal progress reconciliation mechanisms
+- Added detailed coverage of graceful degradation and eventual consistency
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -41,7 +45,7 @@ The AI Prompt System is a sophisticated, multi-agent architecture designed to ge
 
 The system maintains four distinct prompt families: Job Posting Extraction, Resume Generation (full and single-section), and Resume Upload Cleanup. Each prompt family is carefully crafted to ensure that sensitive personal information remains protected while producing high-quality, ATS-optimized content.
 
-**Updated** Enhanced extraction reliability with best-effort callback behavior and improved error recovery mechanisms.
+**Updated** Enhanced extraction reliability with comprehensive callback error handling, best-effort callback delivery, and terminal progress reconciliation mechanisms. The system now implements robust callback delivery hardening with automatic retry/backoff and eventual consistency through Redis-based progress tracking. The extraction system provides graceful degradation when backend communication is temporarily unavailable, ensuring system reliability through comprehensive error handling and recovery strategies.
 
 ## Project Structure
 
@@ -67,6 +71,7 @@ end
 subgraph "External Services"
 LLM[OpenRouter LLM]
 PDF[PDF Export]
+Redis[Redis Progress Store]
 end
 UI --> API
 ChromeExtension --> API
@@ -77,12 +82,14 @@ Validation --> Assembly
 Assembly --> Privacy
 Generation --> LLM
 Assembly --> PDF
+Workers --> Redis
 ```
 
 **Diagram sources**
 - [internal_worker.py:1-71](file://backend/app/api/internal_worker.py#L1-L71)
 - [worker.py:1-800](file://agents/worker.py#L1-L800)
 - [generation.py:1-596](file://agents/generation.py#L1-L596)
+- [progress.py:53-95](file://backend/app/services/progress.py#L53-L95)
 
 **Section sources**
 - [prompts.md:1-199](file://docs/prompts.md#L1-L199)
@@ -100,6 +107,9 @@ The system defines four primary prompt families, each serving specific use cases
 - **Origin Normalization**: Supports 8 predefined sources (LinkedIn, Indeed, Google Jobs, Glassdoor, ZipRecruiter, Monster, Dice, Company Website)
 - **Enhanced Reliability**: Best-effort callback delivery with automatic continuation when backend is unreachable
 - **Runtime Enforcement**: Structured output validation with comprehensive field requirements
+- **Redis Caching**: Successful extraction payloads are cached in Redis for terminal progress reconciliation
+- **Retry/Backoff System**: Automatic retry with exponential backoff for transient server errors (up to 6 attempts)
+- **Graceful Degradation**: Extraction continues even when callback endpoints are temporarily unreachable
 
 #### Resume Generation Prompts
 - **Shared System Prompt**: Base template used for both full-draft and single-section generation
@@ -318,7 +328,7 @@ Errors --> FinalValidation[Final Validation Result]
 | ATS Safety | Prevents HTML, tables, images, code fences | Regex pattern matching |
 | Grounding Validation | Verifies claims exist in base resume | Text search and normalization |
 | Contact Leakage | Prevents personal information exposure | Email, phone, URL pattern detection |
-| Length Compliance | Enforces target length limits | Word count calculation |
+| Length Compliance | Enforces target length limits | Word count calculation
 
 **Section sources**
 - [validation.py:148-222](file://agents/validation.py#L148-L222)
@@ -396,7 +406,7 @@ DuplicateReviewRequired --> ExtractionPending : Review Complete
 
 ### Extraction Callback Resilience
 
-**Updated** The extraction system now implements best-effort callback delivery with enhanced reliability:
+**Updated** The extraction system now implements comprehensive callback error handling with best-effort delivery and terminal progress reconciliation:
 
 ```mermaid
 flowchart TD
@@ -410,17 +420,22 @@ Continue --> Extract[Run Extraction]
 Extract --> Validate[Validate Results]
 Validate --> SuccessCallback[Try Send 'succeeded' Callback]
 SuccessCallback --> SuccessComplete[Extraction Complete]
-SuccessCallback --> |Exception| ProgressOnly2[Continue with Progress Only]
+SuccessCallback --> |Exception| TerminalReconcile[Terminal Progress Reconciliation]
+TerminalReconcile --> RedisCache[Check Redis Cache]
+RedisCache --> |Cached Success| RecoverState[Recover Success State]
+RedisCache --> |No Cache| ProgressOnly2[Continue with Progress Only]
 ProgressOnly2 --> SuccessComplete
+RecoverState --> SuccessComplete
 ```
 
 **Diagram sources**
+- [worker.py:714-894](file://agents/worker.py#L714-L894)
 - [worker.py:696-711](file://agents/worker.py#L696-L711)
-- [worker.py:705-710](file://agents/worker.py#L705-L710)
+- [application_manager.py:858-912](file://backend/app/services/application_manager.py#L858-L912)
 
-#### Callback Error Handling
+#### Enhanced Callback Error Handling
 
-The extraction system implements comprehensive error handling for callback failures:
+The extraction system implements comprehensive error handling for callback failures with automatic retry/backoff:
 
 | Scenario | Behavior | Recovery Mechanism |
 |----------|----------|-------------------|
@@ -428,11 +443,81 @@ The extraction system implements comprehensive error handling for callback failu
 | Succeeded callback fails | Continue with extraction completion | Terminal callback for reconciliation |
 | Backend unreachable | Best-effort delivery with retries | Eventual state convergence via Redis |
 | Network errors | Automatic retry with exponential backoff | Fallback to progress-only tracking |
+| Terminal progress write | Write progress to Redis cache | Backend reconciliation handles eventual delivery |
+
+#### Backend Callback Client Implementation
+
+The BackendCallbackClient implements robust retry logic with exponential backoff:
+
+```mermaid
+flowchart TD
+Request[Callback Request] --> CheckSecret{Worker Secret?}
+CheckSecret --> |Missing| RaiseError[RuntimeError]
+CheckSecret --> |Present| RetryLoop[Retry Loop]
+RetryLoop --> Attempt1[Attempt 1]
+Attempt1 --> HTTPCall[HTTP POST Request]
+HTTPCall --> Success{HTTP 2xx?}
+Success --> |Yes| Complete[Complete Successfully]
+Success --> |No| CheckStatus{4xx Status?}
+CheckStatus --> |Yes| RaiseHTTP[HTTPStatusError]
+CheckStatus --> |No| Backoff[Exponential Backoff]
+Backoff --> Attempt2[Attempt 2]
+Attempt2 --> HTTPCall
+Backoff --> Attempt3[Attempt 3]
+Attempt3 --> HTTPCall
+Backoff --> Attempt4[Attempt 4]
+Attempt4 --> HTTPCall
+Backoff --> Attempt5[Attempt 5]
+Attempt5 --> HTTPCall
+Backoff --> Attempt6[Attempt 6]
+Attempt6 --> HTTPCall
+```
+
+**Diagram sources**
+- [worker.py:403-434](file://agents/worker.py#L403-L434)
 
 **Section sources**
 - [worker.py:696-711](file://agents/worker.py#L696-L711)
 - [worker.py:705-710](file://agents/worker.py#L705-L710)
+- [worker.py:403-434](file://agents/worker.py#L403-L434)
 - [test_worker.py:273-337](file://agents/tests/test_worker.py#L273-L337)
+- [application_manager.py:858-912](file://backend/app/services/application_manager.py#L858-L912)
+
+### Terminal Progress Reconciliation
+
+**New** The system implements terminal progress reconciliation to handle callback delivery failures:
+
+```mermaid
+flowchart TD
+TerminalProgress[Terminal Progress Write] --> RedisCache[Cache Success Payload]
+RedisCache --> SuccessCallback[Send Success Callback]
+SuccessCallback --> |Exception| BackendReconcile[Backend Reconciliation]
+BackendReconcile --> CheckCache[Check Redis Cache]
+CheckCache --> |Cached Payload| RecoverState[Recover Application State]
+CheckCache --> |No Payload| ManualEntry[Manual Entry Required]
+RecoverState --> UpdateApp[Update Application Record]
+UpdateApp --> ClearCache[Clear Redis Cache]
+ClearCache --> NotifyUser[Notify User of Recovery]
+ManualEntry --> UpdateFailure[Update Failure Details]
+UpdateFailure --> NotifyError[Notify User of Failure]
+```
+
+**Diagram sources**
+- [application_manager.py:724-856](file://backend/app/services/application_manager.py#L724-L856)
+
+#### Reconciliation Logic
+
+The backend reconciliation system handles various scenarios:
+
+| Scenario | Action | Outcome |
+|----------|--------|---------|
+| Terminal success with callback failure | Check Redis cache for cached payload | Recover success state if available |
+| Terminal failure with callback failure | Update application with failure details | Notify user and mark for manual entry |
+| Blocked source detection | Create blocked source failure details | Guide user to manual entry |
+| No cached payload | Continue with manual entry workflow | User completes job manually |
+
+**Section sources**
+- [application_manager.py:724-856](file://backend/app/services/application_manager.py#L724-L856)
 
 ## Dependency Analysis
 
@@ -448,17 +533,23 @@ Assembly[assembly.py] --> Privacy
 Worker[worker.py] --> Generation
 Worker --> Validation
 Worker --> Assembly
+Worker --> RedisProgressWriter
 end
 subgraph "Backend Integration"
 Worker --> InternalAPI[internal_worker.py]
 Worker --> Workflow[workflow.py]
 Worker --> Contract[workflow-contract.json]
+Worker --> BackendCallbackClient
 ResumeParser[resume_parser.py] --> Privacy
 PDFExport[pdf_export.py] --> Assembly
+BackendManager[application_manager.py] --> RedisProgressStore
+BackendManager --> WorkerCallbackPayload
 end
 subgraph "External Services"
 LangChain --> OpenRouter[OpenRouter API]
 PDFExport --> WeasyPrint[WeasyPrint Library]
+RedisProgressWriter --> Redis[Redis Server]
+BackendCallbackClient --> httpx[httpx AsyncClient]
 end
 ```
 
@@ -466,6 +557,7 @@ end
 - [generation.py:14-17](file://agents/generation.py#L14-L17)
 - [worker.py:21-23](file://agents/worker.py#L21-L23)
 - [resume_parser.py:10-24](file://backend/app/services/resume_parser.py#L10-L24)
+- [progress.py:53-95](file://backend/app/services/progress.py#L53-L95)
 
 ### Component Coupling Analysis
 
@@ -477,6 +569,8 @@ end
 | Assembly Agent | High (8/10) | Low (3/10) | 1 internal dependency |
 | Worker Orchestrator | Medium (6/10) | High (7/10) | 4 external integrations |
 | **Extraction Callback System** | **High (9/10)** | **Medium (6/10)** | **1 external integration** |
+| **Backend Reconciliation** | **High (8/10)** | **Low (4/10)** | **0 external dependencies** |
+| **Redis Progress Store** | **High (9/10)** | **Medium (5/10)** | **1 external dependency** |
 
 **Section sources**
 - [generation.py:1-596](file://agents/generation.py#L1-L596)
@@ -512,16 +606,22 @@ The system employs efficient memory handling:
 
 ### Extraction Reliability Improvements
 
-**Updated** Enhanced extraction reliability through best-effort callback delivery:
+**Updated** Enhanced extraction reliability through comprehensive callback error handling:
 
 - **Callback Resilience**: Extraction continues even when callback endpoints are temporarily unreachable
 - **Progress Tracking**: Redis-based progress monitoring ensures state consistency
 - **Terminal Recovery**: Backend reconciliation handles eventual callback delivery
 - **Error Classification**: Specific failure types for extraction callback delivery issues
+- **Redis Caching**: Successful extraction payloads cached for recovery
+- **Exponential Backoff**: Automatic retry with progressive delay for transient failures
+- **Eventual Consistency**: Redis progress ensures state convergence across system restarts
+- **Graceful Degradation**: System continues operating normally when backend communication fails
+- **Retry Limits**: Configurable retry attempts (default: 6) with exponential backoff progression
 
 **Section sources**
 - [prompts.md:336-345](file://docs/prompts.md#L336-L345)
 - [worker.py:696-711](file://agents/worker.py#L696-L711)
+- [worker.py:403-434](file://agents/worker.py#L403-L434)
 
 ## Troubleshooting Guide
 
@@ -535,6 +635,9 @@ The system employs efficient memory handling:
 | Grounding Failure | Unsupported claims or dates | Verify base resume content |
 | Timeout Error | Generation exceeds timeout limits | Reduce content size or adjust settings |
 | **Extraction Callback Failure** | **Started callback exception logged** | **Best-effort continuation with progress tracking** |
+| **Terminal Progress Reconciliation** | **Backend recovery after callback failure** | **Redis cache-based state recovery** |
+| **Redis Cache Miss** | **Extraction success not reflected in UI** | **Wait for reconciliation or manual recovery** |
+| **Excessive Retries** | **Backend callback client raising RuntimeError** | **Check network connectivity and backend availability** |
 
 ### Debugging Strategies
 
@@ -543,6 +646,9 @@ The system employs efficient memory handling:
 3. **Validation Trace**: Check validation error categories and severity
 4. **Workflow State**: Monitor internal state transitions in workflow manager
 5. **Callback Monitoring**: Check extraction callback delivery logs and Redis progress
+6. **Redis Cache Inspection**: Verify cached extraction payloads for recovery
+7. **Backend Reconciliation**: Monitor terminal progress reconciliation process
+8. **Retry Analysis**: Check exponential backoff progression in callback client
 
 ### Error Recovery Patterns
 
@@ -553,14 +659,18 @@ Classify --> PrivacyError[Privacy Error]
 Classify --> ValidationError[Validation Error]
 Classify --> TimeoutError[Timeout Error]
 Classify --> CallbackError[Callback Error]
+Classify --> RedisError[Redis Error]
 Classify --> OtherError[Other Error]
 PrivacyError --> Sanitize[Re-sanitize Content]
 ValidationError --> Fix[Fix Validation Issues]
 TimeoutError --> Retry[Retry with Reduced Content]
 CallbackError --> BestEffort[Best-Effort Continuation]
+RedisError --> Reconcile[Reconcile with Redis Cache]
 OtherError --> Report[Report to Backend]
 BestEffort --> ProgressOnly[Progress-Only Tracking]
 ProgressOnly --> Continue[Continue Extraction]
+Reconcile --> RecoverState[Recover Application State]
+RecoverState --> Continue
 Sanitize --> RetryCall[Retry Generation Call]
 Fix --> RetryCall
 Retry --> RetryCall
@@ -568,18 +678,24 @@ RetryCall --> Success[Success]
 Report --> Manual[Manual Intervention Required]
 ```
 
-**Updated** Enhanced callback error recovery with best-effort continuation:
+**Updated** Enhanced callback error recovery with best-effort continuation and terminal progress reconciliation:
 
 - **Started Callback Failure**: Extraction continues with progress-only tracking
 - **Succeeded Callback Failure**: Backend reconciliation handles eventual delivery
-- **Network Transients**: Automatic retry with exponential backoff
+- **Network Transients**: Automatic retry with exponential backoff (up to 6 attempts)
 - **Eventual Consistency**: Redis progress ensures state convergence
+- **Terminal Recovery**: Backend automatically recovers from callback failures
+- **Redis-Based Recovery**: Cached payloads enable state restoration
+- **Graceful Degradation**: System continues operating normally when backend communication fails
+- **Retry Limits**: Configurable retry attempts with exponential backoff progression
 
 **Section sources**
 - [generation.py:388-441](file://agents/generation.py#L388-L441)
 - [validation.py:445-511](file://agents/validation.py#L445-L511)
 - [worker.py:696-711](file://agents/worker.py#L696-L711)
+- [worker.py:403-434](file://agents/worker.py#L403-L434)
 - [test_worker.py:273-337](file://agents/tests/test_worker.py#L273-L337)
+- [application_manager.py:858-912](file://backend/app/services/application_manager.py#L858-L912)
 
 ## Conclusion
 
@@ -592,7 +708,13 @@ Key architectural achievements include:
 - **Runtime Flexibility**: Dynamic section permutations and parameter variations
 - **Robust Error Handling**: Comprehensive fallback mechanisms and recovery strategies
 - **Enhanced Extraction Reliability**: Best-effort callback delivery with automatic continuation
+- **Terminal Progress Reconciliation**: Backend recovery system for callback delivery failures
+- **Redis-Based State Management**: Persistent state tracking across system restarts
+- **Graceful Degradation**: System continues operating normally when backend communication fails
+- **Exponential Backoff**: Automatic retry with progressive delay for transient failures
 
-**Updated** Recent improvements focus on extraction callback resilience, ensuring system reliability even when backend communication is temporarily unavailable. The addition of best-effort callback behavior provides graceful degradation while maintaining eventual consistency through Redis-based progress tracking.
+**Updated** Recent improvements focus on extraction callback resilience, ensuring system reliability even when backend communication is temporarily unavailable. The addition of best-effort callback behavior provides graceful degradation while maintaining eventual consistency through Redis-based progress tracking. The comprehensive retry/backoff system with exponential backoff ensures reliable callback delivery, while the terminal progress reconciliation mechanism enables automatic recovery from callback failures.
 
-The system's modular design facilitates future enhancements while maintaining backward compatibility. The extensive documentation and testing infrastructure support ongoing development and maintenance efforts.
+The system's modular design facilitates future enhancements while maintaining backward compatibility. The extensive documentation and testing infrastructure support ongoing development and maintenance efforts. The integration of Redis caching and backend reconciliation provides robust fault tolerance and state consistency across the entire extraction workflow.
+
+The extraction system now provides comprehensive error handling with automatic retry/backoff, ensuring that transient network failures don't compromise the overall system reliability. The Redis-based progress tracking system maintains state consistency even when callback delivery fails, enabling eventual consistency through backend reconciliation. This combination of features creates a resilient system that can handle real-world network conditions while maintaining data integrity and user experience.

@@ -31,10 +31,10 @@
 
 ## Update Summary
 **Changes Made**
-- Added two new task entries documenting extraction callback resilience improvements and terminal progress reconciliation features
-- Updated bug fixes section to include extraction callback resilience (B5-T05) and terminal progress reconciliation (B5-T04) implementations
-- Enhanced reliability section with detailed explanation of callback resilience and terminal reconciliation mechanisms
+- Added comprehensive documentation for B5-T04 (terminal progress reconciliation), B5-T05 (extraction callback resilience), B5-T06 (extraction callback hardening), and B5-T07 (callback-missed extraction recovery) bug fixes
+- Enhanced reliability section with detailed terminal progress reconciliation documentation and callback resilience mechanisms
 - Updated troubleshooting guide with specific guidance for callback delivery failures and terminal progress handling
+- Added systematic coverage of extraction payload caching and recovery mechanisms
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -54,7 +54,7 @@
 ## Introduction
 This document describes the Build Plan for the AI Resume Builder project. It consolidates the roadmap, implementation status, and operational build practices across the frontend, backend, agents (workers), and local development stack. It also documents the containerized local environment, deployment automation, and configuration contracts that ensure reproducible builds and reliable CI/CD on Railway.
 
-**Updated** Enhanced with extraction callback resilience improvements and terminal progress reconciliation features that provide reliability guarantees for distributed asynchronous workflows.
+**Updated** Enhanced with comprehensive extraction callback resilience improvements, terminal progress reconciliation features, and callback-missed extraction recovery mechanisms that provide reliability guarantees for distributed asynchronous workflows.
 
 ## Project Structure
 The project is organized into layered services:
@@ -105,7 +105,7 @@ R_AG --> R_KV
 - [.github/workflows/deploy-railway-main.yml:1-134](file://.github/workflows/deploy-railway-main.yml#L1-L134)
 
 **Section sources**
-- [docs/build-plan.md:1-507](file://docs/build-plan.md#L1-L507)
+- [docs/build-plan.md:1-509](file://docs/build-plan.md#L1-L509)
 - [docker-compose.yml:1-194](file://docker-compose.yml#L1-L194)
 
 ## Core Components
@@ -437,26 +437,27 @@ REST --> DB
 
 ## Reliability Enhancements
 
-### Extraction Callback Resilience
+### Extraction Callback Resilience (B5-T05)
 The system now implements resilient extraction callback handling to prevent job termination during transient backend connectivity issues:
 
 - **Best-effort Callback Delivery**: The initial `event=started` callback is treated as best-effort rather than fatal
 - **Graceful Degradation**: Extraction jobs continue running even when the initial callback cannot reach the backend
 - **Progress-driven Recovery**: Jobs rely on Redis-backed progress updates and terminal reconciliation paths
-- **Retry Logic**: Backend callback client implements exponential backoff with 3 retry attempts
+- **Retry Logic**: Backend callback client implements exponential backoff with 6 retry attempts (1s, 2s, 4s, 8s max)
 - **Error Classification**: HTTP 4xx errors are treated as fatal, while 5xx errors trigger retries
 
 **Implementation Details**:
 - BackendCallbackClient.post() method handles callback delivery with retry logic
-- Exponential backoff strategy (0.5s, 1.0s, 2.0s delays between attempts)
+- Exponential backoff strategy (1s initial, 8s max) with 6 retry attempts
 - Fatal error classification for 4xx HTTP status codes
 - Runtime error raised after all retry attempts fail
 
 **Section sources**
-- [agents/worker.py:376-404](file://agents/worker.py#L376-L404)
+- [agents/worker.py:403-436](file://agents/worker.py#L403-L436)
+- [agents/worker.py:862-879](file://agents/worker.py#L862-L879)
 - [backend/app/api/internal_worker.py:19-34](file://backend/app/api/internal_worker.py#L19-L34)
 
-### Terminal Progress Reconciliation
+### Terminal Progress Reconciliation (B5-T04)
 The system provides immediate manual-entry fallback when worker callbacks are unreachable:
 
 - **Redis-based Terminal Detection**: Backend monitors Redis progress store for terminal states
@@ -472,8 +473,43 @@ The system provides immediate manual-entry fallback when worker callbacks are un
 - Progress synthesis: builds synthetic progress records when application state differs from stored progress
 
 **Section sources**
-- [backend/app/services/application_manager.py:724-849](file://backend/app/services/application_manager.py#L724-L849)
+- [backend/app/services/application_manager.py:724-856](file://backend/app/services/application_manager.py#L724-L856)
 - [frontend/src/routes/ApplicationDetailPage.tsx:345-383](file://frontend/src/routes/ApplicationDetailPage.tsx#L345-L383)
+
+### Extraction Callback Hardening (B5-T06)
+The system hardens extraction callback delivery to prevent terminal callback outages from aborting completed work:
+
+- **Non-fatal Failure Callbacks**: Extraction failure callbacks are treated as best-effort after terminal progress writes
+- **Decoupled Completion**: Extraction success completion is decoupled from callback delivery so callback transport outages no longer convert completed extraction into immediate runtime failure
+- **Enhanced Retry Backoff**: Increased worker callback retry/backoff tolerance with 6 attempts and exponential backoff
+- **Exception Handling**: Callback delivery failures are logged but do not interrupt job completion
+
+**Implementation Details**:
+- `report_failure()` method writes terminal progress before attempting callback delivery
+- Success callback delivery failures trigger exception logging but job continues
+- Non-fatal error handling prevents immediate runtime failure for completed work
+
+**Section sources**
+- [agents/worker.py:655-697](file://agents/worker.py#L655-L697)
+- [agents/worker.py:862-879](file://agents/worker.py#L862-L879)
+
+### Callback-Missed Extraction Recovery (B5-T07)
+The system implements comprehensive recovery for callback-missed extraction success scenarios:
+
+- **Redis Payload Caching**: Worker caches successful extraction payloads in Redis before callback delivery
+- **Progress Cache Recovery**: Backend progress reconciliation can apply cached payload when callback transport fails
+- **Automatic State Recovery**: Prevents callback outages from converting completed extraction into manual_entry_required
+- **Payload Validation**: Cached payloads are validated before application to ensure data integrity
+
+**Recovery Mechanism**:
+- `_reconcile_extraction_success_from_progress_cache()` method handles payload recovery
+- Cached result validation ensures only valid payloads are applied
+- Automatic state transition to generation_pending with extracted data
+- Cleanup of cached extraction results after successful application
+
+**Section sources**
+- [backend/app/services/application_manager.py:858-912](file://backend/app/services/application_manager.py#L858-L912)
+- [agents/worker.py:384-401](file://agents/worker.py#L384-L401)
 
 ### Reliability Architecture
 The reliability enhancements are implemented through a multi-layered approach:
@@ -499,13 +535,13 @@ Backend->>Frontend : "Synthesize progress if needed"
 ```
 
 **Diagram sources**
-- [agents/worker.py:376-404](file://agents/worker.py#L376-L404)
-- [backend/app/services/application_manager.py:724-849](file://backend/app/services/application_manager.py#L724-L849)
+- [agents/worker.py:403-436](file://agents/worker.py#L403-L436)
+- [backend/app/services/application_manager.py:724-856](file://backend/app/services/application_manager.py#L724-L856)
 - [frontend/src/routes/ApplicationDetailPage.tsx:345-383](file://frontend/src/routes/ApplicationDetailPage.tsx#L345-L383)
 
 **Section sources**
-- [agents/worker.py:376-404](file://agents/worker.py#L376-L404)
-- [backend/app/services/application_manager.py:724-849](file://backend/app/services/application_manager.py#L724-L849)
+- [agents/worker.py:403-436](file://agents/worker.py#L403-L436)
+- [backend/app/services/application_manager.py:724-856](file://backend/app/services/application_manager.py#L724-L856)
 - [frontend/src/routes/ApplicationDetailPage.tsx:345-383](file://frontend/src/routes/ApplicationDetailPage.tsx#L345-L383)
 
 ## Troubleshooting Guide
@@ -600,7 +636,7 @@ Backend->>Frontend : "Synthesize progress if needed"
 - [docs/build-plan.md:153](file://docs/build-plan.md#L153)
 - [frontend/vite.config.ts:14-20](file://frontend/vite.config.ts#L14-L20)
 
-### Extraction Callback Resilience Issues
+### Extraction Callback Resilience Issues (B5-T05)
 **Problem**: Extraction jobs failing during initial callback delivery despite successful processing
 **Root Cause**: Backend callback delivery failures causing premature job termination
 **Solution**:
@@ -615,10 +651,10 @@ Backend->>Frontend : "Synthesize progress if needed"
 - Terminal progress reconciliation should trigger manual_entry_required on completion
 
 **Section sources**
-- [agents/worker.py:376-404](file://agents/worker.py#L376-L404)
+- [agents/worker.py:403-436](file://agents/worker.py#L403-L436)
 - [backend/app/api/internal_worker.py:19-34](file://backend/app/api/internal_worker.py#L19-L34)
 
-### Terminal Progress Reconciliation Failures
+### Terminal Progress Reconciliation Failures (B5-T04)
 **Problem**: Manual-entry fallback not triggering when worker callbacks are unreachable
 **Root Cause**: Terminal progress reconciliation logic not detecting completion states
 **Solution**:
@@ -633,8 +669,44 @@ Backend->>Frontend : "Synthesize progress if needed"
 - Frontend should switch to manual-entry recovery state
 
 **Section sources**
-- [backend/app/services/application_manager.py:724-849](file://backend/app/services/application_manager.py#L724-L849)
+- [backend/app/services/application_manager.py:724-856](file://backend/app/services/application_manager.py#L724-L856)
 - [frontend/src/routes/ApplicationDetailPage.tsx:345-383](file://frontend/src/routes/ApplicationDetailPage.tsx#L345-L383)
+
+### Extraction Callback Hardening Issues (B5-T06)
+**Problem**: Completed extraction jobs converting to immediate runtime failure despite successful processing
+**Root Cause**: Failure callback delivery not handled as best-effort after terminal progress writes
+**Solution**:
+1. Verify `report_failure()` method writes terminal progress before callback delivery
+2. Check exception handling for success callback delivery failures
+3. Monitor ARQ worker logs for callback delivery exceptions
+4. Validate backend progress reconciliation logic
+
+**Expected Behavior**:
+- Terminal progress writes should always succeed
+- Failure callback delivery failures should not interrupt job completion
+- Jobs should continue processing even if callback fails
+
+**Section sources**
+- [agents/worker.py:655-697](file://agents/worker.py#L655-L697)
+- [agents/worker.py:862-879](file://agents/worker.py#L862-L879)
+
+### Callback-Missed Extraction Recovery Issues (B5-T07)
+**Problem**: Completed extraction jobs not transitioning to generation_pending despite successful processing
+**Root Cause**: Redis payload caching not functioning or progress cache not being applied
+**Solution**:
+1. Verify Redis extraction result caching in worker
+2. Check `_reconcile_extraction_success_from_progress_cache()` method execution
+3. Validate cached payload validation and application
+4. Monitor backend logs for cache recovery errors
+
+**Expected Behavior**:
+- Successful extraction payloads should be cached in Redis
+- Progress cache should be applied when callback delivery fails
+- Application should transition to generation_pending with extracted data
+
+**Section sources**
+- [backend/app/services/application_manager.py:858-912](file://backend/app/services/application_manager.py#L858-L912)
+- [agents/worker.py:384-401](file://agents/worker.py#L384-L401)
 
 ### Systematic Deployment Troubleshooting Procedures
 **Production Deployment Checklist**:
@@ -646,6 +718,7 @@ Backend->>Frontend : "Synthesize progress if needed"
 6. Test critical endpoints: `/api/session/bootstrap`, `/health`, `/api/applications`
 7. Verify extraction callback resilience with test jobs
 8. Validate terminal progress reconciliation with completion scenarios
+9. Test callback-missed extraction recovery with cached payload scenarios
 
 **Common Error Patterns**:
 - **File Not Found Errors**: Typically indicate missing workflow contract or incorrect path resolution
@@ -654,14 +727,15 @@ Backend->>Frontend : "Synthesize progress if needed"
 - **Host Validation Errors**: Indicate frontend allowedHosts configuration issues
 - **Callback Delivery Failures**: Indicate transient backend connectivity issues
 - **Reconciliation Failures**: Indicate terminal progress detection or frontend polling issues
+- **Payload Cache Misses**: Indicate Redis caching or cache application issues
 
 **Section sources**
 - [docs/build-plan.md:151-154](file://docs/build-plan.md#L151-L154)
 
 ## Conclusion
-The Build Plan establishes a robust, reproducible local development environment and a streamlined CI/CD pipeline for production. The shared workflow contract and containerized stack ensure consistent behavior across frontend, backend, and agents. The path-filtered Railway deployments minimize disruption while enabling rapid iteration across services. Recent enhancements include improved Railway runtime routing with dynamic port binding, enhanced frontend custom domain validation for production deployments, comprehensive deployment troubleshooting documentation covering production session bootstrap failures, Redis connectivity issues, and workflow contract path resolution problems, along with critical reliability improvements for extraction callback resilience and terminal progress reconciliation.
+The Build Plan establishes a robust, reproducible local development environment and a streamlined CI/CD pipeline for production. The shared workflow contract and containerized stack ensure consistent behavior across frontend, backend, and agents. The path-filtered Railway deployments minimize disruption while enabling rapid iteration across services. Recent enhancements include improved Railway runtime routing with dynamic port binding, enhanced frontend custom domain validation for production deployments, comprehensive deployment troubleshooting documentation covering production session bootstrap failures, Redis connectivity issues, and workflow contract path resolution problems, along with critical reliability improvements for extraction callback resilience, terminal progress reconciliation, extraction callback hardening, and callback-missed extraction recovery.
 
-**Updated** Enhanced with extraction callback resilience improvements and terminal progress reconciliation features that provide reliability guarantees for distributed asynchronous workflows, ensuring jobs continue running during transient backend connectivity issues and providing immediate manual-entry fallback when needed.
+**Updated** Enhanced with comprehensive extraction callback resilience improvements, terminal progress reconciliation features, extraction callback hardening, and callback-missed extraction recovery mechanisms that provide reliability guarantees for distributed asynchronous workflows, ensuring jobs continue running during transient backend connectivity issues and providing immediate manual-entry fallback when needed.
 
 ## Appendices
 
@@ -715,6 +789,8 @@ The Build Plan establishes a robust, reproducible local development environment 
 - [ ] Supabase authentication working correctly
 - [ ] Extraction callback resilience verified with test jobs
 - [ ] Terminal progress reconciliation tested with completion scenarios
+- [ ] Extraction callback hardening verified with failure scenarios
+- [ ] Callback-missed extraction recovery tested with cached payload scenarios
 
 **Section sources**
 - [docs/build-plan.md:151-154](file://docs/build-plan.md#L151-L154)
@@ -730,8 +806,21 @@ The Build Plan establishes a robust, reproducible local development environment 
 - Frontend Integration: Updated extraction polling to switch to manual-entry recovery
 - Testing: Verified with terminal progress reconciliation scenarios
 
+**Extraction Callback Hardening (B5-T06)**:
+- Implementation: Failure callbacks are now best-effort after terminal progress writes
+- Testing: Verified with extraction completion scenarios and callback failure handling
+- Monitoring: Backend logs show exception handling for callback delivery failures
+
+**Callback-Missed Extraction Recovery (B5-T07)**:
+- Implementation: Redis payload caching and progress cache recovery mechanism
+- Testing: Verified with cached payload application and state transition scenarios
+- Monitoring: Backend logs show cache validation and application success
+
 **Section sources**
-- [docs/build-plan.md:117-119](file://docs/build-plan.md#L117-L119)
-- [agents/worker.py:376-404](file://agents/worker.py#L376-L404)
-- [backend/app/services/application_manager.py:724-849](file://backend/app/services/application_manager.py#L724-L849)
+- [docs/build-plan.md:117-121](file://docs/build-plan.md#L117-L121)
+- [agents/worker.py:403-436](file://agents/worker.py#L403-L436)
+- [agents/worker.py:655-697](file://agents/worker.py#L655-L697)
+- [agents/worker.py:862-879](file://agents/worker.py#L862-L879)
+- [backend/app/services/application_manager.py:724-856](file://backend/app/services/application_manager.py#L724-L856)
+- [backend/app/services/application_manager.py:858-912](file://backend/app/services/application_manager.py#L858-L912)
 - [frontend/src/routes/ApplicationDetailPage.tsx:345-383](file://frontend/src/routes/ApplicationDetailPage.tsx#L345-L383)

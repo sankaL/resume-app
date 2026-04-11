@@ -689,11 +689,12 @@ async def report_failure(
                 },
             }
         )
-    except Exception:
-        logger.exception(
-            "Extraction failure callback delivery failed after terminal progress write. app_id=%s job_id=%s",
+    except Exception as error:
+        logger.warning(
+            "Extraction failure callback delivery failed after terminal progress write. app_id=%s job_id=%s error=%s",
             application_id,
             job_id,
+            error,
         )
 
 
@@ -743,11 +744,12 @@ async def run_extraction_job(
                 "event": "started",
             }
         )
-    except Exception:
-        logger.exception(
-            "Extraction started callback delivery failed; continuing with progress-only tracking. app_id=%s job_id=%s",
+    except Exception as error:
+        logger.warning(
+            "Extraction started callback delivery failed; continuing with progress-only tracking. app_id=%s job_id=%s error=%s",
             application_id,
             job_id,
+            error,
         )
 
     success_payload: Optional[dict[str, Any]] = None
@@ -870,11 +872,12 @@ async def run_extraction_job(
                     "extracted": success_payload,
                 }
             )
-        except Exception:
-            logger.exception(
-                "Extraction success callback delivery failed; relying on progress reconciliation. app_id=%s job_id=%s",
+        except Exception as error:
+            logger.warning(
+                "Extraction success callback delivery failed; relying on progress reconciliation. app_id=%s job_id=%s error=%s",
                 application_id,
                 job_id,
+                error,
             )
         return success_payload
 
