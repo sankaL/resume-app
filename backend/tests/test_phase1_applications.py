@@ -930,6 +930,112 @@ async def test_delete_application_removes_record_and_progress():
 
 
 @pytest.mark.asyncio
+async def test_delete_application_reconciles_terminal_extraction_before_delete():
+    service, repository, _, progress_store, _, _, _ = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="draft",
+        internal_state="extracting",
+    )
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-1",
+            workflow_kind="extraction",
+            state="manual_entry_required",
+            message="Extraction failed.",
+            percent_complete=100,
+            created_at="2026-04-07T12:00:00+00:00",
+            updated_at="2026-04-07T12:01:00+00:00",
+            completed_at="2026-04-07T12:01:00+00:00",
+            terminal_error_code="extraction_failed",
+        ),
+    )
+
+    await service.delete_application(user_id="user-1", application_id=created.id)
+
+    assert repository.fetch_application("user-1", created.id) is None
+    assert await progress_store.get(created.id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_application_reconciles_terminal_generation_before_delete():
+    service, repository, _, progress_store, _, _, _ = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="draft",
+        internal_state="generating",
+    )
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-1",
+            workflow_kind="generation",
+            state="resume_ready",
+            message="Resume generated.",
+            percent_complete=100,
+            created_at="2026-04-07T12:00:00+00:00",
+            updated_at="2026-04-07T12:01:00+00:00",
+            completed_at="2026-04-07T12:01:00+00:00",
+            terminal_error_code=None,
+        ),
+    )
+
+    await service.delete_application(user_id="user-1", application_id=created.id)
+
+    assert repository.fetch_application("user-1", created.id) is None
+    assert await progress_store.get(created.id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_application_succeeds_when_progress_store_unavailable():
+    service, repository, _, _, _, _, _ = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="draft",
+        internal_state="generation_pending",
+    )
+
+    async def fail_get(application_id: str) -> Optional[ProgressRecord]:
+        raise RuntimeError("redis unavailable")
+
+    async def fail_delete(application_id: str) -> None:
+        raise RuntimeError("redis unavailable")
+
+    service.progress_store.get = fail_get  # type: ignore[method-assign]
+    service.progress_store.delete = fail_delete  # type: ignore[method-assign]
+
+    await service.delete_application(user_id="user-1", application_id=created.id)
+
+    assert repository.fetch_application("user-1", created.id) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_application_still_blocks_active_state_when_progress_unavailable():
+    service, repository, _, _, _, _, _ = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="draft",
+        internal_state="extracting",
+    )
+
+    async def fail_get(application_id: str) -> Optional[ProgressRecord]:
+        raise RuntimeError("redis unavailable")
+
+    service.progress_store.get = fail_get  # type: ignore[method-assign]
+
+    with pytest.raises(PermissionError) as exc_info:
+        await service.delete_application(user_id="user-1", application_id=created.id)
+
+    assert str(exc_info.value) == "Application cannot be deleted while background work is still running."
+    assert repository.fetch_application("user-1", created.id) is not None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "internal_state",
     ["extraction_pending", "extracting", "generating", "regenerating_full", "regenerating_section"],

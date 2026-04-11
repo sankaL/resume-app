@@ -336,10 +336,37 @@ class ApplicationService:
         application_id: str,
     ) -> None:
         record = self._require_application(user_id=user_id, application_id=application_id)
+        progress: Optional[ProgressRecord] = None
+        try:
+            progress = await self.progress_store.get(application_id)
+        except Exception:
+            logger.warning(
+                "Failed loading progress for delete on application %s; proceeding without reconciliation.",
+                application_id,
+                exc_info=True,
+            )
+
+        if progress is not None:
+            try:
+                record = await self._reconcile_terminal_extraction_progress(record, progress)
+                record = await self._reconcile_terminal_generation_progress(record, progress)
+            except Exception:
+                logger.warning(
+                    "Failed reconciling terminal progress for delete on application %s; proceeding with current state.",
+                    application_id,
+                    exc_info=True,
+                )
         if record.internal_state in ACTIVE_DELETE_BLOCKING_STATES:
             raise PermissionError("Application cannot be deleted while background work is still running.")
 
-        await self.progress_store.delete(application_id)
+        try:
+            await self.progress_store.delete(application_id)
+        except Exception:
+            logger.warning(
+                "Failed deleting cached progress for application %s; continuing with database delete.",
+                application_id,
+                exc_info=True,
+            )
         self.repository.delete_application(application_id=application_id, user_id=user_id)
 
     async def complete_manual_entry(

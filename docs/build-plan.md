@@ -1,7 +1,7 @@
 # AI Resume Builder Build Plan
 
 **Document status:** Active roadmap  
-**Last updated:** 2026-04-10  
+**Last updated:** 2026-04-11  
 **Implementation status:** Phases 0 through 4 implemented; Phase 5 in progress  
 **Primary product source:** `docs/resume_builder_PRD_v3.md`  
 **Database contract:** `docs/database_schema.md`
@@ -115,6 +115,8 @@ These tables track implementation-sized tasks seeded from the phase roadmap belo
 
 | Task ID | Task | Type | Status | Date updated | Comments |
 |---|---|---|---|---|---|
+| B5-T11 | Prevent Redis progress-store outages from causing application delete 500s | BE | DONE | 2026-04-11 13:28:46 EDT | `ApplicationService.delete_application()` now treats Redis progress fetch/reconcile/delete as best-effort with warning logs, preserving active-state guardrails while allowing DB deletion to complete when cache infrastructure is transiently unavailable. Added regression coverage for progress-store get/delete failure paths. |
+| B5-T10 | Reconcile terminal workflow progress before delete so stale active states do not block valid application deletion | BE | DONE | 2026-04-11 13:21:02 EDT | `ApplicationService.delete_application()` now applies terminal extraction/generation progress reconciliation before enforcing active-state delete guards, preventing callback-missed terminal states from causing false delete blocks. Added regression coverage for terminal extraction and terminal generation progress delete paths. |
 | B5-T09 | Reduce extraction callback log noise for handled transport failures | AI/Observability | DONE | 2026-04-11 13:10:05 EDT | Worker callback delivery failures for extraction `started`/`failed`/`succeeded` events are now logged as warnings with concise error context instead of full exception stack traces, reducing false “job failed” signals while preserving non-fatal fallback behavior. |
 | B5-T08 | Reconcile callback-missed extraction success on detail fetch and avoid false manual-entry fallback in UI | BE/FE | DONE | 2026-04-11 13:03:46 EDT | `GET /api/applications/{id}` now runs extraction terminal-progress reconciliation so detail fetch can recover callback-missed success without waiting on a separate progress poll, and the detail-page extraction fallback now maps terminal success progress to `generation_pending` instead of showing a false `manual_entry_required` error state. |
 | B5-T07 | Recover callback-missed extraction success from Redis payload cache during progress polling | BE/AI/Docs | DONE | 2026-04-11 12:35:17 EDT | Worker now caches successful extraction payloads in Redis before callback delivery and backend progress reconciliation can apply that cached payload when callback transport fails, preventing callback outages from converting completed extraction into `manual_entry_required`. |
