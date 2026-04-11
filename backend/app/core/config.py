@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     resend_api_key: Optional[str] = Field(default=None, alias="RESEND_API_KEY")
     email_from: Optional[str] = Field(default=None, alias="EMAIL_FROM")
     shared_contract_path: str = Field(
-        default="/workspace/shared/workflow-contract.json", alias="SHARED_CONTRACT_PATH"
+        default="/app/shared/workflow-contract.json", alias="SHARED_CONTRACT_PATH"
     )
     openrouter_api_key: Optional[str] = Field(default=None, alias="OPENROUTER_API_KEY")
     openrouter_cleanup_model: str = Field(

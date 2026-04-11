@@ -32,8 +32,18 @@ class WorkflowContract(BaseModel):
 @lru_cache
 def get_workflow_contract() -> WorkflowContract:
     settings = get_settings()
-    contract_path = Path(settings.shared_contract_path)
-    if not contract_path.exists():
-        contract_path = Path(__file__).resolve().parents[3] / "shared" / "workflow-contract.json"
+    configured_path = Path(settings.shared_contract_path)
+    fallback_paths = (
+        Path(__file__).resolve().parents[2] / "shared" / "workflow-contract.json",
+        Path(__file__).resolve().parents[3] / "shared" / "workflow-contract.json",
+    )
+    candidate_paths = (configured_path, *fallback_paths)
+
+    contract_path = next((path for path in candidate_paths if path.exists()), None)
+    if contract_path is None:
+        raise FileNotFoundError(
+            "Workflow contract file not found. Checked: "
+            + ", ".join(str(path) for path in candidate_paths)
+        )
 
     return WorkflowContract.model_validate(json.loads(contract_path.read_text()))
