@@ -34,7 +34,10 @@ YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 PRESENT_RE = re.compile(r"\b(?:present|current)\b", re.I)
 DATE_RANGE_SEPARATOR_RE = re.compile(r"\bto\b|[-/–—]", re.I)
 PROFESSIONAL_EXPERIENCE_HEADING = "professional experience"
-ONE_PAGE_VALIDATION_ROOMIER_STEPS = 4
+ONE_PAGE_VALIDATION_ROOMIER_STEPS = 6
+MIN_READABLE_BODY_FONT_SIZE = 9.4
+MIN_READABLE_LINE_HEIGHT = 1.1
+SINGLE_LIST_WRAPPER_RE = re.compile(r"^<(?:ul|ol)>\s*<li>(.*)</li>\s*</(?:ul|ol)>$", re.S)
 
 
 @dataclass(frozen=True)
@@ -63,11 +66,11 @@ class LayoutPreset:
 
     @property
     def section_margin_bottom(self) -> float:
-        return round(self.body_font_size * 0.24 * self.spacing_scale * self.section_spacing_scale, 2)
+        return round(max(4.0, self.body_font_size * 0.32 * self.spacing_scale * self.section_spacing_scale), 2)
 
     @property
     def paragraph_margin(self) -> float:
-        return round(self.body_font_size * 0.16 * self.spacing_scale, 2)
+        return round(max(1.55, self.body_font_size * 0.18 * self.spacing_scale), 2)
 
     @property
     def split_row_gap(self) -> float:
@@ -75,33 +78,48 @@ class LayoutPreset:
 
     @property
     def header_margin_bottom(self) -> float:
-        return round(self.body_font_size * 0.42 * self.spacing_scale, 2)
+        return self.contact_to_first_section_margin
+
+    @property
+    def contact_to_first_section_margin(self) -> float:
+        return round(max(9.0, self.body_font_size * 0.78 * self.spacing_scale), 2)
+
+    @property
+    def section_header_content_gap(self) -> float:
+        return round(max(4.0, self.body_font_size * 0.42 * self.spacing_scale * self.section_spacing_scale), 2)
 
     @property
     def subheading_margin_bottom(self) -> float:
-        return round(max(0.55, self.paragraph_margin * 0.75), 2)
+        return self.subheading_content_gap
+
+    @property
+    def subheading_content_gap(self) -> float:
+        return round(max(2.1, self.paragraph_margin * 1.15), 2)
 
     @property
     def split_group_margin(self) -> float:
-        return round(max(0.55, self.paragraph_margin * 0.82), 2)
+        return round(max(0.8, self.paragraph_margin * 0.92), 2)
 
     @property
     def list_item_margin_bottom(self) -> float:
-        return round(max(0.16, self.paragraph_margin * 0.22), 2)
+        return round(max(0.24, self.paragraph_margin * 0.34), 2)
+
+    @property
+    def bullet_indent(self) -> float:
+        return round(max(10.5, self.body_font_size * 0.96), 2)
 
 
 LAYOUT_PRESETS = [
     # Density-first ladder: tighten spacing before shrinking fonts.
-    LayoutPreset(body_font_size=11.8, line_height=1.24, page_margin=0.56, spacing_scale=1.12),
-    LayoutPreset(body_font_size=11.8, line_height=1.18, page_margin=0.48, spacing_scale=0.90),
-    LayoutPreset(body_font_size=11.2, line_height=1.20, page_margin=0.52, spacing_scale=1.04),
-    LayoutPreset(body_font_size=11.2, line_height=1.14, page_margin=0.44, spacing_scale=0.84),
-    LayoutPreset(body_font_size=10.6, line_height=1.16, page_margin=0.46, spacing_scale=0.94),
-    LayoutPreset(body_font_size=10.6, line_height=1.10, page_margin=0.38, spacing_scale=0.74),
-    LayoutPreset(body_font_size=10.0, line_height=1.12, page_margin=0.34, spacing_scale=0.86),
-    LayoutPreset(body_font_size=10.0, line_height=1.06, page_margin=0.28, spacing_scale=0.68),
-    LayoutPreset(body_font_size=9.4, line_height=1.08, page_margin=0.24, spacing_scale=0.74),
-    LayoutPreset(body_font_size=8.8, line_height=1.02, page_margin=0.18, spacing_scale=0.62),
+    LayoutPreset(body_font_size=11.8, line_height=1.26, page_margin=0.60, spacing_scale=1.12, section_spacing_scale=1.08),
+    LayoutPreset(body_font_size=11.8, line_height=1.22, page_margin=0.56, spacing_scale=0.98, section_spacing_scale=1.0),
+    LayoutPreset(body_font_size=11.4, line_height=1.24, page_margin=0.54, spacing_scale=1.02, section_spacing_scale=1.02),
+    LayoutPreset(body_font_size=11.2, line_height=1.20, page_margin=0.50, spacing_scale=0.92, section_spacing_scale=0.96),
+    LayoutPreset(body_font_size=10.8, line_height=1.18, page_margin=0.48, spacing_scale=0.88, section_spacing_scale=0.92),
+    LayoutPreset(body_font_size=10.6, line_height=1.16, page_margin=0.46, spacing_scale=0.80, section_spacing_scale=0.88),
+    LayoutPreset(body_font_size=10.2, line_height=1.14, page_margin=0.44, spacing_scale=0.74, section_spacing_scale=0.84),
+    LayoutPreset(body_font_size=9.8, line_height=1.12, page_margin=0.42, spacing_scale=0.68, section_spacing_scale=0.78),
+    LayoutPreset(body_font_size=9.4, line_height=1.10, page_margin=0.40, spacing_scale=0.64, section_spacing_scale=0.72),
 ]
 
 
@@ -279,6 +297,44 @@ def _render_split_row(left: str, right: str, *, emphasize_left: bool = False) ->
     )
 
 
+def _render_list_item_content(text: str) -> str:
+    rendered = _render_inline_markdown(text)
+    stripped = rendered.strip()
+    match = SINGLE_LIST_WRAPPER_RE.fullmatch(stripped)
+    if match:
+        return match.group(1).strip()
+    return stripped
+
+
+def _calculate_content_density_metrics(markdown_content: str) -> dict[str, float | int | bool | str]:
+    lines = [line.strip() for line in markdown_content.strip().splitlines() if line.strip()]
+    total_lines = len(lines)
+    bullet_count = sum(1 for line in lines if BULLET_RE.match(line))
+    section_count = sum(1 for line in lines if SECTION_HEADING_RE.match(line))
+    content_line_count = sum(
+        1
+        for line in lines
+        if not SECTION_HEADING_RE.match(line) and not TOP_HEADING_RE.match(line)
+    )
+    bullets_per_section = bullet_count / max(1, section_count)
+    lines_per_section = content_line_count / max(1, section_count)
+    is_dense = total_lines >= 30 or bullets_per_section >= 4.5 or lines_per_section >= 8.0
+    is_sparse = total_lines <= 18 and bullet_count <= 6 and lines_per_section <= 5.0
+    density_label = "dense" if is_dense else "sparse" if is_sparse else "balanced"
+
+    return {
+        "total_lines": total_lines,
+        "bullet_count": bullet_count,
+        "section_count": section_count,
+        "content_line_count": content_line_count,
+        "bullets_per_section": round(bullets_per_section, 2),
+        "lines_per_section": round(lines_per_section, 2),
+        "is_dense": is_dense,
+        "is_sparse": is_sparse,
+        "density_label": density_label,
+    }
+
+
 def _render_content_blocks(lines: list[str], *, section_heading: Optional[str] = None) -> str:
     blocks: list[str] = []
     index = 0
@@ -329,7 +385,7 @@ def _render_content_blocks(lines: list[str], *, section_heading: Optional[str] =
                 current_match = BULLET_RE.match(current)
                 if current_match is None:
                     break
-                items.append(f"<li>{_render_inline_markdown(current_match.group(1).strip())}</li>")
+                items.append(f"<li>{_render_list_item_content(current_match.group(1).strip())}</li>")
                 index += 1
             blocks.append(f"<ul>{''.join(items)}</ul>")
             continue
@@ -354,6 +410,19 @@ def _render_content_blocks(lines: list[str], *, section_heading: Optional[str] =
 
 
 def _build_html(markdown_content: str, preset: LayoutPreset, *, preset_index: int = 0) -> str:
+    density_metrics = _calculate_content_density_metrics(markdown_content)
+    density_label = str(density_metrics["density_label"])
+    spacing_factor = 0.92 if density_metrics["is_dense"] else 1.08 if density_metrics["is_sparse"] else 1.0
+    section_spacing_factor = 0.9 if density_metrics["is_dense"] else 1.1 if density_metrics["is_sparse"] else 1.0
+    header_gap = round(max(8.2, preset.contact_to_first_section_margin * section_spacing_factor), 2)
+    section_margin_top = round(max(4.0, preset.section_margin_top * section_spacing_factor), 2)
+    section_heading_gap = round(max(4.0, preset.section_header_content_gap * section_spacing_factor), 2)
+    subheading_gap = round(max(2.1, preset.subheading_content_gap * spacing_factor), 2)
+    paragraph_margin = round(max(1.4, preset.paragraph_margin * spacing_factor), 2)
+    split_group_margin = round(max(0.8, preset.split_group_margin * spacing_factor), 2)
+    list_item_margin = round(max(0.24, preset.list_item_margin_bottom * spacing_factor), 2)
+    bullet_indent = round(max(10.5, preset.bullet_indent), 2)
+    bullet_padding = round(max(3.5, bullet_indent * 0.36), 2)
     lines = markdown_content.strip().splitlines()
     header_name = ""
     contact_line = ""
@@ -438,7 +507,7 @@ def _build_html(markdown_content: str, preset: LayoutPreset, *, preset_index: in
     }}
     .resume-header {{
       text-align: center;
-      margin-bottom: {preset.header_margin_bottom}pt;
+      margin-bottom: {header_gap}pt;
     }}
     .resume-header h1 {{
       font-size: {preset.name_font_size}pt;
@@ -452,13 +521,13 @@ def _build_html(markdown_content: str, preset: LayoutPreset, *, preset_index: in
       line-height: 1.08;
     }}
     .resume-section {{
-      margin-top: {preset.section_margin_top}pt;
+      margin-top: {section_margin_top}pt;
     }}
     .resume-section:first-of-type {{
       margin-top: 0;
     }}
     .resume-section h2 {{
-      margin: 0 0 {preset.section_margin_bottom}pt 0;
+      margin: 0 0 {section_heading_gap}pt 0;
       padding-bottom: 0.5pt;
       font-size: {preset.section_heading_size}pt;
       font-weight: 700;
@@ -468,24 +537,24 @@ def _build_html(markdown_content: str, preset: LayoutPreset, *, preset_index: in
       border-bottom: 0.8pt solid #111111;
     }}
     h3 {{
-      margin: 0 0 {preset.subheading_margin_bottom}pt 0;
+      margin: 0 0 {subheading_gap}pt 0;
       font-size: {preset.body_font_size}pt;
       font-weight: 700;
       line-height: 1.05;
     }}
     p {{
-      margin: 0 0 {preset.paragraph_margin}pt 0;
+      margin: 0 0 {paragraph_margin}pt 0;
     }}
     ul {{
-      margin: 0 0 {preset.paragraph_margin}pt 8pt;
-      padding-left: 4pt;
+      margin: 0 0 {paragraph_margin}pt {bullet_indent}pt;
+      padding-left: {bullet_padding}pt;
     }}
     li {{
-      margin: 0 0 {preset.list_item_margin_bottom}pt 0;
+      margin: 0 0 {list_item_margin}pt 0;
       padding-left: 0;
     }}
     .split-group {{
-      margin: 0 0 {preset.split_group_margin}pt 0;
+      margin: 0 0 {split_group_margin}pt 0;
     }}
     .split-row {{
       display: flex;
@@ -524,8 +593,8 @@ def _build_html(markdown_content: str, preset: LayoutPreset, *, preset_index: in
     }}
   </style>
 </head>
-<body data-preset="{preset_index}">
-  <main class="resume-root">
+<body data-preset="{preset_index}" data-density="{density_label}">
+  <main class="resume-root resume-root-{density_label}">
     {header_html}
     {intro_html}
     {sections_html}
@@ -540,6 +609,10 @@ def _render_html_to_pdf(html_content: str) -> tuple[bytes, int]:
 
     document = weasyprint.HTML(string=html_content).render()
     return document.write_pdf(), len(document.pages)
+
+
+def _is_readable_preset(preset: LayoutPreset) -> bool:
+    return preset.body_font_size >= MIN_READABLE_BODY_FONT_SIZE and preset.line_height >= MIN_READABLE_LINE_HEIGHT
 
 
 def _build_roomier_one_page_variant(preset: LayoutPreset) -> LayoutPreset:
@@ -606,6 +679,8 @@ def _generate_pdf_with_autofit_sync(
 
     last_pdf = b""
     for preset_index, preset in enumerate(LAYOUT_PRESETS):
+        if not _is_readable_preset(preset):
+            continue
         html_content = _build_html(normalized_markdown, preset, preset_index=preset_index)
         pdf_bytes, page_count = _render_html_to_pdf(html_content)
         last_pdf = pdf_bytes

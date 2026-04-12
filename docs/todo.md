@@ -37,89 +37,42 @@ Opus
 - [] Create a test suite integration in pytest with reporting request library - i make the scenarios sanity test suite
 
 
-ERROR WHEN DOING HIGH AGRESSIVE GEN - app thought model was too slow.
+- [] Suggesstion for improving ai writing from https://claude.ai/chat/628ee097-fa6f-48e3-a1e0-d0b34c2f23bc
 
+Great question. Here are practical rules they can apply:
 
-                 ^^^^^^^^^^^^^^^^^^^^^^^
+## Break the Formula
 
-  File "/usr/local/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+**Stop starting every bullet with an action verb.** It paradoxically makes resumes sound *less* human. Real people write things like "Built and maintained..." or "Responsible for a team of 15 who..." occasionally — not every single line.
 
-    async with timeouts.timeout(timeout):
+**Vary sentence structure.** AI loves parallel construction. Mix short punchy bullets with occasionally longer, more contextual ones.
 
-               ^^^^^^^^^^^^^^^^^^^^^^^^^
+---
 
-  File "/usr/local/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+## Kill the Filler Phrases
+Replace or cut these entirely:
+- "Proven ability to..." → just show the proof
+- "Leveraging expertise in..." → just say what you did with it
+- "Adept at..." → cut it
+- "Ensuring high-quality outcomes" → say what the outcome actually *was*
 
-    raise TimeoutError from exc_val
+---
 
-TimeoutError
+## Add Specificity and Texture
+- Instead of *"reducing release defects by 10-20%"* → pick one number, name the project or context
+- Mention a specific client industry, tool version, or team challenge — real details AI tends to smooth over
+- Include one thing that *didn't* go perfectly and how they handled it — AI never does this
 
-17:14:38: 240.47s ! bea6f29790fb4fb5a620000e7b473ee3:run_regeneration_job failed, TimeoutError: 
+---
 
-Traceback (most recent call last):
+## Let Some Personality In
+- Reference an opinion: *"moved the team away from Selenium toward Playwright because..."*
+- Use a casual phrase once or twice — not unprofessional, just human
+- The summary especially should sound like something they'd actually say about themselves
 
-  File "/usr/local/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+---
 
-    return await fut
+## The Simplest Test
+Read each sentence and ask: *could this describe literally anyone in this role?* If yes, rewrite it until it could only describe **this specific person**.
 
-           ^^^^^^^^^
-
-  File "/usr/local/lib/python3.12/site-packages/generation.py", line 943, in generate_sections
-
-    payload, model_used = await _await_with_progress_heartbeat(
-
-                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-  File "/usr/local/lib/python3.12/site-packages/generation.py", line 828, in _await_with_progress_heartbeat
-
-    done, _pending = await asyncio.wait({task}, timeout=heartbeat_interval)
-
-                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-  File "/usr/local/lib/python3.12/asyncio/tasks.py", line 464, in wait
-
-    return await _wait(fs, timeout, return_when, loop)
-
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-  File "/usr/local/lib/python3.12/asyncio/tasks.py", line 550, in _wait
-
-    await waiter
-
-asyncio.exceptions.CancelledError
-
-
-The above exception was the direct cause of the following exception:
-
-
-Traceback (most recent call last):
-
-  File "/usr/local/lib/python3.12/site-packages/arq/worker.py", line 595, in run_job
-
-    result = await asyncio.wait_for(task, timeout_s)
-
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-  File "/usr/local/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
-
-    return await fut
-
-           ^^^^^^^^^
-
-  File "/usr/local/lib/python3.12/site-packages/worker.py", line 1132, in run_regeneration_job
-
-    gen_result = await asyncio.wait_for(
-
-                 ^^^^^^^^^^^^^^^^^^^^^^^
-
-  File "/usr/local/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
-
-    async with timeouts.timeout(timeout):
-
-               ^^^^^^^^^^^^^^^^^^^^^^^^^
-
-  File "/usr/local/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
-
-    raise TimeoutError from exc_val
-
-TimeoutError
+That's the core issue with AI resumes — they're optimized to sound impressive to everyone, which makes them distinctive to no one.

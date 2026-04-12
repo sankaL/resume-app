@@ -1,7 +1,7 @@
 # AI Resume Builder Build Plan
 
 **Document status:** Active roadmap  
-**Last updated:** 2026-04-11  
+**Last updated:** 2026-04-12  
 **Implementation status:** Phases 0 through 4 implemented; Phase 5 in progress  
 **Primary product source:** `docs/resume_builder_PRD_v3.md`  
 **Database contract:** `docs/database_schema.md`
@@ -115,6 +115,7 @@ These tables track implementation-sized tasks seeded from the phase roadmap belo
 
 | Task ID | Task | Type | Status | Date updated | Comments |
 |---|---|---|---|---|---|
+| B5-T14 | Improve PDF export readability with smarter spacing, safer bullet parsing, and higher minimum fit presets | BE/Docs | DONE | 2026-04-12 12:32:05 EDT | PDF export now uses roomier header and section spacing, light document-density spacing adjustments, safer bullet-item rendering that unwraps accidental nested list markup without stripping literal `*` content, and a higher minimum readable preset floor of 9.4pt/1.10 line-height. Added regression coverage for spacing CSS, density classification, list rendering, and preset bounds. |
 | B5-T13 | Recover generation/regeneration completions when worker callbacks are unreachable | BE/AI/Docs | DONE | 2026-04-11 14:34:00 EDT | Generation/regeneration workers now cache success payloads before callback delivery and treat callback transport as best-effort so transient backend connect failures no longer abort finished jobs; backend progress reconciliation can persist cached drafts when callbacks are missed and fails closed when no cache is available. |
 | B5-T12 | Make application delete resilient to dependent-row schema drift in production | BE | DONE | 2026-04-11 13:43:53 EDT | `ApplicationRepository.delete_application()` now proactively clears dependent `resume_drafts`, `notifications`, `usage_events` (when present), and self-referencing duplicate links before deleting the application row, preventing foreign-key-related production delete 500s when historical schema constraints differ from current `ON DELETE` behavior. |
 | B5-T11 | Prevent Redis progress-store outages from causing application delete 500s | BE | DONE | 2026-04-11 13:28:46 EDT | `ApplicationService.delete_application()` now treats Redis progress fetch/reconcile/delete as best-effort with warning logs, preserving active-state guardrails while allowing DB deletion to complete when cache infrastructure is transiently unavailable. Added regression coverage for progress-store get/delete failure paths. |

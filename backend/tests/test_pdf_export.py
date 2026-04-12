@@ -64,12 +64,54 @@ def test_build_html_uses_point_spacing_units():
         preset,
     )
 
-    assert f"margin-top: {preset.section_margin_top}pt;" in html
-    assert f"margin: 0 0 {preset.section_margin_bottom}pt 0;" in html
-    assert f"margin: 0 0 {preset.paragraph_margin}pt 0;" in html
+    assert f"margin-bottom: {preset.contact_to_first_section_margin * 1.1:.2f}pt;" in html
+    assert f"margin-top: {preset.section_margin_top * 1.1:.2f}pt;" in html
+    assert f"margin: 0 0 {preset.section_header_content_gap * 1.1:.2f}pt 0;" in html
+    assert f"margin: 0 0 {preset.paragraph_margin * 1.08:.2f}pt 0;" in html
+    assert f"margin: 0 0 {preset.paragraph_margin * 1.08:.2f}pt {preset.bullet_indent}pt;" in html
     assert "margin-top: 0;" in html
+    assert 'data-density="sparse"' in html
     assert f"{preset.section_margin_top}rem" not in html
-    assert f"{preset.section_margin_bottom}rem" not in html
+    assert f"{preset.section_header_content_gap}rem" not in html
+
+
+def test_render_content_blocks_unwraps_single_item_list_markup_inside_bullets():
+    html = pdf_export._render_content_blocks(["- * nested bullet"])
+
+    assert html == "<ul><li>nested bullet</li></ul>"
+
+
+def test_render_content_blocks_preserves_literal_star_content_inside_bullets():
+    html = pdf_export._render_content_blocks(["- *nix operations"])
+
+    assert "*nix operations" in html
+    assert "<ul><li><ul>" not in html
+
+
+def test_calculate_content_density_metrics_flags_dense_and_sparse_documents():
+    dense_metrics = pdf_export._calculate_content_density_metrics(
+        (
+            "## Experience\n"
+            "- one\n- two\n- three\n- four\n- five\n"
+            "## Projects\n"
+            "- six\n- seven\n- eight\n- nine\n- ten\n"
+            "## Skills\n"
+            "- python\n- sql\n- aws\n- docker\n- linux\n"
+        )
+    )
+    sparse_metrics = pdf_export._calculate_content_density_metrics(
+        "## Summary\nBuilt backend systems.\n## Skills\nPython | SQL\n"
+    )
+
+    assert dense_metrics["is_dense"] is True
+    assert dense_metrics["density_label"] == "dense"
+    assert sparse_metrics["is_sparse"] is True
+    assert sparse_metrics["density_label"] == "sparse"
+
+
+def test_layout_presets_keep_readable_minimums():
+    assert all(preset.body_font_size >= pdf_export.MIN_READABLE_BODY_FONT_SIZE for preset in pdf_export.LAYOUT_PRESETS)
+    assert all(preset.line_height >= pdf_export.MIN_READABLE_LINE_HEIGHT for preset in pdf_export.LAYOUT_PRESETS)
 
 
 def test_generate_pdf_autofit_retries_until_target_page_count_is_met(monkeypatch):
@@ -143,7 +185,7 @@ def test_generate_pdf_one_page_validation_tries_roomier_variant_before_export(mo
     monkeypatch.setattr(
         pdf_export,
         "LAYOUT_PRESETS",
-        [pdf_export.LayoutPreset(body_font_size=10.0, line_height=1.08, page_margin=0.3, spacing_scale=0.7)],
+        [pdf_export.LayoutPreset(body_font_size=10.0, line_height=1.10, page_margin=0.3, spacing_scale=0.7)],
     )
 
     def fake_render_html_to_pdf(html_content: str) -> tuple[bytes, int]:
@@ -174,7 +216,7 @@ def test_generate_pdf_one_page_validation_adds_section_spacing_when_room_exists(
     monkeypatch.setattr(
         pdf_export,
         "LAYOUT_PRESETS",
-        [pdf_export.LayoutPreset(body_font_size=10.0, line_height=1.08, page_margin=0.3, spacing_scale=0.7)],
+        [pdf_export.LayoutPreset(body_font_size=10.0, line_height=1.10, page_margin=0.3, spacing_scale=0.7)],
     )
 
     def fake_render_html_to_pdf(html_content: str) -> tuple[bytes, int]:
@@ -198,6 +240,23 @@ def test_generate_pdf_one_page_validation_adds_section_spacing_when_room_exists(
     assert seen_section_tops[0] > 0
     assert max(accepted_section_tops) > seen_section_tops[0]
     assert pdf_bytes == f"section-top-{max(accepted_section_tops):.2f}".encode()
+
+
+def test_build_html_marks_dense_documents_in_html():
+    html = pdf_export._build_html(
+        (
+            "## Experience\n"
+            "- one\n- two\n- three\n- four\n- five\n"
+            "## Projects\n"
+            "- six\n- seven\n- eight\n- nine\n- ten\n"
+            "## Skills\n"
+            "- python\n- sql\n- aws\n- docker\n- linux\n"
+        ),
+        pdf_export.LAYOUT_PRESETS[0],
+    )
+
+    assert 'data-density="dense"' in html
+    assert "resume-root-dense" in html
 
 
 def test_build_html_bolds_only_professional_experience_role_title_split_rows():
