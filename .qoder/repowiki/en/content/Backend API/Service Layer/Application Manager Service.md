@@ -17,17 +17,17 @@
 - [phase_4_generation_failure_reasons.sql](file://supabase/migrations/20260407_000006_phase_4_generation_failure_reasons.sql)
 - [test_phase1_applications.py](file://backend/tests/test_phase1_applications.py)
 - [ApplicationDetailPage.tsx](file://frontend/src/routes/ApplicationDetailPage.tsx)
+- [ApplicationsListPage.tsx](file://frontend/src/routes/ApplicationsListPage.tsx)
+- [backend-database-migration-runbook.md](file://docs/backend-database-migration-runbook.md)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Enhanced extraction progress reconciliation with new `_reconcile_extraction_success_from_progress_cache` method
-- Added comprehensive backend reconciliation logic for terminal extraction states
-- Enhanced progress store with extraction result caching capabilities through Redis
-- Improved error handling for callback delivery failures with extraction result cache fallback
-- Updated progress polling logic to include terminal extraction reconciliation with cache validation
-- Enhanced timeout recovery mechanisms with dual-timing approach for generation workflows
-- Added comprehensive extraction reconciliation logic for callback-missed terminal states
+- Enhanced application deletion with proactive dependent row clearing in database layer
+- Improved error handling for production environments with graceful degradation
+- Better resilience against schema drift through defensive database operations
+- Added ACTIVE_DELETE_BLOCKING_STATES protection to prevent deletion during active work
+- Enhanced progress reconciliation during deletion with comprehensive error handling
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -42,13 +42,13 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document describes the Application Manager Service that orchestrates the entire job application workflow. It manages application lifecycle stages, coordinates extraction and generation jobs, detects and resolves duplicates, tracks progress via Redis, and handles worker callbacks. The service now includes sophisticated stuck generation recovery mechanisms with dual-timing approach featuring separate idle timeout and maximum wall-clock timeout parameters for both full generation and section regeneration workflows. Additionally, it features enhanced extraction progress reconciliation with backend reconciliation logic for terminal states and comprehensive extraction result caching capabilities.
+This document describes the Application Manager Service that orchestrates the entire job application workflow. It manages application lifecycle stages, coordinates extraction and generation jobs, detects and resolves duplicates, tracks progress via Redis, and handles worker callbacks. The service now includes sophisticated stuck generation recovery mechanisms with dual-timing approach featuring separate idle timeout and maximum wall-clock timeout parameters for both full generation and section regeneration workflows. Additionally, it features enhanced extraction progress reconciliation with backend reconciliation logic for terminal states, comprehensive extraction result caching capabilities, and robust application deletion with proactive dependent row clearing.
 
 ## Project Structure
 The Application Manager Service spans backend APIs, services, repositories, and worker agents:
-- Backend API routes expose application CRUD and workflow actions.
-- ApplicationService encapsulates orchestration logic with enhanced timeout handling, extraction reconciliation, and extraction result caching.
-- Repositories manage persistence for applications, drafts, and notifications.
+- Backend API routes expose application CRUD and workflow actions including enhanced deletion handling.
+- ApplicationService encapsulates orchestration logic with enhanced timeout handling, extraction reconciliation, extraction result caching, and resilient deletion operations.
+- Repositories manage persistence for applications, drafts, and notifications with proactive dependent row clearing.
 - Job queues enqueue asynchronous tasks for extraction and generation.
 - Workers execute jobs and report progress and outcomes with timeout awareness and extraction result caching.
 - Progress store persists transient workflow progress in Redis with recovery mechanisms and extraction result caching.
@@ -117,8 +117,8 @@ GENW --> LLM
 - [validation.py:231-292](file://agents/validation.py#L231-L292)
 
 ## Core Components
-- ApplicationService: Central orchestrator for application lifecycle, state transitions, duplicate detection, progress tracking, worker callbacks, sophisticated stuck generation recovery with dual-timing timeout mechanisms, and enhanced extraction progress reconciliation with extraction result caching.
-- ApplicationRepository: Database access for applications, including listing, creating, fetching, and updating records.
+- ApplicationService: Central orchestrator for application lifecycle, state transitions, duplicate detection, progress tracking, worker callbacks, sophisticated stuck generation recovery with dual-timing timeout mechanisms, enhanced extraction progress reconciliation with extraction result caching, and resilient deletion operations with blocking state protection.
+- ApplicationRepository: Database access for applications, including listing, creating, fetching, updating, and enhanced deletion with proactive dependent row clearing.
 - DuplicateDetector: Evaluates potential duplicates using similarity thresholds and match basis heuristics.
 - RedisProgressStore: Stores and retrieves transient progress for applications with recovery capabilities and extraction result caching.
 - Job queues: Enqueue extraction and generation/regeneration jobs to workers with timeout awareness.
@@ -136,6 +136,7 @@ Key responsibilities:
 - Timeout Recovery: Detect and recover from stuck generation jobs using dual-timing approach.
 - **Enhanced**: Extraction reconciliation: Handle cases where extraction callbacks fail to deliver but extraction completes successfully using extraction result cache validation.
 - **Enhanced**: Extraction result caching: Store extraction payloads in Redis cache for recovery when callback delivery fails.
+- **Enhanced**: Resilient deletion: Proactive dependent row clearing with graceful error handling and schema drift protection.
 
 **Section sources**
 - [application_manager.py:143-1543](file://backend/app/services/application_manager.py#L143-L1543)
@@ -147,8 +148,8 @@ Key responsibilities:
 
 ## Architecture Overview
 The Application Manager Service integrates:
-- FastAPI endpoints that delegate to ApplicationService.
-- ApplicationService coordinating repositories, job queues, progress store, and duplicate detection with timeout recovery mechanisms and extraction reconciliation.
+- FastAPI endpoints that delegate to ApplicationService with enhanced error mapping.
+- ApplicationService coordinating repositories, job queues, progress store, and duplicate detection with timeout recovery mechanisms, extraction reconciliation, and resilient deletion operations.
 - Workers consuming jobs from ARQ queues, reporting progress to Redis, caching extraction results, and invoking LLM providers with individual timeout constraints.
 - Contract-driven status derivation mapping internal states to visible statuses with timeout-aware transitions.
 
@@ -161,39 +162,33 @@ participant Repo as "ApplicationRepository<br/>applications.py"
 participant Q as "ExtractionJobQueue<br/>jobs.py"
 participant W as "Extraction Worker<br/>worker.py"
 participant R as "RedisProgressStore<br/>progress.py"
-Client->>API : POST /api/applications (job_url)
-API->>Svc : create_application(user_id, job_url)
-Svc->>Repo : create_application(...)
-Svc->>Q : enqueue(application_id, user_id, job_url)
-Q-->>W : run_extraction_job(...)
-Svc->>R : set(job_id, state="extraction_pending", percent=0)
-W->>R : set(state="extracting", percent=...)
-W->>R : set_extracted_result(job_id, extracted_payload)
-W-->>Svc : callback(event="started")
-W-->>Svc : callback(event="succeeded"|event="failed")
-Svc->>Repo : update_application(internal_state, fields)
-Svc-->>API : ApplicationDetailPayload
-API-->>Client : 201 Created
+Client->>API : DELETE /api/applications/{id}
+API->>Svc : delete_application(user_id, application_id)
+Note over Svc : Check ACTIVE_DELETE_BLOCKING_STATES
+Note over Svc : Load progress with error handling
+Note over Svc : Reconcile terminal progress with error handling
+Note over Svc : Delete cached progress with error handling
+Svc->>Repo : delete_application(application_id, user_id)
+Note over Repo : Proactive dependent row clearing
+Repo-->>Svc : Application deleted
+Svc-->>API : 204 No Content
+API-->>Client : 204 No Content
 ```
 
 **Diagram sources**
-- [applications.py:384-403](file://backend/app/api/applications.py#L384-L403)
-- [application_manager.py:183-225](file://backend/app/services/application_manager.py#L183-L225)
-- [jobs.py:16-42](file://backend/app/services/jobs.py#L16-L42)
-- [worker.py:526-667](file://agents/worker.py#L526-L667)
-- [progress.py:67-75](file://backend/app/services/progress.py#L67-L75)
+- [applications.py:514-528](file://backend/app/api/applications.py#L514-L528)
+- [application_manager.py:338-376](file://backend/app/services/application_manager.py#L338-L376)
+- [applications.py:317-370](file://backend/app/db/applications.py#L317-L370)
 
 **Section sources**
-- [applications.py:384-403](file://backend/app/api/applications.py#L384-L403)
-- [application_manager.py:183-225](file://backend/app/services/application_manager.py#L183-L225)
-- [jobs.py:16-42](file://backend/app/services/jobs.py#L16-L42)
-- [worker.py:526-667](file://agents/worker.py#L526-L667)
-- [progress.py:67-75](file://backend/app/services/progress.py#L67-L75)
+- [applications.py:514-528](file://backend/app/api/applications.py#L514-L528)
+- [application_manager.py:338-376](file://backend/app/services/application_manager.py#L338-L376)
+- [applications.py:317-370](file://backend/app/db/applications.py#L317-L370)
 
 ## Detailed Component Analysis
 
 ### ApplicationService
-ApplicationService is the central orchestrator with enhanced timeout recovery capabilities and extraction reconciliation. It:
+ApplicationService is the central orchestrator with enhanced timeout recovery capabilities, extraction reconciliation, and resilient deletion operations. It:
 - Creates applications and enqueues extraction jobs.
 - Handles manual entry, retries, recovery from captures, and duplicate resolution.
 - Triggers generation and regeneration with timeout-aware processing.
@@ -202,6 +197,8 @@ ApplicationService is the central orchestrator with enhanced timeout recovery ca
 - Derives visible status from internal state and failure reasons with timeout awareness.
 - **Enhanced**: Performs terminal extraction progress reconciliation to handle callback delivery failures using extraction result cache validation.
 - **Enhanced**: Validates extraction result cache before applying cached extraction data to ensure job ID consistency.
+- **Enhanced**: Implements ACTIVE_DELETE_BLOCKING_STATES protection to prevent deletion during active work.
+- **Enhanced**: Provides graceful error handling during deletion with progress reconciliation fallback.
 
 Key methods and flows:
 - Creation from URL: create_application
@@ -217,6 +214,7 @@ Key methods and flows:
 - Timeout recovery: _detect_and_recover_stuck_generation, _recover_stuck_generation_if_needed
 - **Enhanced**: Terminal extraction reconciliation: _reconcile_terminal_extraction_progress
 - **Enhanced**: Extraction result cache validation: _reconcile_extraction_success_from_progress_cache
+- **Enhanced**: Resilient deletion: delete_application with comprehensive error handling
 
 ```mermaid
 classDiagram
@@ -240,6 +238,7 @@ class ApplicationService {
 +get_draft(user_id, application_id) ResumeDraftRecord?
 +save_draft_edit(user_id, application_id, content) ResumeDraftRecord
 +export_pdf(user_id, application_id) (bytes, str)
++delete_application(user_id, application_id) None
 -_detect_and_recover_stuck_generation(record) bool
 -_recover_stuck_generation_if_needed(record) ApplicationRecord
 -_generation_timeout_seconds(record, progress) tuple[int, int]
@@ -253,6 +252,75 @@ class ApplicationService {
 
 **Section sources**
 - [application_manager.py:143-1543](file://backend/app/services/application_manager.py#L143-L1543)
+
+### Enhanced Application Deletion with Proactive Dependent Row Clearing
+The Application Manager Service now implements robust application deletion with proactive dependent row clearing and enhanced error handling:
+
+#### Active State Protection
+The service defines ACTIVE_DELETE_BLOCKING_STATES to prevent deletion during active work:
+- extraction_pending: Application is queued for extraction
+- extracting: Extraction is currently running
+- generation_pending: Application is queued for generation
+- generating: Generation is currently running
+- regenerating_full: Full regeneration is running
+- regenerating_section: Section regeneration is running
+
+#### Proactive Dependent Row Clearing
+The database layer now performs comprehensive cleanup during deletion:
+- Deletes associated resume drafts for the application
+- Clears application_id references in notifications
+- Safely handles usage_events table existence with defensive queries
+- Removes duplicate references from other applications
+- Validates application ownership before deletion
+
+#### Enhanced Error Handling
+The deletion process includes comprehensive error handling:
+- Graceful progress loading failure with warning logs
+- Defensive terminal progress reconciliation with error suppression
+- Robust progress cache deletion with fallback continuation
+- Schema drift protection through conditional table existence checks
+
+```mermaid
+flowchart TD
+Start(["Application Deletion Request"]) --> CheckActive{"Check ACTIVE_DELETE_BLOCKING_STATES"}
+CheckActive --> |Active| Block["Raise PermissionError<br/>Application cannot be deleted while background work is still running."]
+CheckActive --> |Inactive| LoadProgress["Load progress with error handling"]
+LoadProgress --> ProgressLoaded{"Progress loaded?"}
+ProgressLoaded --> |Yes| Reconcile["Reconcile terminal progress<br/>with error suppression"]
+ProgressLoaded --> |No| SkipReconcile["Skip reconciliation<br/>proceed with current state"]
+Reconcile --> CheckState{"Check active states again"}
+SkipReconcile --> CheckState
+CheckState --> |Still Active| Block
+CheckState --> |Safe| DeleteProgress["Delete cached progress<br/>with error handling"]
+DeleteProgress --> ClearDependents["Proactive dependent row clearing:<br/>- Delete resume drafts<br/>- Clear notifications<br/>- Handle usage_events safely<br/>- Remove duplicate references"]
+ClearDependents --> FinalDelete["Delete application record"]
+FinalDelete --> End(["Deletion Complete"])
+Block --> End
+```
+
+**Diagram sources**
+- [application_manager.py:338-376](file://backend/app/services/application_manager.py#L338-L376)
+- [applications.py:317-370](file://backend/app/db/applications.py#L317-L370)
+
+#### Key Features of Enhanced Deletion
+- **Active State Protection**: Prevents deletion during extraction or generation workflows
+- **Proactive Cleanup**: Automatically removes dependent rows to maintain referential integrity
+- **Graceful Degradation**: Continues deletion even if progress operations fail
+- **Schema Drift Resilience**: Safely handles missing tables and schema changes
+- **Ownership Validation**: Ensures proper user scoping before deletion
+- **Comprehensive Cleanup**: Handles all dependent entities including notifications and usage events
+
+#### Error Handling Scenarios
+- **Progress Loading Failure**: Logs warning and continues with deletion
+- **Terminal Progress Reconciliation Failure**: Suppresses errors and proceeds with current state
+- **Progress Cache Deletion Failure**: Continues database deletion without cached progress
+- **Schema Drift**: Conditional table existence checks prevent crashes
+- **Active Work Detection**: Prevents deletion during extraction or generation
+
+**Section sources**
+- [application_manager.py:338-376](file://backend/app/services/application_manager.py#L338-L376)
+- [applications.py:317-370](file://backend/app/db/applications.py#L317-L370)
+- [test_phase1_applications.py:910-937](file://backend/tests/test_phase1_applications.py#L910-L937)
 
 ### Enhanced Extraction Progress Reconciliation
 The Application Manager Service now includes sophisticated extraction progress reconciliation with backend reconciliation logic for terminal states and extraction result caching:
@@ -376,12 +444,13 @@ CreateNotification --> End
 - [decisions-made-1.md:3-11](file://docs/decisions-made/decisions-made-1.md#L3-L11)
 
 ### ApplicationRepository
-ApplicationRepository provides database operations:
+ApplicationRepository provides database operations with enhanced deletion capabilities:
 - list_applications with optional filters
 - create_application with initial internal state
 - fetch_application and fetch_application_unscoped
 - update_application with dynamic field updates and enum casting
 - fetch_duplicate_candidates and fetch_matched_application
+- **Enhanced**: delete_application with proactive dependent row clearing and schema drift protection
 
 ```mermaid
 classDiagram
@@ -393,14 +462,17 @@ class ApplicationRepository {
 +update_application(application_id, user_id, updates) ApplicationRecord
 +fetch_duplicate_candidates(user_id, exclude_application_id) list
 +fetch_matched_application(user_id, application_id) MatchedApplicationRecord?
++delete_application(application_id, user_id) None
 }
 ```
 
 **Diagram sources**
 - [applications.py:123-328](file://backend/app/db/applications.py#L123-L328)
+- [applications.py:317-370](file://backend/app/db/applications.py#L317-L370)
 
 **Section sources**
 - [applications.py:123-328](file://backend/app/db/applications.py#L123-L328)
+- [applications.py:317-370](file://backend/app/db/applications.py#L317-L370)
 
 ### Duplicate Detection
 DuplicateDetector evaluates potential duplicates using:
@@ -546,9 +618,9 @@ class SectionRegenerationRequest {
 
 ## Dependency Analysis
 ApplicationService depends on:
-- Repositories for persistence
+- Repositories for persistence with enhanced deletion capabilities
 - Job queues for asynchronous processing
-- Progress store for transient state with timeout recovery, extraction reconciliation, and extraction result caching
+- Progress store for transient state with timeout recovery, extraction reconciliation, extraction result caching, and resilient deletion support
 - Duplicate detector for duplicate evaluation
 - Workflow status derivation for visible status mapping
 - Worker agents with timeout-aware processing and extraction result caching
@@ -563,12 +635,14 @@ SVC --> WF["derive_visible_status"]
 SVC --> TIMEOUT["Timeout Recovery Mechanisms"]
 SVC --> EXTRACT_RECON["Extraction Reconciliation Logic"]
 SVC --> CACHE_VALID["Extraction Result Cache Validation"]
+SVC --> DELETE_PROTECTION["ACTIVE_DELETE_BLOCKING_STATES"]
 JOBQ --> ARQ["ARQ Redis"]
 PROG --> REDIS["Redis"]
 DUPS --> REPO
 TIMEOUT --> PROG
 EXTRACT_RECON --> PROG
 CACHE_VALID --> PROG
+DELETE_PROTECTION --> PROG
 ```
 
 **Diagram sources**
@@ -597,6 +671,9 @@ CACHE_VALID --> PROG
 - **Enhanced**: Backend extraction reconciliation reduces user confusion by properly handling callback delivery failures.
 - **Enhanced**: Extraction result caching provides reliable fallback when callback delivery fails, improving system resilience.
 - **Enhanced**: Cache validation ensures only valid, job-consistent extraction data is applied, preventing data corruption.
+- **Enhanced**: Proactive dependent row clearing prevents orphaned records and maintains referential integrity.
+- **Enhanced**: Graceful error handling during deletion ensures system stability even with partial failures.
+- **Enhanced**: Schema drift protection prevents crashes from missing database objects.
 
 ## Troubleshooting Guide
 Common issues and recovery steps:
@@ -608,6 +685,9 @@ Common issues and recovery steps:
 - **Enhanced**: Extraction callback delivery failure: Backend reconciliation detects successful extraction completion despite missing callbacks, validates cache, and transitions to generation_pending with cached extraction data.
 - **Enhanced**: Extraction result cache validation: System validates cached extraction payloads and job IDs before applying cached data to prevent data corruption.
 - Export failure: ApplicationService updates state to resume_ready with failure reason and creates an action-required notification.
+- **Enhanced**: Application deletion failures: System continues deletion even if progress operations fail, with comprehensive error logging.
+- **Enhanced**: Active work prevention: System blocks deletion attempts during extraction or generation to prevent data inconsistency.
+- **Enhanced**: Schema drift protection: System handles missing database tables gracefully without crashing.
 
 Operational tips:
 - Verify Redis connectivity for progress storage and extraction result caching.
@@ -618,6 +698,8 @@ Operational tips:
 - **Enhanced**: Verify timeout parameters are appropriate for your workload patterns.
 - **Enhanced**: Monitor extraction reconciliation logs for callback delivery failures and proper state synchronization.
 - **Enhanced**: Verify extraction result cache integrity and job ID consistency for reliable fallback mechanisms.
+- **Enhanced**: Check ACTIVE_DELETE_BLOCKING_STATES to understand deletion restrictions.
+- **Enhanced**: Monitor deletion error logs for graceful degradation scenarios.
 
 **Section sources**
 - [application_manager.py:1270-1324](file://backend/app/services/application_manager.py#L1270-L1324)
@@ -627,9 +709,12 @@ Operational tips:
 - [application_manager.py:608-642](file://backend/app/services/application_manager.py#L608-L642)
 - [application_manager.py:802-934](file://backend/app/services/application_manager.py#L802-L934)
 - [application_manager.py:936-990](file://backend/app/services/application_manager.py#L936-L990)
+- [applications.py:317-370](file://backend/app/db/applications.py#L317-L370)
 
 ## Conclusion
 The Application Manager Service provides a robust, asynchronous workflow for job application intake, extraction, generation, and regeneration. It integrates cleanly with job queues and Redis-backed progress tracking, supports duplicate detection and resolution, and offers comprehensive error handling and recovery. The enhanced timeout recovery mechanisms with dual-timing approach ensure that stuck generation jobs are properly detected and recovered, preventing infinite loops while allowing legitimate long-running operations to complete successfully. The new extraction progress reconciliation logic with extraction result caching provides improved reliability by handling callback delivery failures gracefully, validating cached data for consistency, and ensuring proper state synchronization between application records and progress store. The extraction result cache validation mechanism adds an additional layer of resilience by providing reliable fallback when worker callback delivery fails, while comprehensive error handling prevents data corruption and maintains system integrity.
+
+The enhanced application deletion functionality represents a significant improvement in system reliability and data integrity. Through proactive dependent row clearing, comprehensive error handling, and schema drift protection, the service now provides robust deletion capabilities that maintain referential integrity while gracefully handling edge cases. The ACTIVE_DELETE_BLOCKING_STATES protection prevents deletion during active work, ensuring data consistency and preventing orphaned records. These enhancements make the Application Manager Service more production-ready and resilient against real-world operational challenges.
 
 ## Appendices
 
@@ -722,6 +807,43 @@ regenerating_full --> resume_ready : "succeeded"
 - [test_phase1_applications.py:2172-2263](file://backend/tests/test_phase1_applications.py#L2172-L2263)
 - [ApplicationDetailPage.tsx:385-405](file://frontend/src/routes/ApplicationDetailPage.tsx#L385-L405)
 
+### Enhanced Application Deletion Configuration
+
+#### ACTIVE_DELETE_BLOCKING_STATES
+The service prevents deletion during these active states:
+- extraction_pending: Application is queued for extraction
+- extracting: Extraction is currently running
+- generation_pending: Application is queued for generation
+- generating: Generation is currently running
+- regenerating_full: Full regeneration is running
+- regenerating_section: Section regeneration is running
+
+#### Proactive Dependent Row Clearing
+During deletion, the system automatically cleans up:
+- **Resume Drafts**: Deletes all associated draft records
+- **Notifications**: Clears application_id references from notifications
+- **Usage Events**: Safely handles usage_events table existence
+- **Duplicate References**: Removes duplicate_matched_application_id from other applications
+
+#### Error Handling During Deletion
+The deletion process includes comprehensive error handling:
+- **Progress Loading Failure**: Logs warning and continues with deletion
+- **Terminal Progress Reconciliation Failure**: Suppresses errors and proceeds with current state
+- **Progress Cache Deletion Failure**: Continues database deletion without cached progress
+- **Schema Drift Protection**: Conditional table existence checks prevent crashes
+
+#### Frontend Integration
+The frontend provides enhanced user experience:
+- **Bulk Deletion**: Supports batch deletion with error handling and feedback
+- **Row Actions**: Individual deletion with confirmation dialogs
+- **Error Messaging**: Clear error messages for failed operations
+- **Loading States**: Proper loading indicators during deletion operations
+
+**Section sources**
+- [application_manager.py:338-376](file://backend/app/services/application_manager.py#L338-L376)
+- [applications.py:317-370](file://backend/app/db/applications.py#L317-L370)
+- [ApplicationsListPage.tsx:289-326](file://frontend/src/routes/ApplicationsListPage.tsx#L289-L326)
+
 ### Practical Workflows
 
 - Application creation from URL
@@ -767,16 +889,20 @@ regenerating_full --> resume_ready : "succeeded"
   - Service: export_pdf
   - Outcome: Generates PDF, updates application state and draft export timestamps, creates success notification.
 
+- **Enhanced**: Application deletion
+  - Endpoint: DELETE /api/applications/{id}
+  - Service: delete_application with ACTIVE_DELETE_BLOCKING_STATES protection
+  - Outcome: Application and dependent records deleted; proactive cleanup ensures referential integrity; graceful error handling for partial failures
+
 **Section sources**
-- [applications.py:384-403](file://backend/app/api/applications.py#L384-L403)
-- [applications.py:461-477](file://backend/app/api/applications.py#L461-L477)
-- [applications.py:444-459](file://backend/app/api/applications.py#L444-L459)
-- [applications.py:507-524](file://backend/app/api/applications.py#L507-L524)
-- [applications.py:560-579](file://backend/app/api/applications.py#L560-L579)
-- [applications.py:582-601](file://backend/app/api/applications.py#L582-L601)
-- [applications.py:603-621](file://backend/app/api/applications.py#L603-L621)
-- [applications.py:526-539](file://backend/app/api/applications.py#L526-L539)
-- [applications.py:641-661](file://backend/app/api/applications.py#L641-L661)
+- [applications.py:444-472](file://backend/app/api/applications.py#L444-L472)
+- [applications.py:475-489](file://backend/app/api/applications.py#L475-L489)
+- [applications.py:492-511](file://backend/app/api/applications.py#L492-L511)
+- [applications.py:514-528](file://backend/app/api/applications.py#L514-L528)
+- [applications.py:531-545](file://backend/app/api/applications.py#L531-L545)
+- [applications.py:548-562](file://backend/app/api/applications.py#L548-L562)
+- [applications.py:565-581](file://backend/app/api/applications.py#L565-L581)
+- [applications.py:584-603](file://backend/app/api/applications.py#L584-L603)
 - [application_manager.py:228-270](file://backend/app/services/application_manager.py#L228-L270)
 - [application_manager.py:271-291](file://backend/app/services/application_manager.py#L271-L291)
 - [application_manager.py:378-395](file://backend/app/services/application_manager.py#L378-L395)
@@ -789,3 +915,30 @@ regenerating_full --> resume_ready : "succeeded"
 - [application_manager.py:1291-1422](file://backend/app/services/application_manager.py#L1291-L1422)
 - [application_manager.py:802-934](file://backend/app/services/application_manager.py#L802-L934)
 - [application_manager.py:936-990](file://backend/app/services/application_manager.py#L936-L990)
+- [application_manager.py:338-376](file://backend/app/services/application_manager.py#L338-L376)
+- [applications.py:317-370](file://backend/app/db/applications.py#L317-L370)
+
+### Production Environment Best Practices
+
+#### Migration and Schema Management
+- Follow the backend-database migration runbook for all schema changes
+- Implement additive migrations first to maintain backward compatibility
+- Use defensive queries to handle schema drift gracefully
+- Test deletion operations across different schema versions
+
+#### Monitoring and Logging
+- Monitor deletion error rates and failure patterns
+- Track ACTIVE_DELETE_BLOCKING_STATES violations
+- Monitor progress reconciliation success rates
+- Log graceful degradation scenarios for debugging
+
+#### Error Handling Patterns
+- Use try-catch blocks around deletion operations
+- Implement fallback mechanisms for partial failures
+- Log detailed error information without exposing sensitive data
+- Provide user-friendly error messages while preserving technical details in logs
+
+**Section sources**
+- [backend-database-migration-runbook.md:1-63](file://docs/backend-database-migration-runbook.md#L1-L63)
+- [application_manager.py:338-376](file://backend/app/services/application_manager.py#L338-L376)
+- [applications.py:317-370](file://backend/app/db/applications.py#L317-L370)

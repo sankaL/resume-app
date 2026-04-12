@@ -19,7 +19,17 @@
 - [test_workflow_contract.py](file://backend/tests/test_workflow_contract.py)
 - [pyproject.toml](file://agents/pyproject.toml)
 - [test_worker.py](file://agents/tests/test_worker.py)
+- [application_manager.py](file://backend/app/services/application_manager.py)
+- [worker.py](file://agents/worker.py)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Enhanced backend testing strategy to include comprehensive generation workflow testing
+- Added detailed coverage of callback failure handling mechanisms
+- Expanded cache recovery scenario testing documentation
+- Updated agent testing strategy to reflect improved error handling and recovery patterns
+- Added new sections for generation workflow validation and cache reconciliation testing
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -27,20 +37,22 @@
 3. [Core Components](#core-components)
 4. [Architecture Overview](#architecture-overview)
 5. [Detailed Component Analysis](#detailed-component-analysis)
-6. [Dependency Analysis](#dependency-analysis)
-7. [Performance Considerations](#performance-considerations)
-8. [Troubleshooting Guide](#troubleshooting-guide)
-9. [Conclusion](#conclusion)
-10. [Appendices](#appendices)
+6. [Generation Workflow Testing](#generation-workflow-testing)
+7. [Cache Recovery Testing](#cache-recovery-testing)
+8. [Dependency Analysis](#dependency-analysis)
+9. [Performance Considerations](#performance-considerations)
+10. [Troubleshooting Guide](#troubleshooting-guide)
+11. [Conclusion](#conclusion)
+12. [Appendices](#appendices)
 
 ## Introduction
-This document defines a comprehensive testing strategy for the multi-component application. It covers frontend testing with React Testing Library and Vitest, backend testing with pytest, agent testing, and Chrome extension testing. It also documents testing configuration, CI considerations, best practices, coverage expectations, debugging strategies, and practical implementation patterns for each component type.
+This document defines a comprehensive testing strategy for the multi-component application. It covers frontend testing with React Testing Library and Vitest, backend testing with pytest, agent testing, and Chrome extension testing. The strategy has been enhanced to include comprehensive coverage of generation workflow functionality, validation of callback failure handling, and cache recovery scenarios. It documents testing configuration, CI considerations, best practices, coverage expectations, debugging strategies, and practical implementation patterns for each component type.
 
 ## Project Structure
 The repository is organized into three primary areas:
 - Frontend: React application with Vite and Vitest for component and integration testing.
-- Backend: FastAPI application with pytest for unit and integration tests.
-- Agents: Python ARQ worker module with pytest for unit tests.
+- Backend: FastAPI application with pytest for unit and integration tests, including comprehensive generation workflow testing.
+- Agents: Python ARQ worker module with pytest for unit tests, featuring advanced error handling and cache recovery.
 - Shared assets: Chrome extension manifests and public JS bundles used by tests.
 
 ```mermaid
@@ -63,10 +75,14 @@ BE_EMAIL_T["backend/tests/test_email.py"]
 BE_EXT_API_T["backend/tests/test_extension_api.py"]
 BE_PHASE1_T["backend/tests/test_phase1_applications.py"]
 BE_WORKFLOW_T["backend/tests/test_workflow_contract.py"]
+BE_GEN_WORKFLOW["Generation Workflow Tests"]
+BE_CACHE_RECOVERY["Cache Recovery Tests"]
 end
 subgraph "Agents"
 AG_PYPROJ["agents/pyproject.toml"]
 AG_TEST["agents/tests/test_worker.py"]
+AG_CALLBACK_HANDLING["Callback Failure Handling Tests"]
+AG_CACHE_WRITE["Cache Write Failure Tests"]
 end
 FE_APPS --> FE_VITEST
 FE_AUTH --> FE_VITEST
@@ -79,7 +95,11 @@ BE_EMAIL_T --> BE_PYPROJ
 BE_EXT_API_T --> BE_PYPROJ
 BE_PHASE1_T --> BE_PYPROJ
 BE_WORKFLOW_T --> BE_PYPROJ
+BE_GEN_WORKFLOW --> BE_PHASE1_T
+BE_CACHE_RECOVERY --> BE_PHASE1_T
 AG_TEST --> AG_PYPROJ
+AG_CALLBACK_HANDLING --> AG_TEST
+AG_CACHE_WRITE --> AG_TEST
 ```
 
 **Diagram sources**
@@ -116,14 +136,16 @@ AG_TEST --> AG_PYPROJ
   - pytest with asyncio support for async endpoints and services.
   - FastAPI TestClient for integration-style endpoint tests.
   - Mock transports for external HTTP integrations.
+  - Comprehensive generation workflow testing with cache recovery validation.
 - Agent testing stack:
   - pytest for pure unit tests of extraction and normalization logic.
+  - Advanced error handling validation including callback failure and cache write failures.
   - Async fallback behavior validated via controlled exceptions.
 
 Key testing configuration highlights:
 - Frontend: Vitest configured with jsdom, setup files, and aliases.
-- Backend: pytest configured via pyproject with dev dependencies and test paths.
-- Agents: pytest configured via pyproject with dev dependencies.
+- Backend: pytest configured via pyproject with dev dependencies and test paths, including generation workflow test suites.
+- Agents: pytest configured via pyproject with dev dependencies, featuring comprehensive error handling tests.
 
 **Section sources**
 - [vite.config.ts:18-23](file://frontend/vite.config.ts#L18-L23)
@@ -133,7 +155,7 @@ Key testing configuration highlights:
 - [pyproject.toml:18-22](file://agents/pyproject.toml#L18-L22)
 
 ## Architecture Overview
-This section maps the testing architecture across components and highlights how tests exercise different layers.
+This section maps the testing architecture across components and highlights how tests exercise different layers, with enhanced focus on generation workflow and recovery mechanisms.
 
 ```mermaid
 graph TB
@@ -154,10 +176,15 @@ EMAIL["Email Sender Tests"]
 EXT_API["Extension API Tests"]
 PHASE1["Phase 1 Workflow Tests"]
 WORKFLOW["Workflow Contract Tests"]
+GEN_WORKFLOW["Generation Workflow Tests"]
+CACHE_RECOVERY["Cache Recovery Tests"]
 end
 subgraph "Agents Tests"
 AG_PYTEST["pytest"]
 WORKER["Worker Unit Tests"]
+CALLBACK_HANDLING["Callback Failure Handling"]
+CACHE_WRITE["Cache Write Failure Tests"]
+END_TO_END["End-to-End Generation Tests"]
 end
 RTL --> VT
 VT --> SETUP
@@ -171,7 +198,12 @@ PYTEST --> EMAIL
 PYTEST --> EXT_API
 PYTEST --> PHASE1
 PYTEST --> WORKFLOW
+PYTEST --> GEN_WORKFLOW
+PYTEST --> CACHE_RECOVERY
 AG_PYTEST --> WORKER
+AG_PYTEST --> CALLBACK_HANDLING
+AG_PYTEST --> CACHE_WRITE
+AG_PYTEST --> END_TO_END
 ```
 
 **Diagram sources**
@@ -250,6 +282,7 @@ RT-->>T : "assertions"
 - Workflow testing:
   - Exercise application lifecycle transitions (creation, manual entry, duplicate review, recovery).
   - Validate error propagation, notifications, and progress stores.
+  - **Enhanced**: Comprehensive generation workflow testing including cache recovery scenarios.
 - Mock strategies:
   - Use MockTransport for HTTP clients to intercept outbound emails.
   - Replace auth verifier and repositories with stub implementations.
@@ -290,11 +323,15 @@ APP-->>TC : "200 JSON status"
   - Validate normalization of origins, reference ID extraction, and blocked-page detection.
   - Validate page context construction from captured payloads.
   - Validate fallback model selection when primary extraction fails.
+  - **Enhanced**: Comprehensive callback failure handling validation with best-effort delivery.
+  - **Enhanced**: Cache write failure handling with graceful degradation and logging.
 - Mock strategies:
   - Use controlled exceptions to simulate failures and verify fallback behavior.
+  - Implement fake writers and callbacks to test error scenarios.
 - Best practices:
   - Keep tests deterministic by providing synthetic contexts and captures.
   - Validate side effects (e.g., calls to extraction models) via call tracking.
+  - Test both success paths and failure recovery mechanisms.
 
 ```mermaid
 flowchart TD
@@ -353,6 +390,103 @@ end
 - [extension-popup.test.ts:1-31](file://frontend/src/test/extension-popup.test.ts#L1-L31)
 - [manifest.json:1-24](file://frontend/public/chrome-extension/manifest.json#L1-L24)
 
+## Generation Workflow Testing
+
+### Generation Success Recovery Testing
+The backend now includes comprehensive testing for generation workflow success recovery through progress cache reconciliation. This ensures that successful generation outcomes can be recovered even if callback delivery fails.
+
+**Key Testing Scenarios:**
+- Cache-based success recovery validation
+- Progress store reconciliation logic
+- Draft repository upsert operations
+- Notification and email delivery coordination
+- Workflow state transitions and cleanup
+
+**Test Implementation Patterns:**
+- Mock progress store with cached generation results
+- Validate payload validation and model conversion
+- Test draft repository operations and cleanup
+- Verify notification creation and usage event recording
+
+**Section sources**
+- [application_manager.py:992-1079](file://backend/app/services/application_manager.py#L992-L1079)
+
+### Callback Failure Handling Testing
+The agents module includes sophisticated callback failure handling with best-effort delivery mechanisms. Tests validate that the system continues operation even when callback delivery fails.
+
+**Key Testing Scenarios:**
+- Callback delivery failure simulation
+- Best-effort retry logic validation
+- Logging and warning message verification
+- Graceful degradation to progress/cache reconciliation
+
+**Test Implementation Patterns:**
+- Controlled exception injection for callback failures
+- Fake callback client with event tracking
+- Progress store validation after failure
+- Warning log verification with error details
+
+**Section sources**
+- [worker.py:722-741](file://agents/worker.py#L722-L741)
+- [test_worker.py:626-713](file://agents/tests/test_worker.py#L626-L713)
+
+### Cache Write Failure Testing
+The system includes comprehensive cache write failure handling to ensure generation results can still be processed even when Redis caching fails.
+
+**Key Testing Scenarios:**
+- Redis cache write failure simulation
+- Progress store fallback validation
+- Generation result processing without cache
+- Error logging and warning message verification
+
+**Test Implementation Patterns:**
+- Fake writer with controlled cache write failures
+- Event-driven progress validation
+- Callback event tracking despite cache failures
+- State validation after cache write errors
+
+**Section sources**
+- [worker.py:743-765](file://agents/worker.py#L743-L765)
+- [test_worker.py:626-713](file://agents/tests/test_worker.py#L626-L713)
+
+## Cache Recovery Testing
+
+### Progress Store Reconciliation Testing
+The backend implements sophisticated cache recovery mechanisms through progress store reconciliation, ensuring system resilience against partial failures.
+
+**Key Testing Scenarios:**
+- Terminal generation progress reconciliation
+- Success/failure state detection and handling
+- Target state calculation and validation
+- Failure reason normalization and persistence
+
+**Test Implementation Patterns:**
+- Mock progress records with various states
+- Terminal state detection validation
+- Target state calculation testing
+- Failure details normalization and persistence
+
+**Section sources**
+- [application_manager.py:682-800](file://backend/app/services/application_manager.py#L682-L800)
+
+### Extraction Result Cache Recovery Testing
+The system includes dedicated cache recovery for extraction results, enabling seamless recovery from partial extraction failures.
+
+**Key Testing Scenarios:**
+- Cached extraction result validation
+- Job ID and workflow kind matching
+- Payload model validation and conversion
+- Application state updates and cleanup
+
+**Test Implementation Patterns:**
+- Mock extraction result cache entries
+- Payload validation testing with model conversion
+- State transition validation and cleanup
+- Duplicate resolution flow integration testing
+
+**Section sources**
+- [application_manager.py:936-990](file://backend/app/services/application_manager.py#L936-L990)
+
 ## Dependency Analysis
 - Frontend:
   - Vitest depends on jsdom for DOM simulation.
@@ -362,9 +496,11 @@ end
   - pytest runs tests under asyncio for async endpoints.
   - TestClient drives HTTP-level integration tests.
   - Dependency overrides decouple tests from external services.
+  - **Enhanced**: Generation workflow and cache recovery testing dependencies.
 - Agents:
   - pytest runs unit tests for extraction and normalization logic.
   - Controlled exceptions validate fallback behavior.
+  - **Enhanced**: Callback failure handling and cache write failure testing.
 
 ```mermaid
 graph LR
@@ -373,7 +509,11 @@ RTL["React Testing Library"] --> VITEST
 TESTCLIENT["FastAPI TestClient"] --> PYTEST["pytest"]
 PYTEST --> DEPOVERR["Dependency Overrides"]
 PYTEST --> MOCKHTTP["MockTransport"]
+PYTEST --> GEN_WORKFLOW["Generation Workflow Tests"]
+PYTEST --> CACHE_RECOVERY["Cache Recovery Tests"]
 AG_PYTEST["pytest"] --> AG_TESTS["Worker Unit Tests"]
+AG_PYTEST --> CALLBACK_HANDLING["Callback Failure Tests"]
+AG_PYTEST --> CACHE_WRITE["Cache Write Tests"]
 ```
 
 **Diagram sources**
@@ -394,6 +534,8 @@ AG_PYTEST["pytest"] --> AG_TESTS["Worker Unit Tests"]
 - Use hoisted mocks and reset per test to avoid shared mutable state.
 - Limit reliance on real HTTP clients; prefer MockTransport for outbound integrations.
 - Keep browser simulation minimal; focus on critical UI flows and security boundaries.
+- **Enhanced**: Optimize generation workflow tests to minimize Redis dependencies in unit tests.
+- **Enhanced**: Use fake implementations for cache operations in callback failure tests.
 
 ## Troubleshooting Guide
 - Frontend:
@@ -402,8 +544,12 @@ AG_PYTEST["pytest"] --> AG_TESTS["Worker Unit Tests"]
 - Backend:
   - If endpoints require authentication, confirm stub auth verifier and bearer tokens.
   - If HTTP mocks do not intercept, verify MockTransport is passed to the client under test.
+  - **Enhanced**: For generation workflow tests, verify progress store mock configurations.
+  - **Enhanced**: For cache recovery tests, ensure cache entries are properly formatted.
 - Agents:
   - If fallback behavior is not triggered, confirm controlled exceptions are raised in the fake agent.
+  - **Enhanced**: For callback failure tests, verify warning logs are captured.
+  - **Enhanced**: For cache write failure tests, confirm graceful degradation occurs.
 - General:
   - Use watch mode for rapid iteration during test development.
   - Add targeted logs in failing tests to inspect intermediate states.
@@ -415,15 +561,17 @@ AG_PYTEST["pytest"] --> AG_TESTS["Worker Unit Tests"]
 - [test_worker.py:98-127](file://agents/tests/test_worker.py#L98-L127)
 
 ## Conclusion
-This testing strategy emphasizes component-focused testing with React Testing Library and Vitest for the frontend, robust unit and integration tests with pytest for the backend, and precise unit tests for the agents. It leverages mocking, dependency overrides, and controlled environments to ensure reliability, security, and maintainability across the system.
+This testing strategy emphasizes component-focused testing with React Testing Library and Vitest for the frontend, robust unit and integration tests with pytest for the backend including comprehensive generation workflow and cache recovery testing, and precise unit tests for the agents with advanced error handling validation. It leverages mocking, dependency overrides, and controlled environments to ensure reliability, security, and maintainability across the system, with enhanced focus on resilient generation workflows and recovery mechanisms.
 
 ## Appendices
 - Example patterns:
   - Frontend: Mock API module hoisting and reset per test.
-  - Backend: Dependency override fixture pattern and TestClient usage.
-  - Agents: Controlled exception pattern for fallback validation.
+  - Backend: Dependency override fixture pattern, TestClient usage, and generation workflow testing.
+  - Agents: Controlled exception pattern for fallback validation, callback failure handling, and cache write failure testing.
 - Coverage expectations:
   - Aim for high coverage in critical paths (auth, workflow transitions, email delivery, extension token handling).
+  - **Enhanced**: Generate comprehensive coverage for generation workflow success recovery, callback failure handling, and cache write failure scenarios.
 - Continuous integration:
   - Run frontend tests via Vitest, backend tests via pytest, and agent tests via pytest in CI.
   - Configure separate jobs for each component to parallelize execution.
+  - **Enhanced**: Include dedicated test jobs for generation workflow and cache recovery scenarios.

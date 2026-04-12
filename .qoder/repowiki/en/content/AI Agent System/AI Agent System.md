@@ -21,17 +21,16 @@
 - [2026-04-09-high-aggressiveness-role-title-rewrites.md](file://docs/task-output/2026-04-09-high-aggressiveness-role-title-rewrites.md)
 - [2026-04-07-generation-hang-and-cancel-fixes.md](file://docs/task-output/2026-04-07-generation-hang-and-cancel-fixes.md)
 - [2026-04-10-deterministic-regeneration-timeouts-and-cap.sql](file://supabase/migrations/20260410_000011_phase_5_full_regeneration_cap.sql)
+- [application_manager.py](file://backend/app/services/application_manager.py)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Enhanced documentation of increased timeouts for full draft generation (540s) and section regeneration (280s)
-- Added comprehensive coverage of deterministic Professional Experience structure handling with anchor extraction and validation
-- Updated regeneration cap implementation documentation with non-admin cap enforcement and admin bypass functionality
-- Enhanced validation rules documentation with stricter prompt constraints for role title rewrites
-- Updated backend integration documentation with deterministic regeneration capabilities and timeout profiles
-- Added detailed coverage of admin bypass support for regeneration caps
-- Expanded documentation of strict validation rules for role title rewrites
+- Enhanced documentation of comprehensive generation workflow system with run_generation_job() and run_regeneration_job() functions
+- Added documentation of enhanced callback mechanisms with best-effort delivery for generation workflows
+- Documented Redis caching for generation results with progress reconciliation capabilities
+- Updated generation and regeneration job flows with deterministic validation and structure checks
+- Enhanced error handling and timeout management for generation workflows
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -75,9 +74,10 @@ API["internal_worker.py<br/>Internal callbacks"]
 CORE["workflow_contract.py<br/>Load contract"]
 SVC["workflow.py<br/>Status derivation"]
 APP["main.py<br/>FastAPI app"]
+AM["application_manager.py<br/>Progress reconciliation"]
 end
 subgraph "External Services"
-RC["Redis<br/>ARQ queues"]
+RC["Redis<br/>ARQ queues + generation cache"]
 OR["OpenRouter<br/>ChatOpenAI"]
 PW["Playwright<br/>Browser automation"]
 DB["PostgreSQL<br/>Applications table"]
@@ -90,13 +90,14 @@ API --> SVC
 SVC --> CORE
 CORE --> WC
 APP --> API
+AM --> RC
 DF --> W
 CFG --> W
 DB --> APP
 ```
 
 **Diagram sources**
-- [worker.py:1-1421](file://agents/worker.py#L1-L1421)
+- [worker.py:1-1620](file://agents/worker.py#L1-L1620)
 - [generation.py:1-1110](file://agents/generation.py#L1-L1110)
 - [validation.py:1-602](file://agents/validation.py#L1-L602)
 - [experience_contract.py:1-254](file://agents/experience_contract.py#L1-L254)
@@ -108,9 +109,10 @@ DB --> APP
 - [workflow.py:1-32](file://backend/app/services/workflow.py#L1-L32)
 - [internal_worker.py:1-71](file://backend/app/api/internal_worker.py#L1-L71)
 - [main.py:1-36](file://backend/app/main.py#L1-L36)
+- [application_manager.py:992-1191](file://backend/app/services/application_manager.py#L992-L1191)
 
 **Section sources**
-- [worker.py:1-1421](file://agents/worker.py#L1-L1421)
+- [worker.py:1-1620](file://agents/worker.py#L1-L1620)
 - [pyproject.toml:1-26](file://agents/pyproject.toml#L1-L26)
 - [Dockerfile:1-14](file://agents/Dockerfile#L1-L14)
 - [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
@@ -128,6 +130,7 @@ DB --> APP
 - Assembly service: combines personal info header with ordered generated sections into a single Markdown resume.
 - Progress tracking: Redis-backed JobProgress records and periodic callbacks to backend.
 - Workflow contract: shared contract defining internal states, workflow kinds, failure reasons, and status mapping rules.
+- Redis generation caching: persistent cache for generation results with reconciliation capabilities.
 
 **Section sources**
 - [worker.py:52-53](file://agents/worker.py#L52-L53)
@@ -140,14 +143,14 @@ DB --> APP
 - [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
 
 ## Architecture Overview
-The system integrates ARQ workers with Redis queues, LangChain ChatOpenAI via OpenRouter, Playwright for browser automation, and backend callbacks for progress and completion. The backend derives visible statuses from internal states using the shared workflow contract.
+The system integrates ARQ workers with Redis queues, LangChain ChatOpenAI via OpenRouter, Playwright for browser automation, and backend callbacks for progress and completion. The backend derives visible statuses from internal states using the shared workflow contract. Generation workflows include Redis caching for results with reconciliation capabilities.
 
 ```mermaid
 sequenceDiagram
 participant Client as "Client"
 participant Backend as "Backend API"
 participant Worker as "ARQ Worker"
-participant Redis as "Redis Queue"
+participant Redis as "Redis Queue + Cache"
 participant OR as "OpenRouter"
 participant PW as "Playwright"
 participant EC as "Experience Contract"
@@ -158,9 +161,10 @@ Redis-->>Worker : "Dequeue task"
 Worker->>PW : "Scrape page (optional)"
 Worker->>OR : "Structured extraction/generation/validation"
 Worker->>EC : "Deterministic PE handling"
-Worker->>Callback : "POST progress/state"
+Worker->>Callback : "POST progress/state (best-effort)"
 Callback-->>Backend : "Update application state"
-Worker-->>Redis : "Store JobProgress"
+Worker->>Redis : "Store JobProgress + Generation Cache"
+Backend->>Redis : "Reconcile progress/cache on startup"
 Backend-->>Client : "Poll progress/status"
 ```
 
@@ -168,6 +172,7 @@ Backend-->>Client : "Poll progress/status"
 - [worker.py:672-974](file://agents/worker.py#L672-L974)
 - [internal_worker.py:19-71](file://backend/app/api/internal_worker.py#L19-L71)
 - [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
+- [application_manager.py:992-1191](file://backend/app/services/application_manager.py#L992-L1191)
 
 ## Detailed Component Analysis
 
@@ -222,7 +227,7 @@ The generation agent performs section-based generation with:
 - Validation gate before assembly
 - Deterministic Professional Experience structure handling
 
-**Updated** Enhanced with increased timeouts (540s for full generation, 280s for section regeneration) and deterministic Professional Experience handling
+**Updated** Enhanced with comprehensive generation workflow system and Redis caching
 
 ```mermaid
 sequenceDiagram
@@ -234,6 +239,7 @@ participant Val as "validate_resume"
 participant Asm as "assemble_resume"
 participant CB as "BackendCallbackClient"
 participant RW as "RedisProgressWriter"
+Worker->>RW : "clear_generation_result(app_id)"
 Worker->>RW : "set_progress(generating, 5%)"
 Worker->>CB : "post(started, generation)"
 Worker->>Gen : "generate_sections(..., on_progress)"
@@ -242,15 +248,16 @@ OR-->>Gen : "GeneratedSection"
 Gen->>EC : "normalize_professional_experience"
 EC-->>Gen : "Normalized PE section"
 Gen-->>Worker : "sections + model_used + anchors"
-Worker->>RW : "set_progress(validating, 85%)"
+Worker->>RW : "set_progress(generating, 85%)"
 Worker->>Val : "validate_resume(...)"
 Val->>EC : "validate_experience_contract"
 EC-->>Val : "Contract validation results"
 Val-->>Worker : "valid/errors/auto_corrections"
 alt Valid
-Worker->>RW : "set_progress(assembling, 95%)"
+Worker->>RW : "set_progress(generating, 95%)"
 Worker->>Asm : "assemble_resume(personal_info, sections)"
 Worker->>RW : "set_progress(resume_ready, 100%)"
+Worker->>RW : "set_generation_result(cache)"
 Worker->>CB : "post(succeeded, content)"
 else Invalid
 Worker->>RW : "set_progress(generation_failed, 100%)"
@@ -259,15 +266,73 @@ end
 ```
 
 **Diagram sources**
-- [worker.py:828-1054](file://agents/worker.py#L828-L1054)
-- [generation.py:827-1110](file://agents/generation.py#L827-L1110)
+- [worker.py:961-1149](file://agents/worker.py#L961-L1149)
+- [generation.py:898-991](file://agents/generation.py#L898-L991)
 - [validation.py:527-602](file://agents/validation.py#L527-L602)
 - [assembly.py:12-86](file://agents/assembly.py#L12-L86)
 
 **Section sources**
-- [worker.py:828-1054](file://agents/worker.py#L828-L1054)
-- [generation.py:827-1110](file://agents/generation.py#L827-L1110)
+- [worker.py:961-1149](file://agents/worker.py#L961-L1149)
+- [generation.py:898-991](file://agents/generation.py#L898-L991)
 - [validation.py:527-602](file://agents/validation.py#L527-L602)
+
+### Regeneration Agent
+The regeneration agent provides both full and single-section regeneration capabilities:
+- Full regeneration follows the same generation pipeline with deterministic validation
+- Single-section regeneration targets specific sections with user instructions
+- Both modes support progress callbacks and validation gates
+- Redis caching persists generation results for recovery
+
+**Updated** Comprehensive documentation of regeneration workflow system
+
+```mermaid
+sequenceDiagram
+participant Worker as "run_regeneration_job"
+participant Gen as "generate_sections"
+participant RS as "regenerate_single_section"
+participant OR as "OpenRouter"
+participant EC as "ExperienceContract"
+participant Val as "validate_resume"
+participant Asm as "assemble_resume"
+participant CB as "BackendCallbackClient"
+participant RW as "RedisProgressWriter"
+alt Full regeneration
+Worker->>RW : "clear_generation_result(app_id)"
+Worker->>RW : "set_progress(regenerating_full, 5%)"
+Worker->>CB : "post(started, regeneration)"
+Worker->>Gen : "generate_sections(...)"
+Gen->>OR : "full draft generation"
+OR-->>Gen : "GeneratedSections"
+else Single-section regeneration
+Worker->>RW : "set_progress(regenerating_section, 20%)"
+Worker->>CB : "post(started, regeneration)"
+Worker->>RS : "regenerate_single_section(...)"
+RS->>OR : "section-specific generation"
+OR-->>RS : "RegeneratedSection"
+end
+Worker->>RW : "set_progress(regenerating, 85%)"
+Worker->>Val : "validate_resume(...)"
+Val->>EC : "validate_experience_contract"
+EC-->>Val : "Contract validation results"
+Val-->>Worker : "valid/errors/auto_corrections"
+alt Valid
+Worker->>RW : "set_progress(resume_ready, 100%)"
+Worker->>RW : "set_generation_result(cache)"
+Worker->>CB : "post(succeeded, content)"
+else Invalid
+Worker->>RW : "set_progress(generation_failed, 100%)"
+Worker->>CB : "post(failed, validation_errors)"
+end
+```
+
+**Diagram sources**
+- [worker.py:1226-1613](file://agents/worker.py#L1226-L1613)
+- [generation.py:1013-1110](file://agents/generation.py#L1013-L1110)
+- [validation.py:527-602](file://agents/validation.py#L527-L602)
+
+**Section sources**
+- [worker.py:1226-1613](file://agents/worker.py#L1226-L1613)
+- [generation.py:1013-1110](file://agents/generation.py#L1013-L1110)
 
 ### Validation Agent
 The validation agent enforces:
@@ -277,7 +342,7 @@ The validation agent enforces:
 - ATS safety (no tables/images; auto-correct minor formatting)
 - Deterministic Professional Experience structure validation with anchor-based contract enforcement
 
-**Updated** Enhanced with deterministic Professional Experience validation and stricter role title rewrite constraints
+**Updated** Enhanced with deterministic Professional Experience validation and stricter role title constraints
 
 ```mermaid
 flowchart TD
@@ -353,13 +418,15 @@ J --> R["Return final Markdown"]
 - [assembly.py:12-86](file://agents/assembly.py#L12-L86)
 
 ### Progress Tracking and Callbacks
-Progress is stored in Redis under a deterministic key and periodically updated during agent runs. Backend callbacks notify the system of state transitions and completion.
+Progress is stored in Redis under a deterministic key and periodically updated during agent runs. Backend callbacks notify the system of state transitions and completion. Generation workflows include Redis caching for results with best-effort delivery.
 
 ```mermaid
 classDiagram
 class RedisProgressWriter {
 +get(application_id) JobProgress?
 +set(application_id, progress, ttl_seconds)
++set_generation_result(application_id, job_id, workflow_kind, generated, ttl_seconds)
++clear_generation_result(application_id)
 }
 class JobProgress {
 +string job_id
@@ -375,19 +442,55 @@ class JobProgress {
 class BackendCallbackClient {
 +post(payload, path)
 }
+class BestEffortCallback {
++post_callback_best_effort(callback, payload, path, app_id, job_id, stage)
+}
 RedisProgressWriter --> JobProgress : "serializes/deserializes"
 BackendCallbackClient -->|"HTTP POST"| BackendCallbackClient : "extraction/generation/regeneration"
+BestEffortCallback --> BackendCallbackClient : "wraps with retry/backoff"
 ```
 
 **Diagram sources**
 - [worker.py:356-372](file://agents/worker.py#L356-L372)
 - [worker.py:77-87](file://agents/worker.py#L77-L87)
 - [worker.py:374-403](file://agents/worker.py#L374-L403)
+- [worker.py:722-766](file://agents/worker.py#L722-L766)
 
 **Section sources**
 - [worker.py:356-372](file://agents/worker.py#L356-L372)
 - [worker.py:77-87](file://agents/worker.py#L77-L87)
 - [worker.py:374-403](file://agents/worker.py#L374-L403)
+- [worker.py:722-766](file://agents/worker.py#L722-L766)
+
+### Redis Generation Caching
+Generation results are cached in Redis with TTL expiration for recovery purposes. The backend can reconcile progress and cached results on startup or when callbacks fail to deliver.
+
+**New** Comprehensive documentation of Redis caching for generation results
+
+```mermaid
+sequenceDiagram
+participant Worker as "Generation Job"
+participant Redis as "Redis Cache"
+participant Backend as "Backend Service"
+Worker->>Redis : "set_generation_result(app_id, payload)"
+Redis-->>Worker : "acknowledge cache"
+Backend->>Redis : "get_generation_result(app_id)"
+Redis-->>Backend : "cached payload"
+alt Cache valid
+Backend->>Backend : "upsert_draft from cache"
+Backend->>Redis : "clear_generation_result(app_id)"
+else Cache invalid/expired
+Backend->>Backend : "continue with normal reconciliation"
+end
+```
+
+**Diagram sources**
+- [worker.py:406-425](file://agents/worker.py#L406-L425)
+- [application_manager.py:992-1191](file://backend/app/services/application_manager.py#L992-L1191)
+
+**Section sources**
+- [worker.py:406-425](file://agents/worker.py#L406-L425)
+- [application_manager.py:992-1191](file://backend/app/services/application_manager.py#L992-L1191)
 
 ### LangChain and OpenRouter Integration
 - ChatOpenAI is configured with OpenRouter base URL and API key.
@@ -448,12 +551,12 @@ LLM --> Section["Generated Section"]
 ```
 
 **Diagram sources**
-- [generation.py:827-1110](file://agents/generation.py#L827-L1110)
+- [generation.py:898-991](file://agents/generation.py#L898-L991)
 - [generation.py:499-560](file://agents/generation.py#L499-L560)
 - [experience_contract.py:86-122](file://agents/experience_contract.py#L86-L122)
 
 **Section sources**
-- [generation.py:827-1110](file://agents/generation.py#L827-L1110)
+- [generation.py:898-991](file://agents/generation.py#L898-L991)
 - [generation.py:499-560](file://agents/generation.py#L499-L560)
 
 ### Regeneration Capabilities
@@ -500,6 +603,7 @@ The system implements comprehensive error handling and timeout management:
 - Structured error reporting with normalized validation errors
 - Terminal error codes for different failure scenarios
 - Deterministic regeneration with strict timeout profiles
+- Best-effort callback delivery with exponential backoff
 
 **Updated** Enhanced with increased timeouts and deterministic handling
 
@@ -528,8 +632,32 @@ The system enforces strict constraints for role title rewrites:
 - [generation.py:422-432](file://agents/generation.py#L422-L432)
 - [2026-04-09-high-aggressiveness-role-title-rewrites.md:62-71](file://docs/task-output/2026-04-09-high-aggressiveness-role-title-rewrites.md#L62-L71)
 
+### Best-Effort Callback Delivery
+Generation workflows implement best-effort callback delivery with retry logic and exponential backoff to ensure resilience against transient failures.
+
+**New** Comprehensive documentation of best-effort callback mechanisms
+
+```mermaid
+flowchart TD
+Start(["post_callback_best_effort"]) --> Try["Attempt callback delivery"]
+Try --> Success{"HTTP 2xx?"}
+Success --> |Yes| End(["Return successfully"])
+Success --> |No| Retry{"Retry attempts left?"}
+Retry --> |Yes| Backoff["Exponential backoff"]
+Backoff --> Wait["Wait 1s, 2s, 4s, 8s..."]
+Wait --> Try
+Retry --> |No| Log["Log warning & continue"]
+Log --> End
+```
+
+**Diagram sources**
+- [worker.py:722-766](file://agents/worker.py#L722-L766)
+
+**Section sources**
+- [worker.py:722-766](file://agents/worker.py#L722-L766)
+
 ## Dependency Analysis
-The agents package depends on ARQ for task queueing, LangChain OpenAI for LLM calls, Playwright for browser automation, and Redis for progress storage. The backend consumes agent callbacks and derives application statuses from the shared workflow contract.
+The agents package depends on ARQ for task queueing, LangChain OpenAI for LLM calls, Playwright for browser automation, and Redis for progress storage and generation caching. The backend consumes agent callbacks and derives application statuses from the shared workflow contract.
 
 ```mermaid
 graph TB
@@ -545,6 +673,7 @@ FAST["fastapi"]
 SUP["supabase"]
 PG["postgres"]
 DB["applications.full_regeneration_count"]
+AM["application_manager<br/>progress reconciliation"]
 end
 ARQ --> REDIS
 LC --> OPENROUTER["openrouter.ai"]
@@ -553,6 +682,7 @@ FAST --> SUP
 FAST --> PG
 DB --> PG
 EC --> FAST
+AM --> REDIS
 ```
 
 **Diagram sources**
@@ -560,6 +690,7 @@ EC --> FAST
 - [worker.py:13-19](file://agents/worker.py#L13-L19)
 - [main.py:14-36](file://backend/app/main.py#L14-L36)
 - [2026-04-10-deterministic-regeneration-timeouts-and-cap.sql:3-4](file://supabase/migrations/20260410_000011_phase_5_full_regeneration_cap.sql#L3-L4)
+- [application_manager.py:992-1191](file://backend/app/services/application_manager.py#L992-L1191)
 
 **Section sources**
 - [pyproject.toml:10-16](file://agents/pyproject.toml#L10-L16)
@@ -574,6 +705,8 @@ EC --> FAST
 - Headless browser automation minimizes resource usage.
 - Progress updates keep UI responsive and enable user feedback.
 - Deterministic Professional Experience handling reduces validation failures and rework cycles.
+- Redis caching reduces callback dependency and enables recovery from delivery failures.
+- Best-effort callback delivery with exponential backoff ensures resilience.
 
 ## Troubleshooting Guide
 Common issues and remedies:
@@ -586,8 +719,10 @@ Common issues and remedies:
 - ATS safety violations: Review auto-corrections applied to fix formatting issues.
 - Regeneration cap exceeded: Non-admin users receive conflict guidance; admins can bypass with appropriate permissions.
 - Professional Experience structure violations: Review deterministic validation errors and ensure source anchors are preserved.
+- Generation cache misses: Backend automatically reconciles from progress when cache is unavailable.
+- Callback delivery failures: Best-effort delivery continues without interrupting workflow execution.
 
-**Updated** Enhanced troubleshooting with regeneration cap and Professional Experience validation issues
+**Updated** Enhanced troubleshooting with regeneration cap, Professional Experience validation, and Redis caching issues
 
 **Section sources**
 - [worker.py:791-813](file://agents/worker.py#L791-L813)
@@ -596,7 +731,7 @@ Common issues and remedies:
 - [2026-04-10-deterministic-regeneration-timeouts-and-cap.md:25-31](file://docs/task-output/2026-04-10-deterministic-regeneration-timeouts-and-cap.md#L25-L31)
 
 ## Conclusion
-The ARQ-based agent system provides a robust, asynchronous pipeline for extracting job postings, generating tailored resumes, validating ATS compliance, and assembling final outputs. It integrates tightly with Redis for progress tracking, OpenRouter for reliable LLM calls, and the backend's workflow contract to maintain a clear state machine and visible status mapping. Built-in retry strategies, timeouts, and structured validation ensure resilient operation and predictable user experiences. The enhanced deterministic Professional Experience handling and regeneration cap enforcement provide additional reliability and control for complex generation workflows.
+The ARQ-based agent system provides a robust, asynchronous pipeline for extracting job postings, generating tailored resumes, validating ATS compliance, and assembling final outputs. It integrates tightly with Redis for progress tracking and generation caching, OpenRouter for reliable LLM calls, and the backend's workflow contract to maintain a clear state machine and visible status mapping. Built-in retry strategies, timeouts, and structured validation ensure resilient operation and predictable user experiences. The enhanced deterministic Professional Experience handling, comprehensive generation workflow system, Redis caching with reconciliation, and best-effort callback delivery provide additional reliability and control for complex generation workflows.
 
 ## Appendices
 
@@ -619,8 +754,8 @@ The ARQ-based agent system provides a robust, asynchronous pipeline for extracti
 **Section sources**
 - [worker.py:58-75](file://agents/worker.py#L58-L75)
 - [worker.py:672-791](file://agents/worker.py#L672-L791)
-- [worker.py:828-1054](file://agents/worker.py#L828-L1054)
-- [worker.py:1062-1414](file://agents/worker.py#L1062-L1414)
+- [worker.py:961-1149](file://agents/worker.py#L961-L1149)
+- [worker.py:1226-1613](file://agents/worker.py#L1226-L1613)
 
 ### Monitoring Approaches
 - Poll progress: use the polling schema defined in the workflow contract to fetch JobProgress from Redis.
@@ -628,8 +763,9 @@ The ARQ-based agent system provides a robust, asynchronous pipeline for extracti
 - Callback verification: ensure X-Worker-Secret is present for internal worker endpoints.
 - Regeneration cap monitoring: track applications.full_regeneration_count for non-admin users.
 - Deterministic validation monitoring: verify Professional Experience structure compliance.
+- Generation cache monitoring: verify Redis caching and reconciliation capabilities.
 
-**Updated** Enhanced with regeneration cap and deterministic validation monitoring
+**Updated** Enhanced with regeneration cap, deterministic validation, and Redis caching monitoring
 
 **Section sources**
 - [workflow-contract.json:91-114](file://shared/workflow-contract.json#L91-L114)
@@ -642,14 +778,16 @@ The ARQ-based agent system provides a robust, asynchronous pipeline for extracti
 - Backend callbacks: on failure, set terminal error code and notify the backend; UI can guide user actions.
 - Regeneration cap enforcement: non-admin users receive conflict guidance; admin bypass available.
 - Deterministic Professional Experience handling: strict validation prevents structural violations.
+- Redis caching: automatic recovery from callback failures using cached generation results.
+- Best-effort callback delivery: exponential backoff retry mechanism for transient failures.
 
-**Updated** Enhanced with regeneration cap and deterministic handling strategies
+**Updated** Enhanced with regeneration cap, deterministic handling, Redis caching, and best-effort callback strategies
 
 **Section sources**
 - [worker.py:405-483](file://agents/worker.py#L405-L483)
 - [generation.py:642-660](file://agents/generation.py#L642-L660)
 - [validation.py:1-16](file://agents/validation.py#L1-L16)
-- [worker.py:1062-1414](file://agents/worker.py#L1062-L1414)
+- [worker.py:1226-1613](file://agents/worker.py#L1226-L1613)
 - [2026-04-10-deterministic-regeneration-timeouts-and-cap.md:25-31](file://docs/task-output/2026-04-10-deterministic-regeneration-timeouts-and-cap.md#L25-L31)
 
 ### Hallucination Detection and Validation Rules
@@ -711,3 +849,31 @@ The system provides admin bypass functionality for regeneration caps:
 **Section sources**
 - [2026-04-10-deterministic-regeneration-timeouts-and-cap.md:25-31](file://docs/task-output/2026-04-10-deterministic-regeneration-timeouts-and-cap.md#L25-L31)
 - [2026-04-10-deterministic-regeneration-timeouts-and-cap.sql:3-11](file://supabase/migrations/20260410_000011_phase_5_full_regeneration_cap.sql#L3-L11)
+
+### Redis Generation Cache Reconciliation
+The backend automatically reconciles generation results from Redis cache when callback delivery fails or progress indicates completion without callback receipt.
+
+**New** Comprehensive documentation of Redis cache reconciliation process
+
+```mermaid
+flowchart TD
+Start(["Backend Startup/Progress Poll"]) --> Check["Check JobProgress state"]
+Check --> Terminal{"Terminal state?"}
+Terminal --> |No| Continue["Continue normal operation"]
+Terminal --> |Yes| Cache["Check Redis generation cache"]
+Cache --> HasCache{"Cache exists & matches?"}
+HasCache --> |No| Continue
+HasCache --> |Yes| Validate["Validate cached payload"]
+Validate --> Valid{"Valid payload?"}
+Valid --> |No| Continue
+Valid --> |Yes| Upsert["Upsert draft from cache"]
+Upsert --> Clear["Clear cache"]
+Clear --> Notify["Send success notifications"]
+Notify --> Continue
+```
+
+**Diagram sources**
+- [application_manager.py:992-1191](file://backend/app/services/application_manager.py#L992-L1191)
+
+**Section sources**
+- [application_manager.py:992-1191](file://backend/app/services/application_manager.py#L992-L1191)
