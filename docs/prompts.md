@@ -32,6 +32,8 @@ Resume Judge is a dedicated post-generation evaluator. It runs after initial gen
   - primary `openai/gpt-5.4-mini`
   - fallback `openai/gpt-5-mini`
   - reasoning `none`
+- `none` is sent to OpenRouter as an explicit `reasoning: {"effort": "none"}` payload so reasoning-capable models are actually run without reasoning instead of falling back to provider defaults.
+- If a provider rejects disabled reasoning with an error such as "reasoning is mandatory" or "cannot be disabled", the same model is retried once without the `reasoning` field so provider-default reasoning can still proceed.
 - The judge allows one primary-model attempt and one fallback-model attempt. If the provider rejects the configured reasoning field, the same model is retried once without reasoning before moving on.
 - Judge failure is fail-open for the application workflow: score state is stored, but resume export, editing, and visible status remain usable.
 
@@ -151,6 +153,8 @@ This section is organized by what stays constant across all resume-writing opera
 - Initial generation, full regeneration, and single-section regeneration use the env-configured `GENERATION_AGENT_REASONING_EFFORT` setting for both primary and fallback attempts.
 - Allowed reasoning values are `none`, `low`, `medium`, `high`, and `xhigh`.
 - The current tracked env defaults set `GENERATION_AGENT_REASONING_EFFORT=none`.
+- `GENERATION_AGENT_REASONING_EFFORT=none` is passed through to OpenRouter as `reasoning: {"effort": "none"}`. Non-`none` efforts also set `exclude=true` so reasoning stays internal and is not returned in the response body.
+- If a provider rejects disabled reasoning as mandatory, the generation layer retries that same model once without a `reasoning` payload before moving on to the fallback model.
 - Validation-aware repair runs with no reasoning so the repair path stays narrow and deterministic.
 - Full generation and full regeneration allow up to `240s` per LLM attempt and use heartbeat progress updates while waiting on the model. Section regeneration allows up to `120s` per attempt.
 - The generation layer uses a bounded two-model pipeline:

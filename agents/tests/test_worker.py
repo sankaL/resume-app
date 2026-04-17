@@ -161,10 +161,26 @@ def test_worker_settings_rejects_invalid_generation_reasoning_effort():
         WorkerSettingsEnv(generation_agent_reasoning_effort="turbo")
 
 
+def test_worker_settings_rejects_duplicate_generation_fallback_model():
+    with pytest.raises(ValueError, match="generation_agent_fallback_model must differ"):
+        WorkerSettingsEnv(
+            generation_agent_model="openai/gpt-5-mini",
+            generation_agent_fallback_model="openai/gpt-5-mini",
+        )
+
+
 def test_worker_settings_normalizes_resume_judge_reasoning_effort():
     settings = WorkerSettingsEnv(resume_judge_agent_reasoning_effort="NONE")
 
     assert settings.resume_judge_agent_reasoning_effort == "none"
+
+
+def test_worker_settings_rejects_duplicate_resume_judge_fallback_model():
+    with pytest.raises(ValueError, match="resume_judge_agent_fallback_model must differ"):
+        WorkerSettingsEnv(
+            resume_judge_agent_model="google/gemini-3-flash-preview",
+            resume_judge_agent_fallback_model="google/gemini-3-flash-preview",
+        )
 
 
 class FakeExtractionAgent(OpenRouterExtractionAgent):

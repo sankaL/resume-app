@@ -659,7 +659,7 @@ describe("phase 1 applications UI", () => {
     expect(screen.getByRole("button", { name: /delete unavailable while backend engineer is still processing/i })).toBeDisabled();
   });
 
-  it("renders top-aligned application table cells for the compact list layout", async () => {
+  it("renders middle-aligned application table cells for the compact list layout", async () => {
     api.listApplications.mockResolvedValue([
       buildApplicationSummary({ id: "app-1", job_title: "Backend Engineer" }),
     ]);
@@ -670,7 +670,7 @@ describe("phase 1 applications UI", () => {
     const row = titleCell.closest("tr");
     const firstCell = row?.querySelector("td");
 
-    expect(firstCell?.className).toContain("align-top");
+    expect(firstCell?.className).toContain("align-middle");
   });
 
   it("surfaces dashboard load failures instead of showing the empty state", async () => {

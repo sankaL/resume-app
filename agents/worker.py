@@ -16,7 +16,7 @@ from arq.connections import RedisSettings
 from langchain_openai import ChatOpenAI
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis
 
@@ -123,6 +123,26 @@ class WorkerSettingsEnv(BaseSettings):
                 f"resume_judge_agent_reasoning_effort must be one of: {allowed_display}."
             )
         return normalized
+
+    @model_validator(mode="after")
+    def validate_distinct_llm_fallbacks(self) -> "WorkerSettingsEnv":
+        if (
+            self.generation_agent_model
+            and self.generation_agent_fallback_model
+            and self.generation_agent_model == self.generation_agent_fallback_model
+        ):
+            raise ValueError(
+                "generation_agent_fallback_model must differ from generation_agent_model to enable fallback."
+            )
+        if (
+            self.resume_judge_agent_model
+            and self.resume_judge_agent_fallback_model
+            and self.resume_judge_agent_model == self.resume_judge_agent_fallback_model
+        ):
+            raise ValueError(
+                "resume_judge_agent_fallback_model must differ from resume_judge_agent_model to enable fallback."
+            )
+        return self
 
 
 class JobProgress(BaseModel):

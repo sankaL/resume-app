@@ -185,9 +185,10 @@ def _normalize_reasoning_effort(reasoning_effort: Optional[str]) -> str:
 
 def _reasoning_config(reasoning_effort: Optional[str]) -> Optional[dict[str, Any]]:
     normalized = _normalize_reasoning_effort(reasoning_effort)
-    if normalized == "none":
-        return None
-    return {"effort": normalized, "exclude": True}
+    payload: dict[str, Any] = {"effort": normalized}
+    if normalized != "none":
+        payload["exclude"] = True
+    return payload
 
 
 def _reasoning_effort_value(reasoning_config: Optional[dict[str, Any]]) -> Optional[str]:
@@ -199,7 +200,10 @@ def _reasoning_effort_value(reasoning_config: Optional[dict[str, Any]]) -> Optio
 
 def _looks_like_reasoning_error(error: Exception) -> bool:
     message = str(error).lower()
-    return "reasoning" in message and any(token in message for token in ("unknown", "unsupported", "invalid", "field"))
+    return "reasoning" in message and any(
+        token in message
+        for token in ("unknown", "unsupported", "invalid", "field", "mandatory", "cannot be disabled")
+    )
 
 
 def _is_timeout_error(error: Optional[BaseException]) -> bool:

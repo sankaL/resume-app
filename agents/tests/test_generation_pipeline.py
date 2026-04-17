@@ -52,8 +52,8 @@ def build_fake_chat(
 
 
 def test_reasoning_config_defaults_by_operation():
-    assert generation._reasoning_config_for_operation("generation", "none") is None
-    assert generation._reasoning_config_for_operation("regeneration_full", "none") is None
+    assert generation._reasoning_config_for_operation("generation", "none") == {"effort": "none"}
+    assert generation._reasoning_config_for_operation("regeneration_full", "none") == {"effort": "none"}
     assert generation._reasoning_config_for_operation("generation", "medium", is_fallback=True) == {
         "effort": "medium",
         "exclude": True,
@@ -68,6 +68,12 @@ def test_reasoning_config_defaults_by_operation():
 def test_reasoning_config_rejects_unknown_effort():
     with pytest.raises(ValueError, match="Unsupported reasoning effort"):
         generation._reasoning_config_for_operation("generation", "turbo")
+
+
+def test_reasoning_error_detection_includes_mandatory_reasoning_rejections():
+    assert generation._looks_like_reasoning_error(
+        RuntimeError("Reasoning is mandatory for this endpoint and cannot be disabled.")
+    )
 
 
 @pytest.mark.asyncio
@@ -321,6 +327,97 @@ async def test_generate_sections_uses_configured_reasoning_for_generation(monkey
 
     assert result["model_used"] == "primary-model"
     assert [call["extra_body"] for call in calls] == [_reasoning_payload("medium")]
+
+
+@pytest.mark.asyncio
+async def test_generate_sections_explicitly_disables_reasoning_when_effort_is_none(monkeypatch):
+    calls: list[dict[str, Any]] = []
+
+    def callback(kwargs, _prompt, structured, response_model):
+        assert kwargs["extra_body"] == {"reasoning": {"effort": "none"}}
+        assert structured is True
+        return response_model.model_validate(
+            {
+                "sections": [
+                    {
+                        "id": "summary",
+                        "heading": "Summary",
+                        "markdown": "## Summary\nBuilt backend systems.",
+                        "supporting_snippets": ["Built backend systems.", "Build APIs."],
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(generation, "ChatOpenAI", build_fake_chat(callback, calls))
+
+    async def on_progress(_percent: int, _message: str) -> None:
+        return None
+
+    result = await generation.generate_sections(
+        base_resume_content="## Summary\nBuilt backend systems.\n",
+        job_title="Backend Engineer",
+        company_name="Acme",
+        job_description="Build APIs.",
+        section_preferences=[{"name": "summary", "enabled": True, "order": 0}],
+        generation_settings={"page_length": "1_page", "aggressiveness": "medium"},
+        model="primary-model",
+        fallback_model="fallback-model",
+        api_key="test-key",
+        base_url="https://example.com",
+        on_progress=on_progress,
+        reasoning_effort="none",
+    )
+
+    assert result["model_used"] == "primary-model"
+    assert [call["extra_body"] for call in calls] == [{"reasoning": {"effort": "none"}}]
+
+
+@pytest.mark.asyncio
+async def test_attempt_transport_retries_same_model_without_reasoning_when_provider_requires_it(monkeypatch):
+    calls: list[Optional[dict[str, Any]]] = []
+
+    async def fake_invoke_structured_output(**kwargs):
+        calls.append(kwargs["reasoning_config"])
+        if kwargs["reasoning_config"] == {"effort": "none"}:
+            raise RuntimeError("Reasoning is mandatory for this endpoint and cannot be disabled.")
+        return kwargs["response_model"].model_validate(
+            {
+                "sections": [
+                    {
+                        "id": "summary",
+                        "heading": "Summary",
+                        "markdown": "## Summary\nBuilt backend systems.",
+                        "supporting_snippets": ["Built backend systems.", "Build APIs."],
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(generation, "_invoke_structured_output", fake_invoke_structured_output)
+
+    attempts: list[dict[str, Any]] = []
+    payload = await generation._attempt_transport(
+        prompt=[("system", "test"), ("human", "{}")],
+        response_model=generation.GeneratedResumePayload,
+        expected_section_ids=["summary"],
+        operation="generation",
+        model_name="primary-model",
+        api_key="test-key",
+        base_url="https://example.com",
+        timeout=12.0,
+        reasoning_config={"effort": "none"},
+        transport_mode="structured",
+        attempts=attempts,
+        aggressiveness="medium",
+    )
+
+    assert payload.sections[0].id == "summary"
+    assert calls == [{"effort": "none"}, None]
+    assert attempts[0]["outcome"] == "reasoning_rejected"
+    assert attempts[0]["retry_reason"] == "reasoning_unsupported"
+    assert attempts[1]["outcome"] == "success"
+    assert attempts[1]["retry_reason"] == "reasoning_unsupported"
 
 
 @pytest.mark.asyncio

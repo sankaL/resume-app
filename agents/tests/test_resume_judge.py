@@ -42,6 +42,17 @@ def test_extract_json_payload_enforces_strict_json():
         resume_judge._extract_json_payload("score_summary: ok")
 
 
+def test_reasoning_config_explicitly_disables_reasoning_for_none():
+    assert resume_judge._reasoning_config("none") == {"effort": "none"}
+    assert resume_judge._reasoning_config("medium") == {"effort": "medium", "exclude": True}
+
+
+def test_reasoning_error_detection_includes_mandatory_reasoning_rejections():
+    assert resume_judge._looks_like_reasoning_error(
+        RuntimeError("Reasoning is mandatory for this endpoint and cannot be disabled.")
+    )
+
+
 def test_finalize_response_computes_weighted_score_and_priority_order():
     result = resume_judge._finalize_response(
         response=build_response(

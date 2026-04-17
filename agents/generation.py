@@ -742,10 +742,11 @@ def _reasoning_config_for_operation(
     is_fallback: bool = False,
 ) -> Optional[dict[str, Any]]:
     normalized_effort = _normalize_reasoning_effort(reasoning_effort)
-    if normalized_effort == "none":
-        return None
     if operation in {"generation", "regeneration_full", "regeneration_section"}:
-        return {"effort": normalized_effort, "exclude": True}
+        payload: dict[str, Any] = {"effort": normalized_effort}
+        if normalized_effort != "none":
+            payload["exclude"] = True
+        return payload
     return None
 
 
@@ -800,7 +801,10 @@ def _build_llm(
 
 def _looks_like_reasoning_error(error: Exception) -> bool:
     message = str(error).lower()
-    return "reasoning" in message and any(token in message for token in ("unknown", "unsupported", "invalid", "field"))
+    return "reasoning" in message and any(
+        token in message
+        for token in ("unknown", "unsupported", "invalid", "field", "mandatory", "cannot be disabled")
+    )
 
 
 def _is_timeout_error(error: Optional[BaseException]) -> bool:
