@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppProvider } from "@/components/layout/AppContext";
+import { ShellLayoutProvider } from "@/components/layout/ShellLayoutContext";
 import { TopBar } from "@/components/layout/TopBar";
 import { ToastProvider } from "@/components/ui/toast";
 import { AppBreadcrumbs } from "@/components/layout/Breadcrumbs";
@@ -118,7 +119,9 @@ function renderWithAppProvider(
   return render(
     <MemoryRouter initialEntries={options?.initialEntries}>
       <AppProvider>
-        <ToastProvider>{ui}</ToastProvider>
+        <ToastProvider>
+          <ShellLayoutProvider>{ui}</ShellLayoutProvider>
+        </ToastProvider>
       </AppProvider>
     </MemoryRouter>,
   );
@@ -174,6 +177,14 @@ describe("phase 1 applications UI", () => {
       updated_at: "2026-04-07T12:00:00Z",
     });
     api.fetchSessionBootstrap.mockResolvedValue(defaultBootstrap);
+    api.fetchBaseResume.mockResolvedValue({
+      id: "resume-1",
+      name: "Default Resume",
+      content_md: "# Base Resume\n\n## Summary\nGrounded summary",
+      is_default: true,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:00:00Z",
+    });
     api.listBaseResumes.mockResolvedValue([]);
     api.listApplications.mockResolvedValue([]);
     api.listNotifications.mockResolvedValue([]);
@@ -1613,7 +1624,7 @@ describe("phase 1 applications UI", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows flagged job-description additions in generated draft review panel", async () => {
+  it("keeps the review-flags panel visible, shows Compare, and renders the generated preview without diff highlighting", async () => {
     api.fetchApplicationDetail.mockResolvedValue(
       buildApplicationDetail({
         id: "app-1",
@@ -1626,8 +1637,9 @@ describe("phase 1 applications UI", () => {
     api.fetchDraft.mockResolvedValue({
       id: "draft-1",
       application_id: "app-1",
-      content_md: "# Resume\n\n## Summary\nBuilt backend systems with Kubernetes.",
+      content_md: "# Resume\n\n## Summary\nBuilt backend systems with Kubernetes.\n\n## Professional Experience\n- Built APIs",
       generation_params: {
+        base_resume_id: "resume-1",
         page_length: "1_page",
         aggressiveness: "high",
         additional_instructions: "",
@@ -1647,6 +1659,66 @@ describe("phase 1 applications UI", () => {
       last_exported_at: null,
       updated_at: "2026-04-07T12:10:00Z",
     });
+    api.fetchBaseResume.mockResolvedValue({
+      id: "resume-1",
+      name: "Default Resume",
+      content_md: "# Resume\n\n## Summary\nBuilt backend systems.\n\n## Professional Experience\n- Built services",
+      is_default: true,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:00:00Z",
+    });
+
+    const { container } = renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
+
+    expect(await screen.findByRole("button", { name: /^compare$/i })).toBeInTheDocument();
+    expect(screen.getByText(/review flagged additions/i)).toBeInTheDocument();
+    expect(screen.getByText(/summary:/i)).toBeInTheDocument();
+    expect(screen.queryByText("## Professional Experience")).not.toBeInTheDocument();
+    expect(container.querySelector("mark.generated-diff-highlight")).toBeNull();
+    expect(container.querySelector(".generated-diff-block")).toBeNull();
+  });
+
+  it("opens compare mode, keeps generated edit mode available, and closes back to the default layout", async () => {
+    api.fetchApplicationDetail.mockResolvedValue(
+      buildApplicationDetail({
+        id: "app-1",
+        visible_status: "in_progress",
+        internal_state: "resume_ready",
+        base_resume_id: "resume-1",
+        base_resume_name: "Default Resume",
+      }),
+    );
+    api.fetchDraft.mockResolvedValue({
+      id: "draft-1",
+      application_id: "app-1",
+      content_md: "# Resume\n\n## Summary\nTailored summary",
+      generation_params: {
+        base_resume_id: "resume-1",
+        page_length: "1_page",
+        aggressiveness: "medium",
+        additional_instructions: "",
+      },
+      sections_snapshot: {
+        enabled_sections: ["summary", "professional_experience", "education", "skills"],
+        section_order: ["summary", "professional_experience", "education", "skills"],
+      },
+      last_generated_at: "2026-04-07T12:10:00Z",
+      last_exported_at: null,
+      updated_at: "2026-04-07T12:10:00Z",
+    });
+    api.fetchBaseResume.mockResolvedValue({
+      id: "resume-1",
+      name: "Default Resume",
+      content_md: "# Resume\n\n## Summary\nBase summary",
+      is_default: true,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:00:00Z",
+    });
 
     renderWithAppProvider(
       <Routes>
@@ -1655,10 +1727,252 @@ describe("phase 1 applications UI", () => {
       { initialEntries: ["/app/applications/app-1"] },
     );
 
-    expect(await screen.findByText(/review flagged additions/i)).toBeInTheDocument();
-    expect(screen.getByText(/medium\/high generation added job-description-driven phrases/i)).toBeInTheDocument();
-    expect(screen.getByText(/summary:/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/built backend systems with kubernetes\./i).length).toBeGreaterThan(0);
+    await userEvent.click(await screen.findByRole("button", { name: /^compare$/i }));
+
+    expect(await screen.findByRole("button", { name: /close comparison/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /base resume/i })).toBeInTheDocument();
+    expect(screen.getAllByText(/base summary/i).length).toBeGreaterThan(0);
+
+    await userEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    expect(screen.getByDisplayValue(/tailored summary/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /base resume/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /close comparison/i }));
+    expect(await screen.findByRole("button", { name: /^compare$/i })).toBeInTheDocument();
+  });
+
+  it("renders base-resume headings and bullets cleanly in compare mode", async () => {
+    api.fetchApplicationDetail.mockResolvedValue(
+      buildApplicationDetail({
+        id: "app-1",
+        visible_status: "in_progress",
+        internal_state: "resume_ready",
+        base_resume_id: "resume-1",
+        base_resume_name: "Default Resume",
+      }),
+    );
+    api.fetchDraft.mockResolvedValue({
+      id: "draft-1",
+      application_id: "app-1",
+      content_md: "# Resume\n\n## Summary\nTailored summary",
+      generation_params: {
+        base_resume_id: "resume-1",
+        page_length: "1_page",
+        aggressiveness: "medium",
+        additional_instructions: "",
+      },
+      sections_snapshot: {
+        enabled_sections: ["summary", "professional_experience", "education", "skills"],
+        section_order: ["summary", "professional_experience", "education", "skills"],
+      },
+      last_generated_at: "2026-04-07T12:10:00Z",
+      last_exported_at: null,
+      updated_at: "2026-04-07T12:10:00Z",
+    });
+    api.fetchBaseResume.mockResolvedValue({
+      id: "resume-1",
+      name: "Default Resume",
+      content_md: "# Resume\n\n## Skills\n- Playwright\n- Cypress",
+      is_default: true,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:00:00Z",
+    });
+
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: /^compare$/i }));
+
+    const baseHeading = await screen.findByRole("heading", { name: "Base Resume" });
+    const basePane = baseHeading.closest(".compare-pane-card");
+
+    expect(screen.getByRole("heading", { name: "Skills" })).toBeInTheDocument();
+    expect(screen.queryByText("## Skills")).not.toBeInTheDocument();
+    expect(basePane).not.toBeNull();
+    expect(within(basePane as HTMLElement).getByText("Playwright").tagName).toBe("LI");
+    expect(within(basePane as HTMLElement).getByText("Cypress").tagName).toBe("LI");
+  });
+
+  it("switches the shell into immersive mode during compare and restores the default shell on close", async () => {
+    api.fetchApplicationDetail.mockResolvedValue(
+      buildApplicationDetail({
+        id: "app-1",
+        visible_status: "in_progress",
+        internal_state: "resume_ready",
+        base_resume_id: "resume-1",
+        base_resume_name: "Default Resume",
+      }),
+    );
+    api.fetchDraft.mockResolvedValue({
+      id: "draft-1",
+      application_id: "app-1",
+      content_md: "# Resume\n\n## Summary\nTailored summary",
+      generation_params: {
+        base_resume_id: "resume-1",
+        page_length: "1_page",
+        aggressiveness: "medium",
+        additional_instructions: "",
+      },
+      sections_snapshot: {
+        enabled_sections: ["summary", "professional_experience", "education", "skills"],
+        section_order: ["summary", "professional_experience", "education", "skills"],
+      },
+      last_generated_at: "2026-04-07T12:10:00Z",
+      last_exported_at: null,
+      updated_at: "2026-04-07T12:10:00Z",
+    });
+    api.fetchBaseResume.mockResolvedValue({
+      id: "resume-1",
+      name: "Default Resume",
+      content_md: "# Resume\n\n## Summary\nBase summary",
+      is_default: true,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:00:00Z",
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/app/applications/app-1"]}>
+        <Routes>
+          <Route path="/app" element={<AppShell />}>
+            <Route path="applications/:applicationId" element={<ApplicationDetailPage />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const compareButton = await screen.findByRole("button", { name: /^compare$/i });
+    const shellRoot = compareButton.closest(".app-shell-root");
+    const shellFrame = compareButton.closest(".app-shell-frame");
+
+    expect(shellRoot).not.toBeNull();
+    expect(shellFrame).not.toBeNull();
+    expect(shellRoot).toHaveAttribute("data-shell-mode", "default");
+    expect(screen.getByLabelText(/toggle sidebar/i)).toBeInTheDocument();
+
+    await userEvent.click(compareButton);
+
+    expect(shellRoot).toHaveAttribute("data-shell-mode", "immersive");
+    expect(shellFrame).toHaveStyle({ marginLeft: "0px" });
+    expect(screen.queryByLabelText(/toggle sidebar/i)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /close comparison/i }));
+
+    expect(shellRoot).toHaveAttribute("data-shell-mode", "default");
+  });
+
+  it("uses the generation-time base resume id for compare even after the selected base resume changes", async () => {
+    api.fetchApplicationDetail.mockResolvedValue(
+      buildApplicationDetail({
+        id: "app-1",
+        visible_status: "in_progress",
+        internal_state: "resume_ready",
+        base_resume_id: "resume-2",
+        base_resume_name: "Current Resume",
+      }),
+    );
+    api.fetchDraft.mockResolvedValue({
+      id: "draft-1",
+      application_id: "app-1",
+      content_md: "# Resume\n\n## Summary\nTailored summary",
+      generation_params: {
+        base_resume_id: "resume-1",
+        page_length: "1_page",
+        aggressiveness: "medium",
+        additional_instructions: "",
+      },
+      sections_snapshot: {
+        enabled_sections: ["summary", "professional_experience", "education", "skills"],
+        section_order: ["summary", "professional_experience", "education", "skills"],
+      },
+      last_generated_at: "2026-04-07T12:10:00Z",
+      last_exported_at: null,
+      updated_at: "2026-04-07T12:10:00Z",
+    });
+    api.listBaseResumes.mockResolvedValue([
+      {
+        id: "resume-1",
+        name: "Generation Resume",
+        is_default: false,
+        created_at: "2026-04-07T12:00:00Z",
+        updated_at: "2026-04-07T12:00:00Z",
+      },
+      {
+        id: "resume-2",
+        name: "Current Resume",
+        is_default: true,
+        created_at: "2026-04-07T12:00:00Z",
+        updated_at: "2026-04-07T12:00:00Z",
+      },
+    ]);
+    api.fetchBaseResume.mockResolvedValue({
+      id: "resume-1",
+      name: "Generation Resume",
+      content_md: "# Resume\n\n## Summary\nOriginal baseline",
+      is_default: false,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:00:00Z",
+    });
+
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
+
+    await screen.findByRole("button", { name: /^compare$/i });
+    await waitFor(() => expect(api.fetchBaseResume).toHaveBeenCalledWith("resume-1"));
+
+    await userEvent.click(screen.getByRole("button", { name: /^compare$/i }));
+    expect((await screen.findAllByText(/original baseline/i)).length).toBeGreaterThan(0);
+  });
+
+  it("keeps normal preview usable and blocks compare when the generation-time base resume cannot be loaded", async () => {
+    api.fetchApplicationDetail.mockResolvedValue(
+      buildApplicationDetail({
+        id: "app-1",
+        visible_status: "in_progress",
+        internal_state: "resume_ready",
+        base_resume_id: "resume-1",
+        base_resume_name: "Default Resume",
+      }),
+    );
+    api.fetchDraft.mockResolvedValue({
+      id: "draft-1",
+      application_id: "app-1",
+      content_md: "# Resume\n\n## Summary\nTailored summary",
+      generation_params: {
+        base_resume_id: "resume-1",
+        page_length: "1_page",
+        aggressiveness: "medium",
+        additional_instructions: "",
+      },
+      sections_snapshot: {
+        enabled_sections: ["summary", "professional_experience", "education", "skills"],
+        section_order: ["summary", "professional_experience", "education", "skills"],
+      },
+      last_generated_at: "2026-04-07T12:10:00Z",
+      last_exported_at: null,
+      updated_at: "2026-04-07T12:10:00Z",
+    });
+    api.fetchBaseResume.mockRejectedValue(new Error("Forbidden"));
+
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: /^compare$/i }));
+
+    expect(await screen.findAllByText(/compare view is unavailable/i)).toHaveLength(2);
+    expect(screen.queryByRole("heading", { name: /base resume/i })).not.toBeInTheDocument();
+    expect(screen.getAllByText(/tailored summary/i).length).toBeGreaterThan(0);
   });
 
   it("deletes an application from the detail header and navigates back to the list", async () => {
@@ -2260,5 +2574,81 @@ describe("phase 1 applications UI", () => {
     expect(screen.getByLabelText("3 Pages")).toBeChecked();
     expect(screen.getByRole("radio", { name: /high/i })).toBeChecked();
     expect(screen.getByDisplayValue("Emphasize architecture leadership.")).toBeInTheDocument();
+  });
+
+  it("keeps generation settings dirty when the user changes them locally", async () => {
+    api.fetchApplicationDetail.mockResolvedValue({
+      id: "app-1",
+      job_url: "https://example.com/job",
+      job_title: "Backend Engineer",
+      company: "Acme",
+      job_description: "Build APIs",
+      extracted_reference_id: null,
+      job_posting_origin: "linkedin",
+      job_posting_origin_other_text: null,
+      base_resume_id: "resume-1",
+      base_resume_name: "Default Resume",
+      visible_status: "in_progress",
+      internal_state: "resume_ready",
+      failure_reason: null,
+      extraction_failure_details: null,
+      generation_failure_details: null,
+      applied: false,
+      duplicate_similarity_score: null,
+      duplicate_resolution_status: null,
+      duplicate_matched_application_id: null,
+      notes: null,
+      created_at: "2026-04-07T12:00:00Z",
+      updated_at: "2026-04-07T12:05:00Z",
+      has_action_required_notification: false,
+      duplicate_warning: null,
+    });
+    api.fetchDraft.mockResolvedValue({
+      id: "draft-1",
+      application_id: "app-1",
+      content_md: "# Resume",
+      generation_params: {
+        page_length: "1_page",
+        aggressiveness: "medium",
+        additional_instructions: "",
+      },
+      sections_snapshot: {
+        enabled_sections: ["summary", "professional_experience", "education", "skills"],
+        section_order: ["summary", "professional_experience", "education", "skills"],
+      },
+      last_generated_at: "2026-04-07T12:05:00Z",
+      last_exported_at: null,
+      updated_at: "2026-04-07T12:05:00Z",
+    });
+    api.listBaseResumes.mockResolvedValue([
+      {
+        id: "resume-1",
+        name: "Default Resume",
+        is_default: true,
+        created_at: "2026-04-07T12:00:00Z",
+        updated_at: "2026-04-07T12:00:00Z",
+      },
+    ]);
+
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
+
+    await waitFor(() => expect(api.fetchDraft).toHaveBeenCalledTimes(1));
+
+    const settingsHeading = screen.getByRole("heading", { name: /generation settings/i });
+    const settingsForm = settingsHeading.closest("form");
+    expect(settingsForm).not.toBeNull();
+
+    const saveButton = within(settingsForm as HTMLFormElement).getByRole("button", { name: /^save$/i });
+    expect(saveButton).toBeDisabled();
+
+    await userEvent.click(screen.getByLabelText("2 Pages"));
+
+    expect(screen.getByLabelText("2 Pages")).toBeChecked();
+    expect(saveButton).toBeEnabled();
   });
 });

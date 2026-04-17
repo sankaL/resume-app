@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { ChevronDown, CircleStop, FileText, Gauge, MessageSquare, Ruler, Sparkles, Trash2 } from "lucide-react";
 import { useAppContext } from "@/components/layout/AppContext";
+import { useShellLayout } from "@/components/layout/ShellLayoutContext";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -25,6 +26,7 @@ import {
   deleteApplication,
   fetchApplicationDetail,
   fetchApplicationProgress,
+  fetchBaseResume,
   fetchDraft,
   listBaseResumes,
   patchApplication,
@@ -40,6 +42,7 @@ import {
   triggerGeneration,
   cancelGeneration,
   type ApplicationDetail,
+  type BaseResumeDetail,
   type BaseResumeSummary,
   type ExtractionProgress,
   type ResumeDraft,
@@ -74,7 +77,6 @@ const REVIEW_SECTION_LABELS: Record<string, string> = {
   professional_experience: "Professional Experience",
   skills: "Skills",
 };
-
 function isGenerationWorkflowActive(detail: ApplicationDetail | null) {
   return Boolean(detail && !detail.failure_reason && ACTIVE_GENERATION_STATES.includes(detail.internal_state));
 }
@@ -236,6 +238,7 @@ function getSectionRegenerationBlocker(
 export function ApplicationDetailPage() {
   const navigate = useNavigate();
   const { refreshApplications } = useAppContext();
+  const { setMode: setShellLayoutMode, clearMode: clearShellLayoutMode } = useShellLayout();
   const { toast } = useToast();
   const { applicationId } = useParams<{ applicationId: string }>();
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
@@ -281,10 +284,15 @@ export function ApplicationDetailPage() {
   const [showAppliedConfirm, setShowAppliedConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCancelExtractionConfirm, setShowCancelExtractionConfirm] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareBaseline, setCompareBaseline] = useState<BaseResumeDetail | null>(null);
+  const [isCompareBaselineLoading, setIsCompareBaselineLoading] = useState(false);
+  const [compareBaselineError, setCompareBaselineError] = useState<string | null>(null);
   const leftColumnRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const [leftColumnHeight, setLeftColumnHeight] = useState<number | null>(null);
   const [jobDescriptionCollapsed, setJobDescriptionCollapsed] = useState(false);
+  const [hasUserModifiedSettings, setHasUserModifiedSettings] = useState(false);
 
   // Track last saved values for dirty state detection
   const savedJobForm = useMemo(() => ({
@@ -302,7 +310,7 @@ export function ApplicationDetailPage() {
     page_length: draft?.generation_params?.page_length ?? pageLength,
     aggressiveness: draft?.generation_params?.aggressiveness ?? aggressiveness,
     additional_instructions: draft?.generation_params?.additional_instructions ?? "",
-  }), [detail, draft]);
+  }), [detail, draft, pageLength, aggressiveness, additionalInstructions]);
 
   // Compute dirty states
   const jobFormDirty = useMemo(() => {
@@ -333,6 +341,19 @@ export function ApplicationDetailPage() {
   const generationStartBlocker = getGenerationStartBlocker(detail, selectedResumeId, baseResumes.length);
   const fullRegenerationBlocker = getFullRegenerationBlocker(detail);
   const sectionRegenerationBlocker = getSectionRegenerationBlocker(detail, regenSectionName, regenInstructions);
+  const comparisonBaseResumeId = useMemo(() => {
+    const generationResumeId = draft?.generation_params?.base_resume_id;
+    if (typeof generationResumeId === "string" && generationResumeId.trim()) {
+      return generationResumeId;
+    }
+    return detail?.base_resume_id ?? null;
+  }, [draft, detail?.base_resume_id]);
+  const compareReady =
+    Boolean(draft) &&
+    Boolean(comparisonBaseResumeId) &&
+    Boolean(compareBaseline) &&
+    compareBaseline?.id === comparisonBaseResumeId &&
+    !compareBaselineError;
 
   function applyDetailState(response: ApplicationDetail, options?: { refreshShell?: boolean }) {
     const generationActive = isGenerationWorkflowActive(response);
@@ -378,12 +399,18 @@ export function ApplicationDetailPage() {
   function applyDraftState(response: ResumeDraft | null) {
     setDraft(response);
     if (!response) return;
-    const generationParams = response.generation_params ?? {};
-    if (isAllowedPageLength(generationParams.page_length)) setPageLength(generationParams.page_length);
-    if (isAllowedAggressiveness(generationParams.aggressiveness)) setAggressiveness(generationParams.aggressiveness);
-    setAdditionalInstructions(
-      typeof generationParams.additional_instructions === "string" ? generationParams.additional_instructions : "",
-    );
+    // Only apply draft generation params if:
+    // 1. User hasn't explicitly modified settings, AND
+    // 2. Generation is not currently active (to prevent overwriting user settings during regeneration)
+    const isGenerationActive = isGenerating || isRegenerating;
+    if (!hasUserModifiedSettings && !isGenerationActive) {
+      const generationParams = response.generation_params ?? {};
+      if (isAllowedPageLength(generationParams.page_length)) setPageLength(generationParams.page_length);
+      if (isAllowedAggressiveness(generationParams.aggressiveness)) setAggressiveness(generationParams.aggressiveness);
+      setAdditionalInstructions(
+        typeof generationParams.additional_instructions === "string" ? generationParams.additional_instructions : "",
+      );
+    }
   }
 
   useEffect(() => {
@@ -513,6 +540,58 @@ export function ApplicationDetailPage() {
     if (!["resume_ready", "regenerating_full", "regenerating_section"].includes(detail.internal_state)) return;
     fetchDraft(applicationId).then(applyDraftState).catch(() => {});
   }, [applicationId, detail?.internal_state]);
+
+  useEffect(() => {
+    if (!draft || !comparisonBaseResumeId) {
+      setCompareBaseline(null);
+      setCompareBaselineError(null);
+      setIsCompareBaselineLoading(false);
+      setCompareMode(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsCompareBaselineLoading(true);
+    setCompareBaselineError(null);
+
+    fetchBaseResume(comparisonBaseResumeId)
+      .then((response) => {
+        if (cancelled) return;
+        setCompareBaseline(response);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCompareBaseline(null);
+        setCompareBaselineError("The base resume used for this draft could not be loaded. Compare view is unavailable.");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsCompareBaselineLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [draft?.id, comparisonBaseResumeId]);
+
+  useEffect(() => {
+    if (compareMode) {
+      setShellLayoutMode("immersive");
+    } else {
+      clearShellLayoutMode();
+    }
+
+    return () => {
+      clearShellLayoutMode();
+    };
+  }, [compareMode, setShellLayoutMode, clearShellLayoutMode]);
+
+  useEffect(() => {
+    if (compareMode && !compareReady) {
+      setCompareMode(false);
+    }
+  }, [compareMode, compareReady]);
 
   useEffect(() => {
     if (!applicationId || !detail) return;
@@ -729,13 +808,14 @@ export function ApplicationDetailPage() {
     setError(null);
     try {
       const response = await triggerGeneration(activeApplicationId, {
-        base_resume_id: selectedResumeId,
+        base_resume_id: selectedResumeId!,
         target_length: pageLength,
         aggressiveness,
         additional_instructions: additionalInstructions || undefined,
       });
       applyDetailState(response, { refreshShell: true });
       setGenerationProgress(null);
+      setHasUserModifiedSettings(false);
     } catch (err) {
       setShowOptimisticProgress(false);
       setIsGenerating(false);
@@ -791,6 +871,7 @@ export function ApplicationDetailPage() {
       });
       applyDetailState(response, { refreshShell: true });
       setGenerationProgress(null);
+      setHasUserModifiedSettings(false);
     } catch (err) {
       setShowOptimisticProgress(false);
       setIsRegenerating(false);
@@ -820,6 +901,7 @@ export function ApplicationDetailPage() {
       setShowSectionRegen(false);
       setRegenSectionName("");
       setRegenInstructions("");
+      setHasUserModifiedSettings(false);
     } catch (err) {
       setShowOptimisticProgress(false);
       setIsRegenerating(false);
@@ -876,6 +958,21 @@ export function ApplicationDetailPage() {
     }
   }
 
+  function handleToggleCompareMode() {
+    if (compareMode) {
+      setCompareMode(false);
+      return;
+    }
+
+    if (!compareReady) {
+      setError(compareBaselineError ?? "Compare view is unavailable until the generation-time base resume finishes loading.");
+      return;
+    }
+
+    setError(null);
+    setCompareMode(true);
+  }
+
   // Helper to check if we're past the extraction-only phase.
   const isPastExtraction =
     detail && !["extraction_pending", "extracting", "manual_entry_required"].includes(detail.internal_state);
@@ -887,7 +984,7 @@ export function ApplicationDetailPage() {
 
   useLayoutEffect(() => {
     const leftColumn = leftColumnRef.current;
-    if (!leftColumn || !isPastExtraction) {
+    if (!leftColumn || !isPastExtraction || compareMode) {
       setLeftColumnHeight(null);
       return;
     }
@@ -920,7 +1017,168 @@ export function ApplicationDetailPage() {
       resizeObserver.disconnect();
       window.removeEventListener("resize", updateHeight);
     };
-  }, [isPastExtraction, detail?.internal_state, draft, editMode, notesDraft, additionalInstructions, pageLength, aggressiveness, selectedResumeId, baseResumes.length, jobForm.job_description, jobForm.job_location_text, jobForm.compensation_text, jobForm.job_posting_origin, jobForm.job_posting_origin_other_text, jobForm.job_title, jobForm.company]);
+  }, [isPastExtraction, compareMode, detail?.internal_state, draft, editMode, notesDraft, additionalInstructions, pageLength, aggressiveness, selectedResumeId, baseResumes.length, jobForm.job_description, jobForm.job_location_text, jobForm.compensation_text, jobForm.job_posting_origin, jobForm.job_posting_origin_other_text, jobForm.job_title, jobForm.company]);
+
+  const activeWorkspaceCardStyle = compareMode ? undefined : workspaceCardStyle;
+
+  function renderGeneratedWorkspacePane() {
+    return (
+      <Card
+        className={`${workspaceCardClass} ${compareMode ? "compare-pane-card compare-generated-pane" : ""} p-4`}
+        style={activeWorkspaceCardStyle}
+      >
+        <div className="flex min-w-0 items-center justify-between gap-3 overflow-hidden">
+          <div className="min-w-0">
+            <h3 className="shrink-0 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>
+              Generated Resume
+            </h3>
+            {compareMode ? (
+              <p className="mt-1 text-xs" style={{ color: "var(--color-ink-50)" }}>
+                Tailored draft shown beside the generation-time base resume for manual comparison.
+              </p>
+            ) : null}
+          </div>
+          <div className="flex min-w-0 items-center gap-3 text-xs" style={{ color: "var(--color-ink-40)" }}>
+            {draft?.last_exported_at && <span className="hidden shrink-0 sm:inline">Exported {new Date(draft.last_exported_at).toLocaleString()}</span>}
+            {draft ? <span className="truncate">Generated {new Date(draft.last_generated_at).toLocaleString()}</span> : null}
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div
+            className="inline-flex items-center rounded-full border p-1"
+            style={{
+              borderColor: editMode ? "var(--color-spruce-10)" : "var(--color-border)",
+              background: editMode ? "var(--color-spruce-05)" : "var(--color-ink-05)",
+            }}
+          >
+            <button
+              className="rounded-full px-3 py-1.5 text-xs font-semibold transition-colors"
+              style={{
+                background: !editMode ? "var(--color-ink)" : "transparent",
+                color: !editMode ? "#fff" : "var(--color-ink-50)",
+              }}
+              type="button"
+              onClick={() => {
+                if (editMode) handleCancelEdit();
+              }}
+            >
+              Preview
+            </button>
+            <button
+              className="rounded-full px-3 py-1.5 text-xs font-semibold transition-colors"
+              style={{
+                background: editMode ? "var(--color-sidebar-bg-active)" : "transparent",
+                color: editMode ? "#fff" : "var(--color-ink-50)",
+              }}
+              type="button"
+              onClick={() => {
+                if (!editMode) handleEnterEditMode();
+              }}
+            >
+              Edit
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button size="sm" onClick={handleToggleCompareMode}>
+              {compareMode ? "Close comparison" : "Compare"}
+            </Button>
+            {!generationActive && (
+              <>
+                <Button size="sm" variant="secondary" disabled={isRegenerating || exportingFormat !== null} onClick={() => setShowSectionRegen(true)}>
+                  Regen Section
+                </Button>
+                <button
+                  type="button"
+                  disabled={isRegenerating || exportingFormat !== null}
+                  className="ai-button inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => void handleFullRegeneration()}
+                >
+                  <Sparkles size={12} />
+                  {isRegenerating ? "Starting…" : "Full Regen"}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {draftReviewFlags.length > 0 ? (
+          <Card variant="warning" density="compact" className="mt-3 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-65)" }}>
+              Review Flagged Additions
+            </p>
+            <p className="mt-1 text-xs" style={{ color: "var(--color-ink-65)" }}>
+              Medium/High generation added job-description-driven phrases that are not explicit in your source resume. Verify before applying.
+            </p>
+            <ul className="mt-2 space-y-1 text-xs" style={{ color: "var(--color-ink)" }}>
+              {draftReviewFlags.slice(0, 8).map((flag, index) => (
+                <li key={`${flag.section_name}-${flag.text}-${index}`}>
+                  <span className="font-medium">
+                    {REVIEW_SECTION_LABELS[flag.section_name] ?? flag.section_name}:
+                  </span>{" "}
+                  {flag.text}
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ) : null}
+
+        {!compareMode && (isCompareBaselineLoading || compareBaselineError) ? (
+          <p className="mt-3 text-xs" style={{ color: "var(--color-ink-50)" }}>
+            {isCompareBaselineLoading
+              ? "Loading the generation-time base resume for compare."
+              : compareBaselineError}
+          </p>
+        ) : null}
+
+        {editMode ? (
+          <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden" style={{ minHeight: compareMode ? "60vh" : "50vh" }}>
+            <MarkdownEditor
+              className="no-bottom-radius flex-1 min-h-0"
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+            />
+            <div className="markdown-editor-footer flex-shrink-0">
+              <span>Markdown · {editContent.length.toLocaleString()} characters</span>
+              <span>Tab = 2 spaces</span>
+            </div>
+            <div className="mt-3 flex flex-shrink-0 items-center gap-3">
+              <Button size="sm" loading={isSavingDraft} disabled={isSavingDraft || !editContent.trim()} onClick={() => void handleSaveDraft()}>
+                {isSavingDraft ? "Saving…" : "Save Draft"}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={handleCancelEdit}>Cancel</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 flex min-h-0 flex-1 overflow-y-auto rounded-lg border bg-white px-5 py-4" style={{ borderColor: "var(--color-border)" }}>
+            <MarkdownPreview content={draft?.content_md ?? ""} className="resume-preview-markdown" />
+          </div>
+        )}
+      </Card>
+    );
+  }
+
+  function renderBaseWorkspacePane() {
+    return (
+      <Card className={`${workspaceCardClass} compare-pane-card compare-base-pane p-4`}>
+        <div className="flex min-w-0 items-center justify-between gap-3 overflow-hidden">
+          <div className="min-w-0">
+            <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>
+              Base Resume
+            </h3>
+            <p className="mt-1 truncate text-xs" style={{ color: "var(--color-ink-50)" }}>
+              {compareBaseline?.name ?? "Generation-time baseline"}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex min-h-0 flex-1 overflow-y-auto rounded-lg border bg-white px-5 py-4" style={{ borderColor: "var(--color-border)" }}>
+          <MarkdownPreview content={compareBaseline?.content_md ?? ""} className="resume-preview-markdown" />
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <div className="page-enter space-y-4">
@@ -1254,9 +1512,24 @@ export function ApplicationDetailPage() {
 
           {/* ── Two-Column Layout (when past extraction and not in manual_entry_required) ── */}
           {isPastExtraction && detail.internal_state !== "manual_entry_required" && (
-            <div className="grid gap-4 xl:items-start xl:[grid-template-columns:minmax(300px,340px)_minmax(0,1fr)] 2xl:[grid-template-columns:minmax(320px,340px)_minmax(0,1fr)]">
+            <div
+              className={
+                compareMode
+                  ? "space-y-4"
+                  : "grid gap-4 xl:items-start xl:[grid-template-columns:minmax(300px,340px)_minmax(0,1fr)] 2xl:[grid-template-columns:minmax(320px,340px)_minmax(0,1fr)]"
+              }
+              data-compare-mode={compareMode ? "open" : "closed"}
+            >
               {/* LEFT COLUMN - Settings & Controls (shown second on mobile via order) */}
-              <div ref={leftColumnRef} className="order-2 min-w-0 space-y-4 xl:order-1 xl:sticky xl:top-[calc(var(--topbar-height)+1.5rem)] xl:self-start">
+              <div
+                ref={leftColumnRef}
+                className={
+                  compareMode
+                    ? "hidden"
+                    : "order-2 min-w-0 space-y-4 xl:order-1 xl:sticky xl:top-[calc(var(--topbar-height)+1.5rem)] xl:self-start"
+                }
+                aria-hidden={compareMode}
+              >
                 {/* Job Description Card */}
                 <Card density="compact" className="p-4">
                   <div className="flex justify-between items-center">
@@ -1384,7 +1657,7 @@ export function ApplicationDetailPage() {
                         <div className="flex flex-wrap gap-1.5">
                           {PAGE_LENGTH_OPTIONS.map((o) => (
                             <label key={o.value} className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition-colors" style={{ borderColor: pageLength === o.value ? "var(--color-spruce)" : "var(--color-border)", background: pageLength === o.value ? "var(--color-spruce-05)" : "var(--color-white)", color: pageLength === o.value ? "var(--color-spruce)" : "var(--color-ink)" }}>
-                              <input checked={pageLength === o.value} className="sr-only" name="pageLength" type="radio" value={o.value} onChange={() => setPageLength(o.value)} />
+                              <input checked={pageLength === o.value} className="sr-only" name="pageLength" type="radio" value={o.value} onChange={() => { setPageLength(o.value); setHasUserModifiedSettings(true); }} />
                               {o.label}
                             </label>
                           ))}
@@ -1400,7 +1673,7 @@ export function ApplicationDetailPage() {
                         <div className="space-y-1.5">
                           {AGGRESSIVENESS_OPTIONS.map((o) => (
                             <label key={o.value} className="cursor-pointer rounded-md border p-2 transition-colors block" style={{ borderColor: aggressiveness === o.value ? "var(--color-spruce)" : "var(--color-border)", background: aggressiveness === o.value ? "var(--color-spruce-05)" : "var(--color-white)" }}>
-                              <input checked={aggressiveness === o.value} className="sr-only" name="aggressiveness" type="radio" value={o.value} onChange={() => setAggressiveness(o.value)} />
+                              <input checked={aggressiveness === o.value} className="sr-only" name="aggressiveness" type="radio" value={o.value} onChange={() => { setAggressiveness(o.value); setHasUserModifiedSettings(true); }} />
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
                                   <div className="text-xs font-medium" style={{ color: "var(--color-ink)" }}>{o.label}</div>
@@ -1443,7 +1716,7 @@ export function ApplicationDetailPage() {
                           <MessageSquare size={14} className="flex-shrink-0" style={{ color: "var(--color-ink-40)" }} />
                           <Label className="inline text-xs font-medium">Additional Instructions</Label>
                         </div>
-                        <Textarea className="text-sm min-h-16" placeholder="e.g., emphasize API architecture…" value={additionalInstructions} onChange={(e) => setAdditionalInstructions(e.target.value)} />
+                        <Textarea className="text-sm min-h-16" placeholder="e.g., emphasize API architecture…" value={additionalInstructions} onChange={(e) => { setAdditionalInstructions(e.target.value); setHasUserModifiedSettings(true); }} />
                       </div>
                     </form>
                   </Card>
@@ -1460,11 +1733,11 @@ export function ApplicationDetailPage() {
               </div>
 
               {/* RIGHT COLUMN - Resume Preview (shown first on mobile via order) */}
-              <div className="order-1 min-w-0 xl:order-2">
+              <div className={compareMode ? "min-w-0" : "order-1 min-w-0 xl:order-2"}>
                 {/* Resume Content Area */}
                 {generationActive || showOptimisticProgress ? (
                   /* Resume Skeleton during generation with overlay */
-                  <Card className={`${workspaceCardClass} relative p-0`} style={workspaceCardStyle}>
+                  <Card className={`${workspaceCardClass} relative p-0`} style={activeWorkspaceCardStyle}>
                     <div className="flex-1 h-full overflow-hidden">
                       <ResumeSkeleton />
                     </div>
@@ -1477,118 +1750,17 @@ export function ApplicationDetailPage() {
                     />
                   </Card>
                 ) : draft ? (
-                  /* Generated Resume Preview/Editor */
-                  <Card className={`${workspaceCardClass} p-4`} style={workspaceCardStyle}>
-                    <div className="flex min-w-0 items-center justify-between gap-3 overflow-hidden">
-                      <h3 className="shrink-0 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-40)" }}>Generated Resume</h3>
-                      <div className="flex min-w-0 items-center gap-3 text-xs" style={{ color: "var(--color-ink-40)" }}>
-                        {draft.last_exported_at && <span className="hidden sm:inline shrink-0">Exported {new Date(draft.last_exported_at).toLocaleString()}</span>}
-                        <span className="truncate">Generated {new Date(draft.last_generated_at).toLocaleString()}</span>
-                      </div>
+                  compareMode ? (
+                    <div className="compare-layout-grid grid gap-4 lg:grid-cols-2">
+                      {renderGeneratedWorkspacePane()}
+                      {renderBaseWorkspacePane()}
                     </div>
-
-                    {draftReviewFlags.length > 0 ? (
-                      <Card variant="warning" density="compact" className="mt-3 p-3">
-                        <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-65)" }}>
-                          Review Flagged Additions
-                        </p>
-                        <p className="mt-1 text-xs" style={{ color: "var(--color-ink-65)" }}>
-                          Medium/High generation added job-description-driven phrases that are not explicit in your source resume. Verify before applying.
-                        </p>
-                        <ul className="mt-2 space-y-1 text-xs" style={{ color: "var(--color-ink)" }}>
-                          {draftReviewFlags.slice(0, 8).map((flag, index) => (
-                            <li key={`${flag.section_name}-${flag.text}-${index}`}>
-                              <span className="font-medium">
-                                {REVIEW_SECTION_LABELS[flag.section_name] ?? flag.section_name}:
-                              </span>{" "}
-                              {flag.text}
-                            </li>
-                          ))}
-                        </ul>
-                      </Card>
-                    ) : null}
-
-                    <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-                      <div
-                        className="inline-flex items-center rounded-full border p-1"
-                        style={{
-                          borderColor: editMode ? "var(--color-spruce-10)" : "var(--color-border)",
-                          background: editMode ? "var(--color-spruce-05)" : "var(--color-ink-05)",
-                        }}
-                      >
-                        <button
-                          className="rounded-full px-3 py-1.5 text-xs font-semibold transition-colors"
-                          style={{
-                            background: !editMode ? "var(--color-ink)" : "transparent",
-                            color: !editMode ? "#fff" : "var(--color-ink-50)",
-                          }}
-                          type="button"
-                          onClick={() => {
-                            if (editMode) handleCancelEdit();
-                          }}
-                        >
-                          Preview
-                        </button>
-                        <button
-                          className="rounded-full px-3 py-1.5 text-xs font-semibold transition-colors"
-                          style={{
-                            background: editMode ? "var(--color-sidebar-bg-active)" : "transparent",
-                            color: editMode ? "#fff" : "var(--color-ink-50)",
-                          }}
-                          type="button"
-                          onClick={() => {
-                            if (!editMode) handleEnterEditMode();
-                          }}
-                        >
-                          Edit
-                        </button>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        {!generationActive && (
-                          <>
-                            <Button size="sm" variant="secondary" disabled={isRegenerating || exportingFormat !== null} onClick={() => setShowSectionRegen(true)}>Regen Section</Button>
-                            <button
-                              type="button"
-                              disabled={isRegenerating || exportingFormat !== null}
-                              className="ai-button inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50"
-                              onClick={() => void handleFullRegeneration()}
-                            >
-                              <Sparkles size={12} />
-                              {isRegenerating ? "Starting…" : "Full Regen"}
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {editMode ? (
-                      <div className="mt-4 flex-1 flex flex-col min-h-0 overflow-hidden" style={{ minHeight: "50vh" }}>
-                        <MarkdownEditor
-                          className="no-bottom-radius flex-1 min-h-0"
-                          value={editContent}
-                          onChange={(e) => setEditContent(e.target.value)}
-                        />
-                        <div className="markdown-editor-footer flex-shrink-0">
-                          <span>Markdown · {editContent.length.toLocaleString()} characters</span>
-                          <span>Tab = 2 spaces</span>
-                        </div>
-                        <div className="mt-3 flex items-center gap-3 flex-shrink-0">
-                          <Button size="sm" loading={isSavingDraft} disabled={isSavingDraft || !editContent.trim()} onClick={() => void handleSaveDraft()}>
-                            {isSavingDraft ? "Saving…" : "Save Draft"}
-                          </Button>
-                          <Button size="sm" variant="secondary" onClick={handleCancelEdit}>Cancel</Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="mt-4 flex-1 overflow-y-auto min-h-0 rounded-lg border bg-white px-5 py-4" style={{ borderColor: "var(--color-border)" }}>
-                        <MarkdownPreview content={draft.content_md} className="resume-preview-markdown" />
-                      </div>
-                    )}
-                  </Card>
+                  ) : (
+                    renderGeneratedWorkspacePane()
+                  )
                 ) : (
                   /* Empty State - No resume generated yet */
-                  <Card className={`${workspaceCardClass} items-center justify-center p-8 text-center`} style={workspaceCardStyle}>
+                  <Card className={`${workspaceCardClass} items-center justify-center p-8 text-center`} style={activeWorkspaceCardStyle}>
                     <div className="rounded-full p-4 mb-4" style={{ background: "var(--color-ink-05)" }}>
                       <FileText size={32} style={{ color: "var(--color-ink-40)" }} />
                     </div>

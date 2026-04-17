@@ -9,7 +9,7 @@ type PageHeaderProps = {
 
 export function PageHeader({ title, subtitle, badge, actions }: PageHeaderProps) {
   return (
-    <div className="page-header-mobile animate-fadeIn flex flex-col gap-3 sm:gap-4 sm:flex-row sm:items-start sm:justify-between" style={{ maxWidth: "100%", overflow: "hidden" }}>
+    <div className="page-header-mobile animate-fadeIn flex flex-col gap-3 sm:gap-4 sm:flex-row sm:items-start sm:justify-between" style={{ maxWidth: "100%" }}>
       <div className="min-w-0 flex-1" style={{ maxWidth: "100%" }}>
         <div className="flex items-center gap-2 sm:gap-3 overflow-hidden">
           <h1

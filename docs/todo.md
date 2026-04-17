@@ -40,51 +40,16 @@ Opus
 
 - [x] The medium agressiveness doesnt seem that aggressive explore the rules and make some changes.
 - [x] Suggesstion for improving ai writing from https://claude.ai/chat/628ee097-fa6f-48e3-a1e0-d0b34c2f23bc
-- [] The export dropdown is cut off on desktop mode. 
-See if I can use five point four mini extra high with reasoning instead of five point four to cost save or Or Gemini three flash with reasoning. 
-- [] Add a diff in the markdown preview and edit mode so we can see what was injected and what was changed from the base resume. When a resume is generated, I want the UI to show um in the generated section in markdown editable mode and the non-editable mode what was added in line, not separately, but in line. Is that possible? I want added content to be in a different color. Use an external library if there exists for doing diffs on markdown to markdown or text to text. No need to write your own functionality if not required. 
-    - [] Or show a toggle to do a split screen between the base resume and the generated resume so the user can see the differences. 
+- [x] The export dropdown is cut off on desktop mode. 
+- [x] See if I can use five point four mini extra high with reasoning instead of five point four to cost save or Or Gemini three flash with reasoning. 
+- [x] Add a diff in the markdown preview and edit mode so we can see what was injected and what was changed from the base resume. When a resume is generated, I want the UI to show um in the generated section in markdown editable mode and the non-editable mode what was added in line, not separately, but in line. Is that possible? I want added content to be in a different color. Use an external library if there exists for doing diffs on markdown to markdown or text to text. No need to write your own functionality if not required. 
+    - [x] Or show a toggle to do a split screen between the base resume and the generated resume so the user can see the differences. 
 
 
-- [] New updates are decent but seem only the summary and the skills are being changed now. I don't see the experience bullet points and the role title being changed at all in medium or high. 
+- [x] New updates are decent but seem only the summary and the skills are being changed now. I don't see the experience bullet points and the role title being changed at all in medium or high. 
 
 - [] Ask Claude to come up with some rules to validate the human readable aspect and the ATS score essentially. Um come up with a prompt to score it and then I want it to run this validator after each generation and display it. Uh if it's low we can regenerate with reasons. 
 
-- [] When configs are changed after generation in the UI, it resets back to the original but I think the actual request is sent in the backend. Just on the frontend it looks like it's the same config. 
+- [x] When configs are changed after generation in the UI, it resets back to the original but I think the actual request is sent in the backend. Just on the frontend it looks like it's the same config. 
 
-
-Couple of issues:
-1. Turn on medium reasoning for the full generation and partial generation. Right now it's at none 
-2. somehow the aggressiveness is not adjusting to the resume at all. Maybe the controls are too tight for medium and high.
-
-
-fetch("http://localhost:54800/api/applications/bea5e419-2393-42a5-abee-6a98a1b75f8d", {
-  "headers": {
-    "accept": "*/*",
-    "accept-language": "en,fr;q=0.9,fr-CA;q=0.8",
-    "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxNjFjOGE5Yy0zYzFlLTQzZTEtOWEyOS05OTdhNWQ4ZWE2ODMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzc2MzA1Njk0LCJpYXQiOjE3NzYzMDIwOTQsImVtYWlsIjoiaW52aXRlLW9ubHlAZXhhbXBsZS5jb20iLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlfSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc3NjAzMjE0N31dLCJzZXNzaW9uX2lkIjoiM2RhOGJjZmUtNzRhNC00MmFiLWFhOWUtMjZkYWM1MjAzYTVkIiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.f_l5MTLUtIbSgoH_R1EF2FDTq4cKtxT5olGSzcevNp8",
-    "content-type": "application/json",
-    "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": "\"macOS\"",
-    "sec-fetch-dest": "empty",
-    "sec-fetch-mode": "cors",
-    "sec-fetch-site": "same-site"
-  },
-  "referrer": "http://localhost:5173/",
-  "body": null,
-  "method": "GET",
-  "mode": "cors",
-  "credentials": "include"
-});
-
-Request URL
-http://localhost:54800/api/applications/bea5e419-2393-42a5-abee-6a98a1b75f8d
-Request Method
-GET
-Status Code
-500 Internal Server Error
-Remote Address
-[::1]:54800
-Referrer Policy
-strict-origin-when-cross-origin
+- [] sockets instead of polling?

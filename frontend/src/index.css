@@ -450,6 +450,36 @@ html, body, #root {
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
+.app-shell-root[data-shell-mode="immersive"] .app-shell-sidebar-desktop {
+  display: none !important;
+}
+
+.app-shell-root[data-shell-mode="immersive"] .app-shell-frame {
+  margin-left: 0 !important;
+}
+
+.resume-preview-block + .resume-preview-block {
+  margin-top: 0.85rem;
+}
+
+.resume-preview-block > :first-child {
+  margin-top: 0;
+}
+
+.resume-preview-block > :last-child {
+  margin-bottom: 0;
+}
+
+.compare-pane-card {
+  min-height: min(70rem, calc(100vh - var(--topbar-height) - 8rem));
+}
+
+@media (max-width: 1023px) {
+  .compare-pane-card {
+    min-height: auto;
+  }
+}
+
 /* ============================================================
    Responsive Sidebar
    ============================================================ */
