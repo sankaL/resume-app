@@ -1,7 +1,7 @@
 # AI Prompt Catalog
 
 **Status:** Current code-derived prompt catalog  
-**Last updated:** 2026-04-13
+**Last updated:** 2026-04-16
 **Sources:** `agents/generation.py`, `agents/worker.py`, `agents/assembly.py`, `backend/app/services/resume_parser.py`
 
 This document records the latest live prompt definitions in the repository. The codebase does not maintain semantic prompt version numbers, so "latest version" here means the current prompt implementation at HEAD.
@@ -13,6 +13,7 @@ This document records the latest live prompt definitions in the repository. The 
 | Job posting extraction | `agents/worker.py` | One live prompt shape | Extract structured job-posting fields from captured webpage context without inventing facts and with explicit noise filtering. |
 | Resume generation / full regeneration | `agents/generation.py` | `operation x aggressiveness x target_length`, plus dynamic section permutations | Produce ordered ATS-safe JSON resume sections grounded in the sanitized base resume and job description. |
 | Single-section regeneration | `agents/generation.py` | `aggressiveness x target_length`, scoped to one section | Rewrite only the selected section while keeping it coherent with the rest of the draft. |
+| Validation-aware repair | `agents/generation.py` | `full-draft or single-section`, repair-only | Repair a previously returned JSON payload using sanitized deterministic validation errors without relaxing the response contract. |
 | Resume upload cleanup | `backend/app/services/resume_parser.py` | One live prompt shape | Improve Markdown structure of parsed resume content without changing substance and signal when manual review is still needed. |
 
 ## Resume Generation Prompts
@@ -37,15 +38,21 @@ This section is organized by what stays constant across all resume-writing opera
 #### Runtime behavior shared by all modes
 
 - Resume-writing calls use OpenRouter via LangChain.
-- Initial generation and full regeneration request reasoning with `effort=medium`. Single-section regeneration requests reasoning with `effort=high`.
-- Reasoning is sent only in the provider request body and excluded from returned content.
+- Initial generation, full regeneration, and single-section regeneration use the env-configured `GENERATION_AGENT_REASONING_EFFORT` setting for both primary and fallback attempts.
+- Allowed reasoning values are `none`, `low`, `medium`, `high`, and `xhigh`.
+- The current tracked env defaults set `GENERATION_AGENT_REASONING_EFFORT=none`.
+- Validation-aware repair runs with no reasoning so the repair path stays narrow and deterministic.
 - Full generation and full regeneration allow up to `240s` per LLM attempt and use heartbeat progress updates while waiting on the model. Section regeneration allows up to `120s` per attempt.
-- The generation layer first attempts schema-enforced structured output. If that fails, the same model falls back to the strict prompt-level JSON contract.
-- If the provider appears to reject the reasoning parameter, the same model is retried once without reasoning before moving on.
+- The generation layer uses a bounded two-model pipeline:
+  - primary model first with schema-enforced structured output
+  - fallback model second with the strict prompt-level JSON contract
+- The primary model is not generically retried in prompt-level JSON mode after ordinary structured-output failure.
 - If the primary model fails, times out, or returns invalid structured output, one fallback-model attempt is allowed.
+- If deterministic validation fails after a successful LLM response, one validation-aware repair attempt is allowed in prompt-level JSON mode before the workflow fails closed.
+- Validation-aware repair uses only the remaining wall-clock budget inside the operation's `240s` full-draft or `120s` section-regeneration maximum window; it does not reopen a fresh timeout window.
 - If every attempt times out, timeout classification is preserved so the worker can surface `generation_timeout` or `regeneration_timeout`.
 - Successful generation/regeneration payloads are cached in Redis before callback delivery so backend reconciliation can recover a completed draft if callback delivery misses.
-- Callback delivery for `started`, `succeeded`, and terminal `failed` events is best-effort and no longer crashes completed jobs.
+- Callback delivery for `succeeded` and terminal `failed` events is best-effort and no longer crashes completed jobs.
 
 #### Shared source and privacy rules
 
@@ -128,6 +135,8 @@ Deterministic validation note:
 Validator carve-out:
 
 - medium and high aggressiveness allow Professional Experience role-title rewrites only in that section; the general unsupported-claim check skips role-title grounding there and nowhere else
+- When deterministic validation fails after a successful model response, the worker may run one repair-only prompt that preserves the original response contract, feeds the prior response back in, and provides a sanitized summary of validation failures. If the repaired output still fails deterministic validation, the workflow fails closed.
+- Medium and high add one extra heuristic validation check: when Professional Experience is enabled, the first up to 2 source-ordered roles with bullets must show visible tailoring. Medium needs at least 1 rewritten bullet or 1 grounded title rewrite across those checked roles; high needs at least 2 rewritten bullets, or 1 rewritten bullet plus 1 grounded title rewrite, except that sparse source experience with only 1 checked bullet can satisfy the rule with that 1 rewritten bullet.
 
 #### Shared target-length rules
 
@@ -272,6 +281,34 @@ Used for both initial generation and full regeneration.
 }
 ```
 
+#### Shared validation-aware repair payload
+
+Used only after a successful generation or regeneration response fails deterministic validation.
+
+```json
+{
+  "repair_task": "Repair the previous response so it satisfies the deterministic validation rules. Keep all content grounded in the sanitized base resume and preserve the original response contract.",
+  "validation_errors": [
+    "{{sanitized_validation_error}}"
+  ],
+  "previous_response": {
+    "sections": [
+      {
+        "id": "{{section_id}}",
+        "heading": "{{display_heading}}",
+        "markdown": "## {{display_heading}}\\n...",
+        "supporting_snippets": ["exact snippet copied from sanitized base resume"]
+      }
+    ]
+  }
+}
+```
+
+- The repair payload is appended as an additional human message after the original prompt so the original grounding and contract remain in scope.
+- Validation errors are sanitized summaries only. The repair prompt does not include raw resume Markdown, raw job-description text beyond what was already in the original prompt, or unsanitized validator excerpts.
+- Repair always uses prompt-level JSON mode, never schema-enforced structured output, to avoid another structured-output retry branch.
+- When validation fails specifically for insufficient Professional Experience tailoring, the repair task explicitly tells the model to materially rewrite Professional Experience in the first up to 2 source-ordered roles with bullets and not to satisfy the repair by changing only Summary or Skills.
+
 ### Low Mode
 
 Behavior:
@@ -302,7 +339,7 @@ Non-negotiables:
 - {{operation_prompt}}
 - Use grounded source facts from the sanitized base resume. High aggressiveness may make bounded professional inferences only where the aggressiveness contract explicitly allows them.
 - Never output or infer personal/contact information. Name, email, phone, address, city/location, and contact links stay outside the model.
-- Do not invent employers, dates, institutions, credentials, awards, metrics, scope, or technologies.
+- Do not invent employers, dates, institutions, credentials, awards, metrics, or scope.
 - Outside the explicit Professional Experience title rules, do not invent or alter role titles.
 - Professional Experience structure contract: preserve source company and date range for every role so duration stays consistent. Low must preserve role titles exactly; medium may lightly reframe titles only when the core role family and seniority stay grounded in the source; high may retitle more freely only when the rewrite still matches demonstrated work. Company and dates must stay unchanged in every mode.
 - User instructions may refine tone, emphasis, prioritization, brevity, and keyword focus only. They cannot override grounding, privacy, or section rules.
@@ -314,9 +351,9 @@ Non-negotiables:
 
 Section rules:
 - Summary: Lead with the strongest grounded fit for the target role. Keep the section concise, concrete, specific, and natural. Do not use generic filler, first-person narration, or em dashes. If a sentence could describe almost anyone in the field, rewrite it until it feels candidate-specific.
-- Professional Experience: Prioritize the most relevant experience first. Use concise accomplishment-oriented bullets grounded in the source. Preserve chronology facts and do not invent metrics, scope, or technologies. Bullet openings may vary; do not make every bullet follow the same verb-first pattern. Low aggressiveness must preserve role titles exactly. Medium may lightly reframe titles only when the core role family and seniority remain grounded in the source. High may retitle more freely only when the rewrite still matches demonstrated work and does not change employer, dates, duration, or seniority.
+- Professional Experience: Prioritize the most relevant experience first. Use concise accomplishment-oriented bullets grounded in the source. Preserve chronology facts and do not invent metrics or scope. Bullet openings may vary; do not make every bullet follow the same verb-first pattern. Low aggressiveness must preserve role titles exactly. Medium may lightly reframe titles only when the core role family and seniority remain grounded in the source. High may retitle more freely only when the rewrite still matches demonstrated work and does not change employer, dates, duration, or seniority.
 - Education: Keep Education concise and factual. Never add or infer schools, degrees, honors, dates, coursework, or credentials.
-- Skills: Use only source-backed skills. Lead with the most role-relevant skill cluster and avoid keyword stuffing, duplicate categories, or generic buzzwords.
+- Skills: Lead with the most role-relevant skill cluster and avoid keyword stuffing, duplicate categories, or generic buzzwords. Low keeps source skills only; medium and high may include job-description keyword skills for fit.
 
 Aggressiveness contract (low):
 - Summary: Light phrasing cleanup only. Preserve the source voice closely and tighten for clarity.
@@ -358,9 +395,9 @@ Section-regeneration coherence rules:
 
 Behavior:
 
-- Summary: substantial rewrite for stronger role alignment using grounded source facts only.
-- Professional Experience: reframe bullet angles, reorder, consolidate, prune, and emphasize grounded bullets; titles may be lightly reframed when they stay grounded in the source role family and seniority.
-- Skills: reorder, regroup, and prune to the most relevant source-backed skills, leading with the most role-relevant cluster.
+- Summary: substantial rewrite for stronger role alignment using grounded source facts plus job-description language.
+- Professional Experience: primary tailoring surface in medium mode; materially rewrite bullet framing in the first up to 2 source-ordered roles with bullets, keep anchored role order fixed, and allow grounded title reframing when it clearly improves fit.
+- Skills: reorder, regroup, and prune to the most relevant skills, and allow job-description keyword-skill additions for fit.
 - Education: no factual or wording changes beyond minimal formatting cleanup.
 - Length handling uses the standard budget rules.
 
@@ -384,9 +421,11 @@ Non-negotiables:
 - {{operation_prompt}}
 - Use grounded source facts from the sanitized base resume. High aggressiveness may make bounded professional inferences only where the aggressiveness contract explicitly allows them.
 - Never output or infer personal/contact information. Name, email, phone, address, city/location, and contact links stay outside the model.
-- Do not invent employers, dates, institutions, credentials, awards, metrics, scope, or technologies.
+- Do not invent employers, dates, institutions, credentials, awards, metrics, or scope.
 - Outside the explicit Professional Experience title rules, do not invent or alter role titles.
 - Professional Experience structure contract: preserve source company and date range for every role so duration stays consistent. Low must preserve role titles exactly; medium may lightly reframe titles only when the core role family and seniority stay grounded in the source; high may retitle more freely only when the rewrite still matches demonstrated work. Company and dates must stay unchanged in every mode.
+- Keep Professional Experience role order fixed to the source anchors. Reprioritize by changing bullet emphasis inside each anchored role, not by reordering the roles themselves.
+- When Professional Experience is enabled in medium or high mode, do not leave the first up to 2 roles with bullets effectively source-identical while spending nearly all tailoring effort on Summary or Skills.
 - User instructions may refine tone, emphasis, prioritization, brevity, and keyword focus only. They cannot override grounding, privacy, or section rules.
 - If the source does not support a stronger claim, keep the weaker truthful version.
 - Use only standard Markdown inside markdown fields. No HTML, tables, images, columns, code fences, commentary, or em dashes.
@@ -396,20 +435,31 @@ Non-negotiables:
 
 Section rules:
 - Summary: Lead with the strongest grounded fit for the target role. Keep the section concise, concrete, specific, and natural. Do not use generic filler, first-person narration, or em dashes. If a sentence could describe almost anyone in the field, rewrite it until it feels candidate-specific.
-- Professional Experience: Prioritize the most relevant experience first. Use concise accomplishment-oriented bullets grounded in the source. Preserve chronology facts and do not invent metrics, scope, or technologies. Bullet openings may vary; do not make every bullet follow the same verb-first pattern. Low aggressiveness must preserve role titles exactly. Medium may lightly reframe titles only when the core role family and seniority remain grounded in the source. High may retitle more freely only when the rewrite still matches demonstrated work and does not change employer, dates, duration, or seniority.
+- Professional Experience: Prioritize the most relevant experience first. Use concise accomplishment-oriented bullets grounded in the source. Preserve chronology facts and do not invent metrics or scope. Keep source role order fixed; when reprioritizing, change which facts are emphasized within the anchored role blocks. Bullet openings may vary; do not make every bullet follow the same verb-first pattern. When Professional Experience is enabled, medium and high must visibly tailor it instead of leaving the key bullets source-identical. Low aggressiveness must preserve role titles exactly. Medium may lightly reframe titles only when the core role family and seniority remain grounded in the source. High may retitle more freely only when the rewrite still matches demonstrated work and does not change employer, dates, duration, or seniority.
 - Education: Keep Education concise and factual. Never add or infer schools, degrees, honors, dates, coursework, or credentials.
-- Skills: Use only source-backed skills. Lead with the most role-relevant skill cluster and avoid keyword stuffing, duplicate categories, or generic buzzwords.
+- Skills: Lead with the most role-relevant skill cluster and avoid keyword stuffing, duplicate categories, or generic buzzwords. Low keeps source skills only; medium and high may include job-description keyword skills for fit.
 
 Aggressiveness contract (medium):
-- Summary: Substantial rewrite for role alignment using grounded source facts only. Reposition the candidate's profile toward the target role without adding new claims.
-- Professional Experience: Reframe bullet angles, reorder, consolidate, prune, and emphasize grounded bullets for the target role. Two source bullets covering related grounded work may be consolidated into one stronger bullet when that improves focus and specificity. You may lightly reframe the role title only when it preserves the same core role family and seniority as the source title. Keep company and dates unchanged. Do not add new facts.
-- Skills: Reorder, regroup, and prune to the most relevant source-backed skills. Lead with the most role-relevant skill cluster. Do not add new skills.
+- Summary: Substantial rewrite for role alignment using grounded source facts and job-description language. Reposition the candidate's profile toward the target role and you may introduce JD-aligned non-factual keywords when helpful.
+- Professional Experience: Professional Experience is the primary tailoring surface in medium mode. Materially rewrite bullet framing in the first up to 2 source-ordered roles that have bullets. Keep the anchored role order fixed, but reprioritize by changing bullet emphasis within each role. Reframe bullet angles, consolidate, prune, and emphasize grounded bullets for the target role. Two source bullets covering related grounded work may be consolidated into one stronger bullet when that improves focus and specificity. Do not spend nearly all tailoring budget on Summary or Skills while leaving Professional Experience bullets source-identical. You may lightly reframe the role title only when it preserves the same core role family and seniority as the source title and target-role alignment clearly improves. Keep company and dates unchanged. Do not add new facts.
+- Skills: Reorder, regroup, and prune to the most relevant skills for the target role. Lead with the most role-relevant skill cluster and you may add JD-aligned keyword skills for fit.
 - Education: Do not change Education facts or wording beyond minimal formatting cleanup.
 Worked example of acceptable vs unacceptable fact expansion:
 - Source fact: "Built CI/CD pipelines for 12 AWS services and supported production deployments."
 - Acceptable grounded rewrite: "Built and supported CI/CD pipelines across 12 AWS services for production deployments."
 - Unacceptable rewrite: "Led DevOps strategy across 12 AWS microservices, reducing deployment failures by 40%."
 - Why: the unacceptable version adds leadership scope and a performance metric that are not present in the source.
+Worked example of bounded medium title reframing:
+- Source title: "Backend Engineer"
+- Acceptable medium rewrite: "Platform Engineer" when the source bullets already show platform APIs, deployment automation, and shared infrastructure work.
+- Unacceptable medium rewrite: "Engineering Manager" when the source does not show people management.
+- Why: medium may improve role alignment, but the rewrite still has to stay in the same grounded role family and preserve seniority.
+Worked example of material Professional Experience tailoring inside fixed role order:
+- Source bullets: "Built backend APIs." and "Maintained CI/CD pipelines."
+- Acceptable medium rewrite: "Built backend APIs and maintained CI/CD pipelines for internal platform services."
+- Acceptable high rewrite: "Built backend APIs and maintained CI/CD pipelines for internal platform services, emphasizing deployment reliability and shared tooling."
+- Unacceptable rewrite: leave the first two roles' bullets effectively unchanged while moving all tailoring effort into Summary or Skills.
+- Why: medium and high must visibly tailor Professional Experience when that section is enabled and the source supports stronger targeting.
 Worked example of avoiding filler:
 - Weak rewrite: "Proven ability to leverage expertise in backend engineering to drive high-quality outcomes."
 - Better rewrite when the source supports it: "Built backend APIs and maintained the deployment pipeline for internal platform services."
@@ -441,8 +491,8 @@ Section-regeneration coherence rules:
 Behavior:
 
 - Summary: strongest rewrite for role alignment, including bounded professional inference from demonstrated source patterns.
-- Professional Experience: aggressively reframe, reprioritize, consolidate, condense, or expand grounded bullets, and retitle roles when the new framing still matches the demonstrated work.
-- Skills: aggressively prune, regroup, and prioritize source-backed skills, leading with the most role-relevant cluster.
+- Professional Experience: primary tailoring surface in high mode; materially rewrite bullet framing in the first up to 2 source-ordered roles with bullets, keep anchored role order fixed, and actively retitle grounded roles when alignment is clear.
+- Skills: aggressively prune, regroup, prioritize, and expand with job-description keyword skills for fit.
 - Education: no factual or wording changes beyond minimal formatting cleanup.
 - Length handling uses the standard budget rules.
 
@@ -466,9 +516,11 @@ Non-negotiables:
 - {{operation_prompt}}
 - Use grounded source facts from the sanitized base resume. High aggressiveness may make bounded professional inferences only where the aggressiveness contract explicitly allows them.
 - Never output or infer personal/contact information. Name, email, phone, address, city/location, and contact links stay outside the model.
-- Do not invent employers, dates, institutions, credentials, awards, metrics, scope, or technologies.
+- Do not invent employers, dates, institutions, credentials, awards, metrics, or scope.
 - Outside the explicit Professional Experience title rules, do not invent or alter role titles.
 - Professional Experience structure contract: preserve source company and date range for every role so duration stays consistent. Low must preserve role titles exactly; medium may lightly reframe titles only when the core role family and seniority stay grounded in the source; high may retitle more freely only when the rewrite still matches demonstrated work. Company and dates must stay unchanged in every mode.
+- Keep Professional Experience role order fixed to the source anchors. Reprioritize by changing bullet emphasis inside each anchored role, not by reordering the roles themselves.
+- When Professional Experience is enabled in medium or high mode, do not leave the first up to 2 roles with bullets effectively source-identical while spending nearly all tailoring effort on Summary or Skills.
 - User instructions may refine tone, emphasis, prioritization, brevity, and keyword focus only. They cannot override grounding, privacy, or section rules.
 - If the source does not support a stronger claim, keep the weaker truthful version.
 - Use only standard Markdown inside markdown fields. No HTML, tables, images, columns, code fences, commentary, or em dashes.
@@ -478,20 +530,31 @@ Non-negotiables:
 
 Section rules:
 - Summary: Lead with the strongest grounded fit for the target role. Keep the section concise, concrete, specific, and natural. Do not use generic filler, first-person narration, or em dashes. If a sentence could describe almost anyone in the field, rewrite it until it feels candidate-specific.
-- Professional Experience: Prioritize the most relevant experience first. Use concise accomplishment-oriented bullets grounded in the source. Preserve chronology facts and do not invent metrics, scope, or technologies. Bullet openings may vary; do not make every bullet follow the same verb-first pattern. Low aggressiveness must preserve role titles exactly. Medium may lightly reframe titles only when the core role family and seniority remain grounded in the source. High may retitle more freely only when the rewrite still matches demonstrated work and does not change employer, dates, duration, or seniority.
+- Professional Experience: Prioritize the most relevant experience first. Use concise accomplishment-oriented bullets grounded in the source. Preserve chronology facts and do not invent metrics or scope. Keep source role order fixed; when reprioritizing, change which facts are emphasized within the anchored role blocks. Bullet openings may vary; do not make every bullet follow the same verb-first pattern. When Professional Experience is enabled, medium and high must visibly tailor it instead of leaving the key bullets source-identical. Low aggressiveness must preserve role titles exactly. Medium may lightly reframe titles only when the core role family and seniority remain grounded in the source. High may retitle more freely only when the rewrite still matches demonstrated work and does not change employer, dates, duration, or seniority.
 - Education: Keep Education concise and factual. Never add or infer schools, degrees, honors, dates, coursework, or credentials.
-- Skills: Use only source-backed skills. Lead with the most role-relevant skill cluster and avoid keyword stuffing, duplicate categories, or generic buzzwords.
+- Skills: Lead with the most role-relevant skill cluster and avoid keyword stuffing, duplicate categories, or generic buzzwords. Low keeps source skills only; medium and high may include job-description keyword skills for fit.
 
 Aggressiveness contract (high):
-- Summary: Fully rewrite the Summary for strongest role alignment. You may make bounded professional inferences from demonstrated patterns in the source, but never invent specific employers, dates, institutions, credentials, metrics, or technologies.
-- Professional Experience: Aggressively reframe, reprioritize, consolidate, condense, or expand grounded bullets for fit and impact. You may retitle the role name for alignment or adjacent role framing only when it still matches the demonstrated responsibilities. Keep company and dates unchanged, keep duration consistent with the source, do not change seniority, and do not invent metrics, employers, technologies, institutions, or achievements.
-- Skills: Aggressively prune, regroup, and prioritize source-backed skills for relevance. Lead with the most role-relevant skill cluster. Do not add new skills.
+- Summary: Fully rewrite the Summary for strongest role alignment. You may make bounded professional inferences from demonstrated patterns in the source, and you may introduce JD-driven non-factual keywords for fit, but never invent specific employers, dates, institutions, credentials, or metrics.
+- Professional Experience: Professional Experience is the primary tailoring surface in high mode. Materially rewrite bullet framing in the first up to 2 source-ordered roles that have bullets. Keep the anchored role order fixed, but reprioritize by changing bullet emphasis within each role. Aggressively reframe, consolidate, condense, or expand grounded bullets for fit and impact. Do not spend nearly all tailoring budget on Summary or Skills while leaving Professional Experience bullets source-identical. You should actively retitle the role name for alignment or adjacent role framing when the target role clearly supports it and it still matches the demonstrated responsibilities, especially for the most recent role. Keep company and dates unchanged, keep duration consistent with the source, do not change seniority, and do not invent metrics, employers, institutions, or achievements. JD-driven keyword phrasing is allowed when it does not assert new facts.
+- Skills: Aggressively prune, regroup, prioritize, and expand skills for target-role relevance. Lead with the most role-relevant skill cluster and include JD-driven keyword skills when helpful.
 - Education: Do not change Education facts or wording beyond minimal formatting cleanup.
 Worked example of acceptable vs unacceptable fact expansion:
 - Source fact: "Built CI/CD pipelines for 12 AWS services and supported production deployments."
 - Acceptable grounded rewrite: "Built and supported CI/CD pipelines across 12 AWS services for production deployments."
 - Unacceptable rewrite: "Led DevOps strategy across 12 AWS microservices, reducing deployment failures by 40%."
 - Why: the unacceptable version adds leadership scope and a performance metric that are not present in the source.
+Worked example of bounded medium title reframing:
+- Source title: "Backend Engineer"
+- Acceptable medium rewrite: "Platform Engineer" when the source bullets already show platform APIs, deployment automation, and shared infrastructure work.
+- Unacceptable medium rewrite: "Engineering Manager" when the source does not show people management.
+- Why: medium may improve role alignment, but the rewrite still has to stay in the same grounded role family and preserve seniority.
+Worked example of material Professional Experience tailoring inside fixed role order:
+- Source bullets: "Built backend APIs." and "Maintained CI/CD pipelines."
+- Acceptable medium rewrite: "Built backend APIs and maintained CI/CD pipelines for internal platform services."
+- Acceptable high rewrite: "Built backend APIs and maintained CI/CD pipelines for internal platform services, emphasizing deployment reliability and shared tooling."
+- Unacceptable rewrite: leave the first two roles' bullets effectively unchanged while moving all tailoring effort into Summary or Skills.
+- Why: medium and high must visibly tailor Professional Experience when that section is enabled and the source supports stronger targeting.
 Worked example of bounded professional inference in high aggressiveness:
 - Source shows: managing a team of 15, coordinating delivery across clients, and owning test strategy.
 - Acceptable high-aggressiveness inference: retitle the role as "QA Engineering Lead" when the rest of the role content stays grounded in those demonstrated responsibilities.

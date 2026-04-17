@@ -1609,8 +1609,56 @@ describe("phase 1 applications UI", () => {
     expect(screen.getByText(/education: no factual rewrites beyond minimal formatting cleanup\./i)).toBeInTheDocument();
     await userEvent.click(screen.getByText("High"));
     expect(
-      await screen.findByText(/high aggressiveness can make substantial changes to wording, emphasis, and professional experience role framing, but company and dates stay fixed/i),
+      await screen.findByText(/high aggressiveness can make substantial changes to wording, emphasis, professional experience role framing, and keyword\/skills coverage, while company and dates stay fixed/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows flagged job-description additions in generated draft review panel", async () => {
+    api.fetchApplicationDetail.mockResolvedValue(
+      buildApplicationDetail({
+        id: "app-1",
+        visible_status: "in_progress",
+        internal_state: "resume_ready",
+        base_resume_id: "resume-1",
+        base_resume_name: "Default Resume",
+      }),
+    );
+    api.fetchDraft.mockResolvedValue({
+      id: "draft-1",
+      application_id: "app-1",
+      content_md: "# Resume\n\n## Summary\nBuilt backend systems with Kubernetes.",
+      generation_params: {
+        page_length: "1_page",
+        aggressiveness: "high",
+        additional_instructions: "",
+      },
+      sections_snapshot: {
+        enabled_sections: ["summary", "professional_experience", "education", "skills"],
+        section_order: ["summary", "professional_experience", "education", "skills"],
+      },
+      review_flags: [
+        {
+          section_name: "summary",
+          text: "Built backend systems with Kubernetes.",
+          reason: "job_description_only_addition",
+        },
+      ],
+      last_generated_at: "2026-04-07T12:10:00Z",
+      last_exported_at: null,
+      updated_at: "2026-04-07T12:10:00Z",
+    });
+
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
+
+    expect(await screen.findByText(/review flagged additions/i)).toBeInTheDocument();
+    expect(screen.getByText(/medium\/high generation added job-description-driven phrases/i)).toBeInTheDocument();
+    expect(screen.getByText(/summary:/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/built backend systems with kubernetes\./i).length).toBeGreaterThan(0);
   });
 
   it("deletes an application from the detail header and navigates back to the list", async () => {

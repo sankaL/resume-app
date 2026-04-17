@@ -69,6 +69,11 @@ const ACTIVE_GENERATION_PROGRESS_STATES = [
 ];
 const EXTRACTION_DETAIL_REFRESH_FALLBACK_MESSAGE =
   "Extraction finished, but results could not be synchronized. Retry extraction or complete manual entry.";
+const REVIEW_SECTION_LABELS: Record<string, string> = {
+  summary: "Summary",
+  professional_experience: "Professional Experience",
+  skills: "Skills",
+};
 
 function isGenerationWorkflowActive(detail: ApplicationDetail | null) {
   return Boolean(detail && !detail.failure_reason && ACTIVE_GENERATION_STATES.includes(detail.internal_state));
@@ -121,6 +126,10 @@ function applyTerminalGenerationProgress(
       ? {
           message: progress.message,
           validation_errors: current.generation_failure_details?.validation_errors ?? null,
+          failure_stage: current.generation_failure_details?.failure_stage ?? null,
+          attempt_count: current.generation_failure_details?.attempt_count ?? null,
+          attempts: current.generation_failure_details?.attempts ?? null,
+          terminal_error_code: progress.terminal_error_code,
         }
       : null,
     has_action_required_notification: failureReason ? true : current.has_action_required_notification,
@@ -187,6 +196,41 @@ function isAllowedPageLength(value: unknown): value is string {
 
 function isAllowedAggressiveness(value: unknown): value is string {
   return typeof value === "string" && AGGRESSIVENESS_OPTIONS.some((option) => option.value === value);
+}
+
+function getGenerationStartBlocker(
+  detail: ApplicationDetail | null,
+  selectedResumeId: string | null,
+  baseResumeCount: number,
+): string | null {
+  if (!detail) return "Application details are still loading.";
+  if (isGenerationWorkflowActive(detail)) return "Generation is already in progress.";
+  if (!selectedResumeId) return "Select a base resume before generating.";
+  if (baseResumeCount === 0) return "Create a base resume before generating.";
+  if (!detail.job_title) return "Add a job title before generating.";
+  if (!detail.job_description) return "Add a job description before generating.";
+  if (detail.duplicate_resolution_status === "pending") return "Resolve the duplicate warning before generating.";
+  return null;
+}
+
+function getFullRegenerationBlocker(detail: ApplicationDetail | null): string | null {
+  if (!detail) return "Application details are still loading.";
+  if (isGenerationWorkflowActive(detail)) return "Generation is already in progress.";
+  if (detail.internal_state !== "resume_ready") return "Generate a resume draft before running full regeneration.";
+  return null;
+}
+
+function getSectionRegenerationBlocker(
+  detail: ApplicationDetail | null,
+  sectionName: string,
+  instructions: string,
+): string | null {
+  if (!detail) return "Application details are still loading.";
+  if (isGenerationWorkflowActive(detail)) return "Generation is already in progress.";
+  if (detail.internal_state !== "resume_ready") return "Generate a resume draft before regenerating a section.";
+  if (!sectionName) return "Select a section to regenerate.";
+  if (!instructions.trim()) return "Enter regeneration instructions before continuing.";
+  return null;
 }
 
 export function ApplicationDetailPage() {
@@ -285,6 +329,10 @@ export function ApplicationDetailPage() {
     () => AGGRESSIVENESS_OPTIONS.find((option) => option.value === aggressiveness) ?? null,
     [aggressiveness],
   );
+  const draftReviewFlags = draft?.review_flags ?? [];
+  const generationStartBlocker = getGenerationStartBlocker(detail, selectedResumeId, baseResumes.length);
+  const fullRegenerationBlocker = getFullRegenerationBlocker(detail);
+  const sectionRegenerationBlocker = getSectionRegenerationBlocker(detail, regenSectionName, regenInstructions);
 
   function applyDetailState(response: ApplicationDetail, options?: { refreshShell?: boolean }) {
     const generationActive = isGenerationWorkflowActive(response);
@@ -666,8 +714,16 @@ export function ApplicationDetailPage() {
   }
 
   async function handleTriggerGeneration() {
-    if (!selectedResumeId || !detail) return;
-    if (isGenerationWorkflowActive(detail)) return;
+    if (generationStartBlocker) {
+      console.warn("[generation-ui]", {
+        event: "blocked_before_request",
+        workflow_kind: "generation",
+        application_id: activeApplicationId,
+        reason: generationStartBlocker,
+      });
+      setError(generationStartBlocker);
+      return;
+    }
     setIsGenerating(true);
     setShowOptimisticProgress(true);
     setError(null);
@@ -714,8 +770,16 @@ export function ApplicationDetailPage() {
   }
 
   async function handleFullRegeneration() {
-    if (!detail) return;
-    if (isGenerationWorkflowActive(detail)) return;
+    if (fullRegenerationBlocker) {
+      console.warn("[generation-ui]", {
+        event: "blocked_before_request",
+        workflow_kind: "regeneration_full",
+        application_id: activeApplicationId,
+        reason: fullRegenerationBlocker,
+      });
+      setError(fullRegenerationBlocker);
+      return;
+    }
     setIsRegenerating(true);
     setShowOptimisticProgress(true);
     setError(null);
@@ -735,9 +799,17 @@ export function ApplicationDetailPage() {
   }
 
   async function handleSectionRegeneration() {
-    if (!regenSectionName || !regenInstructions.trim()) return;
-    if (!detail) return;
-    if (isGenerationWorkflowActive(detail)) return;
+    if (sectionRegenerationBlocker) {
+      console.warn("[generation-ui]", {
+        event: "blocked_before_request",
+        workflow_kind: "regeneration_section",
+        application_id: activeApplicationId,
+        section_name: regenSectionName,
+        reason: sectionRegenerationBlocker,
+      });
+      setError(sectionRegenerationBlocker);
+      return;
+    }
     setIsRegenerating(true);
     setShowOptimisticProgress(true);
     setError(null);
@@ -1033,6 +1105,12 @@ export function ApplicationDetailPage() {
             <Card variant="warning" density="compact" className="p-4">
               <h3 className="text-sm font-semibold" style={{ color: "var(--color-amber)" }}>Generation Timed Out</h3>
               <p className="mt-1 text-sm" style={{ color: "var(--color-ink-65)" }}>{detail.generation_failure_details?.message ?? "The AI provider may be experiencing delays."}</p>
+              {detail.generation_failure_details?.failure_stage || detail.generation_failure_details?.attempts?.length ? (
+                <div className="mt-2 rounded-lg border p-3 text-xs" style={{ borderColor: "var(--color-border)" }}>
+                  <div>Failure stage: {detail.generation_failure_details?.failure_stage ?? "unknown"}</div>
+                  <div>LLM attempts: {detail.generation_failure_details?.attempt_count ?? detail.generation_failure_details?.attempts?.length ?? 0}</div>
+                </div>
+              ) : null}
               <Button className="mt-3" size="sm" onClick={() => void handleTriggerGeneration()}>Retry</Button>
             </Card>
           )}
@@ -1055,6 +1133,22 @@ export function ApplicationDetailPage() {
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs" style={{ color: "var(--color-ink-50)" }}>
                   {detail.generation_failure_details.validation_errors.map((err, i) => <li key={i}>{err}</li>)}
                 </ul>
+              ) : null}
+              {detail.generation_failure_details?.failure_stage || detail.generation_failure_details?.attempts?.length ? (
+                <div className="mt-2 rounded-lg border p-3 text-xs" style={{ borderColor: "var(--color-border)" }}>
+                  <div>Failure stage: {detail.generation_failure_details?.failure_stage ?? "unknown"}</div>
+                  <div>LLM attempts: {detail.generation_failure_details?.attempt_count ?? detail.generation_failure_details?.attempts?.length ?? 0}</div>
+                  {detail.generation_failure_details?.attempts?.length ? (
+                    <ul className="mt-2 space-y-1" style={{ color: "var(--color-ink-50)" }}>
+                      {detail.generation_failure_details.attempts.map((attempt, index) => (
+                        <li key={`${attempt.model ?? "model"}-${index}`}>
+                          {attempt.model ?? "unknown model"} / {attempt.transport_mode ?? "unknown mode"} / {attempt.outcome ?? "unknown outcome"}
+                          {typeof attempt.elapsed_ms === "number" ? ` / ${attempt.elapsed_ms}ms` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
               ) : null}
               <Button className="mt-3" size="sm" disabled={isGenerating || !selectedResumeId} onClick={() => void handleTriggerGeneration()}>
                 {isGenerating ? "Starting…" : "Retry"}
@@ -1393,6 +1487,27 @@ export function ApplicationDetailPage() {
                       </div>
                     </div>
 
+                    {draftReviewFlags.length > 0 ? (
+                      <Card variant="warning" density="compact" className="mt-3 p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-ink-65)" }}>
+                          Review Flagged Additions
+                        </p>
+                        <p className="mt-1 text-xs" style={{ color: "var(--color-ink-65)" }}>
+                          Medium/High generation added job-description-driven phrases that are not explicit in your source resume. Verify before applying.
+                        </p>
+                        <ul className="mt-2 space-y-1 text-xs" style={{ color: "var(--color-ink)" }}>
+                          {draftReviewFlags.slice(0, 8).map((flag, index) => (
+                            <li key={`${flag.section_name}-${flag.text}-${index}`}>
+                              <span className="font-medium">
+                                {REVIEW_SECTION_LABELS[flag.section_name] ?? flag.section_name}:
+                              </span>{" "}
+                              {flag.text}
+                            </li>
+                          ))}
+                        </ul>
+                      </Card>
+                    ) : null}
+
                     <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                       <div
                         className="inline-flex items-center rounded-full border p-1"
@@ -1484,11 +1599,7 @@ export function ApplicationDetailPage() {
                     <button
                       type="button"
                       disabled={
-                        !selectedResumeId ||
-                        baseResumes.length === 0 ||
-                        !detail.job_title ||
-                        !detail.job_description ||
-                        detail.duplicate_resolution_status === "pending"
+                        generationStartBlocker !== null
                       }
                       className="ai-button inline-flex items-center justify-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50"
                       onClick={() => void handleTriggerGeneration()}
@@ -1496,6 +1607,11 @@ export function ApplicationDetailPage() {
                       <Sparkles size={16} />
                       Generate Resume
                     </button>
+                    {generationStartBlocker ? (
+                      <p className="mt-3 text-xs" style={{ color: "var(--color-ink-50)" }}>
+                        {generationStartBlocker}
+                      </p>
+                    ) : null}
                   </Card>
                 )}
               </div>

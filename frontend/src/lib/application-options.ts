@@ -39,26 +39,26 @@ export const AGGRESSIVENESS_OPTIONS = [
   {
     value: "medium",
     label: "Medium",
-    description: "Balanced rewrite with bounded title reframing. Education stays fixed.",
+    description: "Balanced rewrite with bounded title reframing plus JD keyword/skill injection. Education stays fixed.",
     warning: undefined,
     details: [
-      "Summary: stronger rewrite for role alignment using grounded source facts only.",
+      "Summary: stronger rewrite for role alignment using grounded source facts plus job-description language.",
       "Professional Experience: reframe, reorder, consolidate, prune, and emphasize grounded bullets. Role titles may be lightly reframed only when they stay grounded in the original role family and seniority, while company and dates remain fixed.",
-      "Skills: reorder, regroup, and prune to the most relevant source-backed skills, leading with the strongest role-relevant cluster.",
+      "Skills: reorder, regroup, prune, and add role-relevant job-description keyword skills for fit, leading with the strongest role-relevant cluster.",
       "Education: no factual rewrites beyond minimal formatting cleanup.",
     ],
   },
   {
     value: "high",
     label: "High",
-    description: "Strongest rewrite. Can materially change phrasing, emphasis, and role titles.",
+    description: "Strongest rewrite. Can materially change phrasing, emphasis, role titles, and keyword coverage.",
     details: [
-      "Summary: strongest rewrite for role alignment, including bounded professional inference from demonstrated patterns in the source.",
+      "Summary: strongest rewrite for role alignment, including bounded professional inference and job-description keyword emphasis.",
       "Professional Experience: aggressively reframe, reprioritize, consolidate, and condense grounded bullets; role titles may be rewritten when the new title still matches the demonstrated work. Company and dates remain fixed.",
-      "Skills: aggressively regroup, prioritize, and prune source-backed skills, leading with the most role-relevant cluster.",
+      "Skills: aggressively regroup, prioritize, prune, and expand with job-description keyword skills for fit.",
       "Education: no factual rewrites beyond minimal formatting cleanup.",
     ],
     warning:
-      "High aggressiveness can make substantial changes to wording, emphasis, and Professional Experience role framing, but company and dates stay fixed. Use it only when you want a more aggressive rewrite and will review the result carefully.",
+      "High aggressiveness can make substantial changes to wording, emphasis, Professional Experience role framing, and keyword/skills coverage, while company and dates stay fixed. Review all generated additions carefully.",
   },
 ] as const;

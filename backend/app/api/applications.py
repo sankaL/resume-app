@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Annotated, Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
@@ -362,6 +362,7 @@ class ResumeDraftResponse(BaseModel):
     content_md: str
     generation_params: dict[str, Any]
     sections_snapshot: dict[str, Any]
+    review_flags: list[dict[str, str]] = Field(default_factory=list)
     last_generated_at: str
     last_exported_at: Optional[str]
     updated_at: str
@@ -650,13 +651,17 @@ async def get_draft(
     service: Annotated[ApplicationService, Depends(get_application_service)],
 ) -> Optional[ResumeDraftResponse]:
     try:
-        draft = await service.get_draft(
+        draft, review_flags = await service.get_draft_with_review_flags(
             user_id=current_user.id,
             application_id=application_id,
         )
         if draft is None:
             return None
-        return ResumeDraftResponse.model_validate(draft.model_dump(exclude={"user_id"}))
+        payload = {
+            **draft.model_dump(exclude={"user_id"}),
+            "review_flags": [flag.model_dump() for flag in review_flags],
+        }
+        return ResumeDraftResponse.model_validate(payload)
     except Exception as error:
         raise _map_service_error(error) from error
 
@@ -665,9 +670,25 @@ async def get_draft(
 async def generate_resume(
     application_id: str,
     request: GenerateResumeRequest,
+    raw_request: Request,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_active_user)],
     service: Annotated[ApplicationService, Depends(get_application_service)],
 ) -> ApplicationDetail:
+    logger.info(
+        "generation_route %s",
+        {
+            "event": "generation_route_entry",
+            "request_id": raw_request.headers.get("x-request-id"),
+            "user_id": current_user.id,
+            "application_id": application_id,
+            "workflow_kind": "generation",
+            "base_resume_id": request.base_resume_id,
+            "target_length": request.target_length,
+            "aggressiveness": request.aggressiveness,
+            "has_additional_instructions": bool(request.additional_instructions),
+            "additional_instructions_length": len(request.additional_instructions or ""),
+        },
+    )
     try:
         return to_application_detail(
             await service.trigger_generation(
@@ -680,6 +701,18 @@ async def generate_resume(
             )
         )
     except Exception as error:
+        logger.warning(
+            "generation_route %s",
+            {
+                "event": "generation_route_error",
+                "request_id": raw_request.headers.get("x-request-id"),
+                "user_id": current_user.id,
+                "application_id": application_id,
+                "workflow_kind": "generation",
+                "error_type": type(error).__name__,
+                "message": str(error),
+            },
+        )
         raise _map_service_error(error) from error
 
 
@@ -687,9 +720,24 @@ async def generate_resume(
 async def regenerate_full(
     application_id: str,
     request: FullRegenerationRequest,
+    raw_request: Request,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_active_user)],
     service: Annotated[ApplicationService, Depends(get_application_service)],
 ) -> ApplicationDetail:
+    logger.info(
+        "generation_route %s",
+        {
+            "event": "generation_route_entry",
+            "request_id": raw_request.headers.get("x-request-id"),
+            "user_id": current_user.id,
+            "application_id": application_id,
+            "workflow_kind": "regeneration_full",
+            "target_length": request.target_length,
+            "aggressiveness": request.aggressiveness,
+            "has_additional_instructions": bool(request.additional_instructions),
+            "additional_instructions_length": len(request.additional_instructions or ""),
+        },
+    )
     try:
         return to_application_detail(
             await service.trigger_full_regeneration(
@@ -701,6 +749,18 @@ async def regenerate_full(
             )
         )
     except Exception as error:
+        logger.warning(
+            "generation_route %s",
+            {
+                "event": "generation_route_error",
+                "request_id": raw_request.headers.get("x-request-id"),
+                "user_id": current_user.id,
+                "application_id": application_id,
+                "workflow_kind": "regeneration_full",
+                "error_type": type(error).__name__,
+                "message": str(error),
+            },
+        )
         raise _map_service_error(error) from error
 
 
@@ -708,9 +768,22 @@ async def regenerate_full(
 async def regenerate_section(
     application_id: str,
     request: SectionRegenerationRequest,
+    raw_request: Request,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_active_user)],
     service: Annotated[ApplicationService, Depends(get_application_service)],
 ) -> ApplicationDetail:
+    logger.info(
+        "generation_route %s",
+        {
+            "event": "generation_route_entry",
+            "request_id": raw_request.headers.get("x-request-id"),
+            "user_id": current_user.id,
+            "application_id": application_id,
+            "workflow_kind": "regeneration_section",
+            "section_name": request.section_name,
+            "instructions_length": len(request.instructions or ""),
+        },
+    )
     try:
         return to_application_detail(
             await service.trigger_section_regeneration(
@@ -721,6 +794,19 @@ async def regenerate_section(
             )
         )
     except Exception as error:
+        logger.warning(
+            "generation_route %s",
+            {
+                "event": "generation_route_error",
+                "request_id": raw_request.headers.get("x-request-id"),
+                "user_id": current_user.id,
+                "application_id": application_id,
+                "workflow_kind": "regeneration_section",
+                "section_name": request.section_name,
+                "error_type": type(error).__name__,
+                "message": str(error),
+            },
+        )
         raise _map_service_error(error) from error
 
 

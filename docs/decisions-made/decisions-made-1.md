@@ -1,5 +1,56 @@
 # Decisions Made
 
+## 2026-04-16 22:38:50 EDT — Move generation reasoning effort into env config and default it to none
+
+- Status: Accepted
+- Context: Generation and regeneration reasoning effort was still hardcoded in `agents/generation.py`, which meant model changes were configurable but reasoning intensity was not. You wanted the same runtime flexibility for reasoning effort, with the ability to set `none`, `low`, `medium`, `high`, or `xhigh` without another code change.
+- Decision:
+  1. Add a validated worker env setting, `GENERATION_AGENT_REASONING_EFFORT`, with allowed values `none`, `low`, `medium`, `high`, and `xhigh`.
+  2. Thread that setting through full generation, full regeneration, and section regeneration for both primary and fallback attempts instead of hardcoding reasoning in `agents/generation.py`.
+  3. Keep validation-repair non-reasoning regardless of the configured generation setting.
+  4. Set the tracked dotenv defaults to `none` for now.
+- Consequences: Runtime model configuration now also controls generation/regeration reasoning intensity, local and compose defaults are aligned on `none`, and repair stays narrow and deterministic even when generation reasoning is increased later.
+
+## 2026-04-16 22:20:00 EDT — Make medium/high Professional Experience visibly stronger and restore bounded reasoning defaults
+
+- Status: Accepted
+- Context: Live medium/high outputs were still often changing Summary and Skills while leaving Professional Experience nearly untouched, which made aggressiveness feel weaker than the UI contract. The current dirty-tree generation code had also disabled reasoning entirely, diverging from the intended bounded reasoning policy for full drafts and section regeneration.
+- Decision:
+  1. Restore bounded reasoning defaults for generation and regeneration at `medium` effort on both primary and fallback attempts, and keep validation-repair attempts non-reasoning.
+  2. Make Professional Experience the primary tailoring surface in medium and high mode by requiring visible bullet rewrites in the first up to 2 source-ordered roles with bullets, while keeping anchored role order fixed.
+  3. Keep medium targeted rather than broad: allow opportunistic grounded title reframing when fit clearly improves, but do not require title rewrites.
+  4. Keep high as the most assertive mode: actively retitle grounded roles when alignment is clear, especially the most recent role, while preserving company, dates, duration, and seniority.
+  5. Add a medium/high-only heuristic validation failure for insufficient Professional Experience tailoring, and feed that failure through the existing repair prompt so repair attempts push on experience bullets instead of only Summary or Skills.
+  6. Expand read-time draft review flags so medium/high Professional Experience header/title rewrites that introduce JD-only wording are surfaced for user review under the existing payload shape.
+- Consequences: Medium/high outputs now have a stronger default obligation to visibly rewrite experience content, the repair pass gets a clearer target when experience stays too close to source wording, and the generation stack uses a cheaper consistent `medium` reasoning policy for generation/regeneration while keeping repair narrow.
+
+## 2026-04-15 21:20:00 EDT — Let medium/high inject JD-driven keywords and add explicit draft review flags
+
+- Status: Accepted
+- Context: Live usage showed low, medium, and high generation outputs were often too similar. The prompt contract required source-only skills in medium/high and explicitly blocked adding new skills, which made tailoring feel like light cleanup instead of true role targeting.
+- Decision:
+  1. Keep low mode strictly source-preserving for skills and factual claims.
+  2. Allow medium and high modes to inject job-description-driven non-factual keyword/skill phrasing for role fit.
+  3. Keep deterministic Professional Experience invariants unchanged: role-block count, company/date source-exactness, low title exactness, medium title grounding + seniority preservation, high seniority preservation.
+  4. Keep factual hallucination guardrails fail-closed for employers, dates, institutions, credentials, awards, scope, and outcomes.
+  5. Add read-time draft `review_flags` for medium/high so JD-only additions are visibly surfaced in the application detail UI for explicit user review.
+  6. Increase generation sampling variance by aggressiveness (`low=0.2`, `medium=0.35`, `high=0.5`) so mode choices produce meaningfully different outputs.
+- Consequences: Medium/high now perform materially stronger tailoring, user review burden is made explicit through flagged additions instead of hidden behavior shifts, and deterministic structural safeguards continue to prevent factual drift in work history.
+
+## 2026-04-14 21:34:11 EDT — Bound generation to one primary attempt, one fallback attempt, and one repair-only pass with stage diagnostics
+
+- Status: Accepted
+- Context: Generation had two distinct failure modes in live use. Some requests were slow because the pipeline could fan out into multiple full LLM calls before success or failure, especially when structured output failed or a provider rejected the reasoning field. Other requests never reached the backend generation endpoint at all, but the frontend and backend did not emit enough structured diagnostics to show whether the request was blocked locally, failed during enqueue, died in the worker before OpenRouter, or was rejected after deterministic validation.
+- Decision:
+  1. Keep the generation pipeline bounded to one primary-model attempt followed by one fallback-model attempt, instead of allowing generic same-request resend fan-out across multiple transport modes on the same model.
+  2. Keep same-model retry only for the narrow case where the provider explicitly rejects the `reasoning` parameter; retry that model once without reasoning and otherwise move on.
+  3. Use primary structured output first and fallback prompt-level JSON second for full generation, full regeneration, and section regeneration.
+  4. After a successful LLM response fails deterministic validation, allow exactly one validation-aware repair attempt in prompt-level JSON mode before failing closed.
+  5. Remove whole-job automatic reruns for generation and regeneration by reducing worker job retries to a single attempt and relying on explicit model fallback plus the repair pass instead.
+  6. Add sanitized structured diagnostics across frontend guard handling, backend route entry and enqueue, worker LLM attempts, validation and repair, cache writes, and callback delivery, and persist enriched `generation_failure_details` so the UI can show where the request stopped.
+  7. Move generation defaults to faster lighter models for local/runtime defaults: `openai/gpt-5-mini` primary and `google/gemini-flash-1.5` fallback, with `medium` reasoning for generation and regeneration and no reasoning on repair.
+- Consequences: Resume-writing latency is now constrained by a small fixed attempt budget instead of an open-ended retry matrix, deterministic validation remains fail-closed while still getting one salvage pass, and operators can distinguish “blocked in the UI,” “enqueue failed,” “worker failed before LLM,” and “LLM or validation failed” without exposing sensitive resume or job-posting content in logs.
+
 ## 2026-04-13 22:45:01 EDT — Make medium title reframing bounded, add high-mode bounded inference, and harden resume voice rules
 
 - Status: Accepted

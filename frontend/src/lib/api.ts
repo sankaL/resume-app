@@ -85,6 +85,26 @@ export type ApplicationSummary = {
 export type GenerationFailureDetails = {
   message: string | null;
   validation_errors: string[] | null;
+  failure_stage?: string | null;
+  attempt_count?: number | null;
+  attempts?: Array<{
+    model?: string | null;
+    reasoning_effort?: string | null;
+    transport_mode?: string | null;
+    outcome?: string | null;
+    elapsed_ms?: number | null;
+    retry_reason?: string | null;
+  }> | null;
+  terminal_error_code?: string | null;
+  repair_model?: string | null;
+  error?: {
+    error_type?: string | null;
+    message?: string | null;
+  } | null;
+  repair_error?: {
+    error_type?: string | null;
+    message?: string | null;
+  } | null;
 };
 
 export type ResumeDraft = {
@@ -93,6 +113,11 @@ export type ResumeDraft = {
   content_md: string;
   generation_params: Record<string, unknown>;
   sections_snapshot: Record<string, unknown>;
+  review_flags?: Array<{
+    section_name: string;
+    text: string;
+    reason: "job_description_only_addition";
+  }>;
   last_generated_at: string;
   last_exported_at: string | null;
   updated_at: string;
@@ -328,6 +353,10 @@ async function authenticatedRequest<T>(path: string, options: RequestOptions = {
   }
 
   return response.json();
+}
+
+function logGenerationRequest(event: string, payload: Record<string, unknown>) {
+  console.info("[generation-request]", { event, ...payload });
 }
 
 async function authenticatedUpload<T>(path: string, formData: FormData): Promise<T> {
@@ -696,10 +725,28 @@ export async function triggerGeneration(
     additional_instructions?: string;
   },
 ): Promise<ApplicationDetail> {
-  return authenticatedRequest<ApplicationDetail>(`/api/applications/${applicationId}/generate`, {
-    method: "POST",
-    body: settings,
+  logGenerationRequest("start", {
+    workflow_kind: "generation",
+    application_id: applicationId,
+    base_resume_id: settings.base_resume_id,
+    target_length: settings.target_length,
+    aggressiveness: settings.aggressiveness,
+    additional_instructions_length: settings.additional_instructions?.length ?? 0,
   });
+  try {
+    return await authenticatedRequest<ApplicationDetail>(`/api/applications/${applicationId}/generate`, {
+      method: "POST",
+      body: settings,
+    });
+  } catch (error) {
+    console.warn("[generation-request]", {
+      event: "failure",
+      workflow_kind: "generation",
+      application_id: applicationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function fetchDraft(applicationId: string): Promise<ResumeDraft | null> {
@@ -724,10 +771,27 @@ export async function triggerFullRegeneration(
     additional_instructions?: string;
   },
 ): Promise<ApplicationDetail> {
-  return authenticatedRequest<ApplicationDetail>(`/api/applications/${applicationId}/regenerate`, {
-    method: "POST",
-    body: settings,
+  logGenerationRequest("start", {
+    workflow_kind: "regeneration_full",
+    application_id: applicationId,
+    target_length: settings.target_length,
+    aggressiveness: settings.aggressiveness,
+    additional_instructions_length: settings.additional_instructions?.length ?? 0,
   });
+  try {
+    return await authenticatedRequest<ApplicationDetail>(`/api/applications/${applicationId}/regenerate`, {
+      method: "POST",
+      body: settings,
+    });
+  } catch (error) {
+    console.warn("[generation-request]", {
+      event: "failure",
+      workflow_kind: "regeneration_full",
+      application_id: applicationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function triggerSectionRegeneration(
@@ -735,10 +799,27 @@ export async function triggerSectionRegeneration(
   sectionName: string,
   instructions: string,
 ): Promise<ApplicationDetail> {
-  return authenticatedRequest<ApplicationDetail>(`/api/applications/${applicationId}/regenerate-section`, {
-    method: "POST",
-    body: { section_name: sectionName, instructions },
+  logGenerationRequest("start", {
+    workflow_kind: "regeneration_section",
+    application_id: applicationId,
+    section_name: sectionName,
+    instructions_length: instructions.length,
   });
+  try {
+    return await authenticatedRequest<ApplicationDetail>(`/api/applications/${applicationId}/regenerate-section`, {
+      method: "POST",
+      body: { section_name: sectionName, instructions },
+    });
+  } catch (error) {
+    console.warn("[generation-request]", {
+      event: "failure",
+      workflow_kind: "regeneration_section",
+      application_id: applicationId,
+      section_name: sectionName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function cancelGeneration(applicationId: string): Promise<ApplicationDetail> {

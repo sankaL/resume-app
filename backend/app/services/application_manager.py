@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any, Optional
 
 from fastapi import Depends
@@ -36,14 +38,15 @@ from app.services.progress import (
     build_progress,
     get_progress_store,
 )
+from app.services.resume_privacy import sanitize_resume_markdown
 from app.services.workflow import derive_visible_status
 
 logger = logging.getLogger(__name__)
 
 FULL_GENERATION_IDLE_TIMEOUT_SECONDS = 240
-FULL_GENERATION_MAX_TIMEOUT_SECONDS = 540
+FULL_GENERATION_MAX_TIMEOUT_SECONDS = 240
 SECTION_REGENERATION_IDLE_TIMEOUT_SECONDS = 120
-SECTION_REGENERATION_MAX_TIMEOUT_SECONDS = 280
+SECTION_REGENERATION_MAX_TIMEOUT_SECONDS = 120
 FULL_REGENERATION_LIMIT_PER_APPLICATION = 3
 ACTIVE_GENERATION_STATES = {"generating", "regenerating_full", "regenerating_section"}
 ACTIVE_GENERATION_PROGRESS_STATES = {
@@ -79,6 +82,43 @@ BLOCKED_PLACEHOLDER_DESCRIPTION_MARKERS = (
     "access denied",
     "attention required",
 )
+JOB_KEYWORD_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9+#/-]{2,}")
+EXPERIENCE_HEADER_DATE_RE = re.compile(
+    r"\b(?:\d{4}\s*[-/]\s*(?:\d{4}|present)|present|current)\b",
+    re.I,
+)
+JD_STOPWORDS = {
+    "about",
+    "across",
+    "also",
+    "and",
+    "are",
+    "build",
+    "building",
+    "candidate",
+    "company",
+    "experience",
+    "for",
+    "from",
+    "have",
+    "help",
+    "including",
+    "into",
+    "join",
+    "looking",
+    "must",
+    "our",
+    "role",
+    "team",
+    "that",
+    "the",
+    "their",
+    "this",
+    "will",
+    "with",
+    "you",
+    "your",
+}
 
 
 class DuplicateWarningPayload(BaseModel):
@@ -181,6 +221,12 @@ class RegenerationCallbackPayload(BaseModel):
     regeneration_target: str = "full"
     generated: Optional[GenerationSuccessPayload] = None
     failure: Optional[GenerationFailurePayload] = None
+
+
+class DraftReviewFlagPayload(BaseModel):
+    section_name: str
+    text: str
+    reason: str = "job_description_only_addition"
 
 
 class ApplicationService:
@@ -1240,6 +1286,7 @@ class ApplicationService:
             "page_length": target_length,
             "aggressiveness": aggressiveness,
             "additional_instructions": additional_instructions,
+            "base_resume_id": base_resume_id,
         }
 
         updated = self.repository.update_application(
@@ -1259,6 +1306,20 @@ class ApplicationService:
         )
 
         try:
+            enqueue_started_at = perf_counter()
+            logger.info(
+                "generation_enqueue %s",
+                {
+                    "event": "enqueue_start",
+                    "workflow_kind": "generation",
+                    "user_id": user_id,
+                    "application_id": application_id,
+                    "base_resume_id": base_resume_id,
+                    "target_length": target_length,
+                    "aggressiveness": aggressiveness,
+                    "has_additional_instructions": bool(additional_instructions),
+                },
+            )
             job_id = await self.generation_job_queue.enqueue(
                 application_id=application_id,
                 user_id=user_id,
@@ -1269,6 +1330,17 @@ class ApplicationService:
                 personal_info=personal_info,
                 section_preferences=section_prefs,
                 generation_settings=generation_settings,
+            )
+            logger.info(
+                "generation_enqueue %s",
+                {
+                    "event": "enqueue_success",
+                    "workflow_kind": "generation",
+                    "user_id": user_id,
+                    "application_id": application_id,
+                    "job_id": job_id,
+                    "latency_ms": round((perf_counter() - enqueue_started_at) * 1000),
+                },
             )
             await self.progress_store.set(
                 application_id,
@@ -1281,10 +1353,29 @@ class ApplicationService:
                 ),
             )
             return self._detail_payload(updated)
-        except Exception:
+        except Exception as error:
+            logger.warning(
+                "generation_enqueue %s",
+                {
+                    "event": "enqueue_failure",
+                    "workflow_kind": "generation",
+                    "user_id": user_id,
+                    "application_id": application_id,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                },
+            )
             failed = await self._mark_generation_failure(
                 record=updated,
                 message="Generation could not be started. Try again or adjust settings.",
+                failure_details={
+                    "failure_stage": "enqueue",
+                    "terminal_error_code": "generation_failed",
+                    "error": {
+                        "error_type": type(error).__name__,
+                        "message": str(error),
+                    },
+                },
             )
             return self._detail_payload(failed)
 
@@ -1471,6 +1562,7 @@ class ApplicationService:
             "page_length": target_length,
             "aggressiveness": aggressiveness,
             "additional_instructions": additional_instructions,
+            "base_resume_id": base_resume_id,
         }
 
         updated = self.repository.update_application(
@@ -1487,6 +1579,19 @@ class ApplicationService:
         )
 
         try:
+            enqueue_started_at = perf_counter()
+            logger.info(
+                "generation_enqueue %s",
+                {
+                    "event": "enqueue_start",
+                    "workflow_kind": "regeneration_full",
+                    "user_id": user_id,
+                    "application_id": application_id,
+                    "target_length": target_length,
+                    "aggressiveness": aggressiveness,
+                    "has_additional_instructions": bool(additional_instructions),
+                },
+            )
             job_id = await self.generation_job_queue.enqueue_regeneration(
                 application_id=application_id,
                 user_id=user_id,
@@ -1500,6 +1605,17 @@ class ApplicationService:
                 generation_settings=generation_settings,
                 regeneration_target="full",
                 regeneration_instructions=additional_instructions,
+            )
+            logger.info(
+                "generation_enqueue %s",
+                {
+                    "event": "enqueue_success",
+                    "workflow_kind": "regeneration_full",
+                    "user_id": user_id,
+                    "application_id": application_id,
+                    "job_id": job_id,
+                    "latency_ms": round((perf_counter() - enqueue_started_at) * 1000),
+                },
             )
             if not is_admin_profile:
                 updated = self.repository.update_application(
@@ -1520,10 +1636,29 @@ class ApplicationService:
                 ),
             )
             return self._detail_payload(updated)
-        except Exception:
+        except Exception as error:
+            logger.warning(
+                "generation_enqueue %s",
+                {
+                    "event": "enqueue_failure",
+                    "workflow_kind": "regeneration_full",
+                    "user_id": user_id,
+                    "application_id": application_id,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                },
+            )
             failed = await self._mark_generation_failure(
                 record=updated,
                 message="Full regeneration could not be started. Try again.",
+                failure_details={
+                    "failure_stage": "enqueue",
+                    "terminal_error_code": "regeneration_failed",
+                    "error": {
+                        "error_type": type(error).__name__,
+                        "message": str(error),
+                    },
+                },
                 failure_reason="regeneration_failed",
             )
             return self._detail_payload(failed)
@@ -1569,7 +1704,10 @@ class ApplicationService:
         personal_info = self._build_personal_info(profile)
 
         section_prefs = self._build_section_preferences(profile)
-        generation_settings = draft.generation_params
+        generation_settings = {
+            **draft.generation_params,
+            "base_resume_id": base_resume_id,
+        }
 
         updated = self.repository.update_application(
             application_id=application_id,
@@ -1585,6 +1723,18 @@ class ApplicationService:
         )
 
         try:
+            enqueue_started_at = perf_counter()
+            logger.info(
+                "generation_enqueue %s",
+                {
+                    "event": "enqueue_start",
+                    "workflow_kind": "regeneration_section",
+                    "user_id": user_id,
+                    "application_id": application_id,
+                    "section_name": section_name,
+                    "instructions_length": len(instructions.strip()),
+                },
+            )
             job_id = await self.generation_job_queue.enqueue_regeneration(
                 application_id=application_id,
                 user_id=user_id,
@@ -1599,6 +1749,17 @@ class ApplicationService:
                 regeneration_target=section_name,
                 regeneration_instructions=instructions.strip(),
             )
+            logger.info(
+                "generation_enqueue %s",
+                {
+                    "event": "enqueue_success",
+                    "workflow_kind": "regeneration_section",
+                    "user_id": user_id,
+                    "application_id": application_id,
+                    "job_id": job_id,
+                    "latency_ms": round((perf_counter() - enqueue_started_at) * 1000),
+                },
+            )
             await self.progress_store.set(
                 application_id,
                 build_progress(
@@ -1610,10 +1771,30 @@ class ApplicationService:
                 ),
             )
             return self._detail_payload(updated)
-        except Exception:
+        except Exception as error:
+            logger.warning(
+                "generation_enqueue %s",
+                {
+                    "event": "enqueue_failure",
+                    "workflow_kind": "regeneration_section",
+                    "user_id": user_id,
+                    "application_id": application_id,
+                    "section_name": section_name,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                },
+            )
             failed = await self._mark_generation_failure(
                 record=updated,
                 message="Section regeneration could not be started. Try again.",
+                failure_details={
+                    "failure_stage": "enqueue",
+                    "terminal_error_code": "regeneration_failed",
+                    "error": {
+                        "error_type": type(error).__name__,
+                        "message": str(error),
+                    },
+                },
                 failure_reason="regeneration_failed",
             )
             return self._detail_payload(failed)
@@ -1744,6 +1925,18 @@ class ApplicationService:
     ) -> Optional[ResumeDraftRecord]:
         self._require_application(user_id=user_id, application_id=application_id)
         return self.draft_repository.fetch_draft(user_id=user_id, application_id=application_id)
+
+    async def get_draft_with_review_flags(
+        self,
+        *,
+        user_id: str,
+        application_id: str,
+    ) -> tuple[Optional[ResumeDraftRecord], list[DraftReviewFlagPayload]]:
+        record = self._require_application(user_id=user_id, application_id=application_id)
+        draft = self.draft_repository.fetch_draft(user_id=user_id, application_id=application_id)
+        if draft is None:
+            return None, []
+        return draft, self._build_job_description_addition_flags(record=record, draft=draft)
 
     async def save_draft_edit(
         self,
@@ -2280,6 +2473,92 @@ class ApplicationService:
                 )
         return ApplicationDetailPayload(application=record, duplicate_warning=warning)
 
+    @staticmethod
+    def _normalize_search_text(value: str) -> str:
+        lowered = str(value or "").lower()
+        lowered = re.sub(r"[^a-z0-9+#/ -]+", " ", lowered)
+        return re.sub(r"\s+", " ", lowered).strip()
+
+    @staticmethod
+    def _extract_job_keyword_tokens(job_description: str) -> set[str]:
+        tokens = {
+            token.lower()
+            for token in JOB_KEYWORD_TOKEN_RE.findall(job_description.lower())
+            if len(token) >= 3 and token.lower() not in JD_STOPWORDS
+        }
+        return tokens
+
+    @staticmethod
+    def _line_candidates_by_section(content_md: str) -> list[tuple[str, str]]:
+        section_name = ""
+        rows: list[tuple[str, str]] = []
+        for line in content_md.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("## "):
+                section_name = stripped[3:].strip().lower().replace(" ", "_")
+                continue
+            if section_name not in {"summary", "professional_experience", "skills"}:
+                continue
+            if section_name == "professional_experience":
+                if stripped.startswith(("-", "*", "+")):
+                    rows.append((section_name, stripped))
+                    continue
+                if "|" in stripped and EXPERIENCE_HEADER_DATE_RE.search(stripped):
+                    rows.append((section_name, stripped))
+                continue
+            rows.append((section_name, stripped))
+        return rows
+
+    def _build_job_description_addition_flags(
+        self,
+        *,
+        record: ApplicationRecord,
+        draft: ResumeDraftRecord,
+    ) -> list[DraftReviewFlagPayload]:
+        aggressiveness = str(draft.generation_params.get("aggressiveness") or "medium").lower()
+        if aggressiveness not in {"medium", "high"}:
+            return []
+
+        base_resume_id = str(draft.generation_params.get("base_resume_id") or record.base_resume_id or "").strip()
+        if not base_resume_id:
+            return []
+        base_resume = self.base_resume_repository.fetch_resume(record.user_id, base_resume_id)
+        if base_resume is None:
+            return []
+
+        sanitized_base = sanitize_resume_markdown(base_resume.content_md).sanitized_markdown
+        sanitized_draft = sanitize_resume_markdown(draft.content_md).sanitized_markdown
+        searchable_base = self._normalize_search_text(sanitized_base)
+        job_tokens = self._extract_job_keyword_tokens(record.job_description or "")
+        if not searchable_base or not job_tokens:
+            return []
+
+        flags: list[DraftReviewFlagPayload] = []
+        seen: set[tuple[str, str]] = set()
+        for section_name, line in self._line_candidates_by_section(sanitized_draft):
+            normalized_line = self._normalize_search_text(line)
+            if not normalized_line:
+                continue
+            if normalized_line in searchable_base:
+                continue
+            line_tokens = {
+                token.lower()
+                for token in JOB_KEYWORD_TOKEN_RE.findall(normalized_line)
+                if len(token) >= 3 and token.lower() not in JD_STOPWORDS
+            }
+            if not (line_tokens & job_tokens):
+                continue
+            dedupe_key = (section_name, normalized_line)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            flags.append(DraftReviewFlagPayload(section_name=section_name, text=line))
+            if len(flags) >= 20:
+                break
+        return flags
+
     def _workflow_updates(
         self,
         *,
@@ -2337,6 +2616,47 @@ class ApplicationService:
         normalized: dict[str, Any] = {"message": message}
         if not failure_details:
             return normalized
+
+        for key in ("failure_stage", "attempt_count", "terminal_error_code", "repair_model"):
+            value = failure_details.get(key)
+            if value not in (None, ""):
+                normalized[key] = value
+
+        attempts = failure_details.get("attempts")
+        if isinstance(attempts, list):
+            sanitized_attempts: list[dict[str, Any]] = []
+            for attempt in attempts:
+                if not isinstance(attempt, dict):
+                    continue
+                sanitized_attempt: dict[str, Any] = {}
+                for key in ("model", "reasoning_effort", "transport_mode", "outcome", "elapsed_ms", "retry_reason"):
+                    value = attempt.get(key)
+                    if value not in (None, ""):
+                        sanitized_attempt[key] = value
+                if sanitized_attempt:
+                    sanitized_attempts.append(sanitized_attempt)
+            if sanitized_attempts:
+                normalized["attempts"] = sanitized_attempts
+
+        error_details = failure_details.get("error")
+        if isinstance(error_details, dict):
+            sanitized_error = {
+                key: value
+                for key, value in error_details.items()
+                if key in {"error_type", "message"} and value not in (None, "")
+            }
+            if sanitized_error:
+                normalized["error"] = sanitized_error
+
+        repair_error = failure_details.get("repair_error")
+        if isinstance(repair_error, dict):
+            sanitized_repair_error = {
+                key: value
+                for key, value in repair_error.items()
+                if key in {"error_type", "message"} and value not in (None, "")
+            }
+            if sanitized_repair_error:
+                normalized["repair_error"] = sanitized_repair_error
 
         validation_errors = failure_details.get("validation_errors")
         if isinstance(validation_errors, list):

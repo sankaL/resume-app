@@ -356,10 +356,11 @@ Before initial generation, the user configures:
 
 **Aggressiveness definitions:**
 - **Low:** Light Summary cleanup, light Professional Experience rephrasing or reordering only, no role-title changes, Skills unchanged, and Education unchanged except minimal formatting cleanup
-- **Medium:** Rewrite Summary for stronger alignment, reframe or reprioritize Professional Experience with consolidation or selective pruning, explicitly allow merging two related source bullets into one stronger grounded bullet when that improves focus, allow light professional-experience title reframing only when the title stays grounded in the same core role family and seniority, reorder or regroup Skills with the strongest relevant cluster first, and keep Education fact-fixed apart from minimal formatting cleanup
-- **High:** Strongest rewrite of Summary, including bounded professional inference from demonstrated source patterns, aggressive reframing or reprioritization of Professional Experience, professional-experience role titles may be rewritten when the new title still matches the demonstrated work and preserves seniority, aggressive regrouping or pruning of Skills with the strongest relevant cluster first, and Education still fact-fixed apart from minimal formatting cleanup. This mode is an explicit user opt-in and may materially change wording, emphasis, and role framing, so the generated output must be presented with a clear warning that careful user review is required.
+- **Medium:** Rewrite Summary for stronger alignment, make Professional Experience the primary tailoring surface by materially rewriting bullet framing in the first up to 2 source-ordered roles with bullets, explicitly allow merging two related source bullets into one stronger grounded bullet when that improves focus, allow light professional-experience title reframing only when the title stays grounded in the same core role family and seniority, reorder or regroup Skills with the strongest relevant cluster first, allow job-description keyword-skill additions for fit, and keep Education fact-fixed apart from minimal formatting cleanup
+- **High:** Strongest rewrite of Summary, including bounded professional inference from demonstrated source patterns, make Professional Experience the primary tailoring surface by materially rewriting bullet framing in the first up to 2 source-ordered roles with bullets, professional-experience role titles may be rewritten when the new title still matches the demonstrated work and preserves seniority, aggressive regrouping or pruning of Skills with the strongest relevant cluster first, allow broader job-description keyword-skill additions for fit, and Education still fact-fixed apart from minimal formatting cleanup. This mode is an explicit user opt-in and may materially change wording, emphasis, role framing, and keyword coverage, so the generated output must be presented with a clear warning that careful user review is required.
 
 **Settings UI note:** The Generation Settings card may stay compact as long as the full low, medium, and high behavior breakdown remains available inline through a tooltip or popover. When High is selected, the UI must also show an inline warning that this mode can make substantial changes and should be used only when the user wants a more aggressive rewrite and will review the result carefully.
+For medium and high runs, the generated-draft view must surface flagged job-description-driven additions that are not explicit in the source resume so the user can review them before applying.
 
 **Length note:** Page count is a target, not a guarantee. The system optimizes toward the selected length; final pagination may vary slightly based on content and formatting.
 
@@ -392,9 +393,12 @@ Generation runs through LangChain calling OpenRouter, but each initial-generatio
 - Use one LLM request for initial generation and one LLM request for full regeneration
 - Use one LLM request for single-section regeneration of the selected section
 - Professional Experience must use deterministic source anchors (`title`, `company`, `date_range`, source order) extracted from the sanitized base resume
+- Professional Experience role order must stay fixed to the source anchors; reprioritization happens by changing bullet emphasis inside each anchored role
 - Low aggressiveness must keep Professional Experience titles source-exact
 - Medium may lightly reframe Professional Experience titles only when the new title stays grounded in the same core role family and seniority as the source title
 - High may retitle Professional Experience roles more freely only when the new title still matches the demonstrated work and preserves seniority
+- Medium and High may add non-factual job-description keyword/skill phrasing for role fit, but must still fail closed on invented employers, dates, institutions, credentials, awards, scope, or outcomes
+- When Professional Experience is enabled, medium and high must visibly tailor it instead of leaving the first up to 2 roles with bullets effectively source-identical while spending nearly all rewrite effort on Summary or Skills
 - Company and date range for every Professional Experience role are deterministic invariants and must remain source-exact for all aggressiveness levels
 - Apply a deterministic post-LLM normalization pass that rehydrates Professional Experience company and date values from anchors before validation or assembly; low also rehydrates source-exact titles while medium and high preserve the generated title for validation
 - The model must return a strict JSON envelope that includes ordered sections and per-section grounding snippets copied from the sanitized base resume
@@ -425,8 +429,9 @@ After generation returns structured JSON, the application validates it locally b
 - Strict JSON parsing and schema compliance
 - ATS-safe structure (no tables, no columns, no special characters)
 - Valid Markdown formatting
-- Hallucinated content not present in the base resume — specifically: invented employers, dates, credentials, or educational institutions, plus invented job titles outside the medium and high professional-experience title-rewrite allowances
+- Hallucinated factual content not present in the base resume — specifically: invented employers, dates, credentials, educational institutions, awards, or outcomes, plus invented job titles outside the medium and high professional-experience title-rewrite allowances
 - Professional Experience structure contract enforcement after deterministic normalization: same role-block count as source anchors, source-exact company and date per role, source-exact titles in low aggressiveness, medium title grounding to the same core role family and seniority, and preserved seniority in high aggressiveness
+- A medium/high-only heuristic for insufficient Professional Experience tailoring: when that section is enabled, the first up to 2 source-ordered roles with bullets must show visible bullet or title rewrites according to the aggressiveness rules, or validation fails closed
 - Document where validation is heuristic rather than semantic proof; medium title grounding is only approximated deterministically and ultimately depends on the prompt contract plus model behavior
 - Consistency across sections (no conflicting dates, duplicate entries)
 - All enabled sections are present and in the correct order

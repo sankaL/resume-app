@@ -38,43 +38,53 @@ Opus
 
 
 
-- [] The medium agressiveness doesnt seem that aggressive explore the rules and make some changes.
-- [] Suggesstion for improving ai writing from https://claude.ai/chat/628ee097-fa6f-48e3-a1e0-d0b34c2f23bc
+- [x] The medium agressiveness doesnt seem that aggressive explore the rules and make some changes.
+- [x] Suggesstion for improving ai writing from https://claude.ai/chat/628ee097-fa6f-48e3-a1e0-d0b34c2f23bc
+- [] The export dropdown is cut off on desktop mode. 
+See if I can use five point four mini extra high with reasoning instead of five point four to cost save or Or Gemini three flash with reasoning. 
+- [] Add a diff in the markdown preview and edit mode so we can see what was injected and what was changed from the base resume. When a resume is generated, I want the UI to show um in the generated section in markdown editable mode and the non-editable mode what was added in line, not separately, but in line. Is that possible? I want added content to be in a different color. Use an external library if there exists for doing diffs on markdown to markdown or text to text. No need to write your own functionality if not required. 
+    - [] Or show a toggle to do a split screen between the base resume and the generated resume so the user can see the differences. 
 
-Great question. Here are practical rules they can apply:
 
-## Break the Formula
+- [] New updates are decent but seem only the summary and the skills are being changed now. I don't see the experience bullet points and the role title being changed at all in medium or high. 
 
-**Stop starting every bullet with an action verb.** It paradoxically makes resumes sound *less* human. Real people write things like "Built and maintained..." or "Responsible for a team of 15 who..." occasionally — not every single line.
+- [] Ask Claude to come up with some rules to validate the human readable aspect and the ATS score essentially. Um come up with a prompt to score it and then I want it to run this validator after each generation and display it. Uh if it's low we can regenerate with reasons. 
 
-**Vary sentence structure.** AI loves parallel construction. Mix short punchy bullets with occasionally longer, more contextual ones.
+- [] When configs are changed after generation in the UI, it resets back to the original but I think the actual request is sent in the backend. Just on the frontend it looks like it's the same config. 
 
----
 
-## Kill the Filler Phrases
-Replace or cut these entirely:
-- "Proven ability to..." → just show the proof
-- "Leveraging expertise in..." → just say what you did with it
-- "Adept at..." → cut it
-- "Ensuring high-quality outcomes" → say what the outcome actually *was*
+Couple of issues:
+1. Turn on medium reasoning for the full generation and partial generation. Right now it's at none 
+2. somehow the aggressiveness is not adjusting to the resume at all. Maybe the controls are too tight for medium and high.
 
----
 
-## Add Specificity and Texture
-- Instead of *"reducing release defects by 10-20%"* → pick one number, name the project or context
-- Mention a specific client industry, tool version, or team challenge — real details AI tends to smooth over
-- Include one thing that *didn't* go perfectly and how they handled it — AI never does this
+fetch("http://localhost:54800/api/applications/bea5e419-2393-42a5-abee-6a98a1b75f8d", {
+  "headers": {
+    "accept": "*/*",
+    "accept-language": "en,fr;q=0.9,fr-CA;q=0.8",
+    "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxNjFjOGE5Yy0zYzFlLTQzZTEtOWEyOS05OTdhNWQ4ZWE2ODMiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzc2MzA1Njk0LCJpYXQiOjE3NzYzMDIwOTQsImVtYWlsIjoiaW52aXRlLW9ubHlAZXhhbXBsZS5jb20iLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlfSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc3NjAzMjE0N31dLCJzZXNzaW9uX2lkIjoiM2RhOGJjZmUtNzRhNC00MmFiLWFhOWUtMjZkYWM1MjAzYTVkIiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.f_l5MTLUtIbSgoH_R1EF2FDTq4cKtxT5olGSzcevNp8",
+    "content-type": "application/json",
+    "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"macOS\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site"
+  },
+  "referrer": "http://localhost:5173/",
+  "body": null,
+  "method": "GET",
+  "mode": "cors",
+  "credentials": "include"
+});
 
----
-
-## Let Some Personality In
-- Reference an opinion: *"moved the team away from Selenium toward Playwright because..."*
-- Use a casual phrase once or twice — not unprofessional, just human
-- The summary especially should sound like something they'd actually say about themselves
-
----
-
-## The Simplest Test
-Read each sentence and ask: *could this describe literally anyone in this role?* If yes, rewrite it until it could only describe **this specific person**.
-
-That's the core issue with AI resumes — they're optimized to sound impressive to everyone, which makes them distinctive to no one.
+Request URL
+http://localhost:54800/api/applications/bea5e419-2393-42a5-abee-6a98a1b75f8d
+Request Method
+GET
+Status Code
+500 Internal Server Error
+Remote Address
+[::1]:54800
+Referrer Policy
+strict-origin-when-cross-origin

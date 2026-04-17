@@ -114,6 +114,21 @@ def _is_medium_title_grounded_in_source(source_title: str, generated_title: str)
     return len(overlap) >= 2
 
 
+def is_title_rewrite_allowed(*, source_title: str, generated_title: str, aggressiveness: str) -> bool:
+    normalized_aggressiveness = normalize_text(aggressiveness or "medium")
+    if normalize_text(source_title) == normalize_text(generated_title):
+        return True
+    if normalized_aggressiveness == "low":
+        return False
+    if normalized_aggressiveness == "medium":
+        return _is_medium_title_grounded_in_source(source_title, generated_title) and _preserves_seniority(
+            source_title, generated_title
+        )
+    if normalized_aggressiveness == "high":
+        return _preserves_seniority(source_title, generated_title)
+    return False
+
+
 def _extract_professional_experience_section(content: str) -> Optional[str]:
     pattern = re.compile(
         r"(^##\s*Professional\s+Experience\s*$\n.*?)(?=^##\s|\Z)",

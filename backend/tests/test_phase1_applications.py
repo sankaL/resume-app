@@ -507,6 +507,213 @@ async def test_create_application_from_capture_queues_extraction_with_source_tex
 
 
 @pytest.mark.asyncio
+async def test_get_draft_with_review_flags_marks_medium_jd_only_additions():
+    service, repository, _, _, _, _, drafts = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="in_progress",
+        internal_state="resume_ready",
+    )
+    repository.update_application(
+        application_id=created.id,
+        user_id="user-1",
+        updates={
+            "base_resume_id": "resume-1",
+            "job_title": "Platform Engineer",
+            "company": "Acme",
+            "job_description": "Build backend systems with Kubernetes, Terraform, and CI/CD pipelines.",
+        },
+    )
+    service.base_resume_repository.add_resume(  # type: ignore[attr-defined]
+        user_id="user-1",
+        resume_id="resume-1",
+        content_md=(
+            "## Summary\nBuilt backend services.\n\n"
+            "## Skills\n- Python\n- FastAPI\n"
+        ),
+    )
+    drafts.upsert_draft(
+        application_id=created.id,
+        user_id="user-1",
+        content_md=(
+            "## Summary\nBuilt backend services with Kubernetes and Terraform.\n\n"
+            "## Skills\n- Python\n- FastAPI\n- Kubernetes\n"
+        ),
+        generation_params={"page_length": "1_page", "aggressiveness": "medium"},
+        sections_snapshot={
+            "enabled_sections": ["summary", "professional_experience", "education", "skills"],
+            "section_order": ["summary", "professional_experience", "education", "skills"],
+        },
+    )
+
+    _draft, review_flags = await service.get_draft_with_review_flags(
+        user_id="user-1",
+        application_id=created.id,
+    )
+
+    assert len(review_flags) >= 1
+    assert review_flags[0].reason == "job_description_only_addition"
+    assert any(flag.section_name in {"summary", "skills"} for flag in review_flags)
+
+
+@pytest.mark.asyncio
+async def test_get_draft_with_review_flags_marks_professional_experience_title_rewrites():
+    service, repository, _, _, _, _, drafts = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="in_progress",
+        internal_state="resume_ready",
+    )
+    repository.update_application(
+        application_id=created.id,
+        user_id="user-1",
+        updates={
+            "base_resume_id": "resume-1",
+            "job_title": "Platform Engineer",
+            "company": "Acme",
+            "job_description": "Platform Engineer role focused on Kubernetes, Terraform, and CI/CD pipelines.",
+        },
+    )
+    service.base_resume_repository.add_resume(  # type: ignore[attr-defined]
+        user_id="user-1",
+        resume_id="resume-1",
+        content_md=(
+            "## Professional Experience\n"
+            "Backend Engineer | Acme | 2022 - Present\n"
+            "- Built backend services.\n"
+        ),
+    )
+    drafts.upsert_draft(
+        application_id=created.id,
+        user_id="user-1",
+        content_md=(
+            "## Professional Experience\n"
+            "Platform Engineer | Acme | 2022 - Present\n"
+            "- Built backend services with Kubernetes and Terraform.\n"
+        ),
+        generation_params={"page_length": "1_page", "aggressiveness": "high"},
+        sections_snapshot={
+            "enabled_sections": ["summary", "professional_experience", "education", "skills"],
+            "section_order": ["summary", "professional_experience", "education", "skills"],
+        },
+    )
+
+    _draft, review_flags = await service.get_draft_with_review_flags(
+        user_id="user-1",
+        application_id=created.id,
+    )
+
+    assert any(
+        flag.section_name == "professional_experience"
+        and "Platform Engineer | Acme | 2022 - Present" in flag.text
+        for flag in review_flags
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_draft_with_review_flags_returns_empty_for_low_aggressiveness():
+    service, repository, _, _, _, _, drafts = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="in_progress",
+        internal_state="resume_ready",
+    )
+    repository.update_application(
+        application_id=created.id,
+        user_id="user-1",
+        updates={
+            "base_resume_id": "resume-1",
+            "job_title": "Platform Engineer",
+            "company": "Acme",
+            "job_description": "Build backend systems with Kubernetes and Terraform.",
+        },
+    )
+    service.base_resume_repository.add_resume(  # type: ignore[attr-defined]
+        user_id="user-1",
+        resume_id="resume-1",
+        content_md=(
+            "## Summary\nBuilt backend services.\n\n"
+            "## Skills\n- Python\n- FastAPI\n"
+        ),
+    )
+    drafts.upsert_draft(
+        application_id=created.id,
+        user_id="user-1",
+        content_md=(
+            "## Summary\nBuilt backend services with Kubernetes and Terraform.\n\n"
+            "## Skills\n- Python\n- FastAPI\n- Kubernetes\n"
+        ),
+        generation_params={"page_length": "1_page", "aggressiveness": "low"},
+        sections_snapshot={
+            "enabled_sections": ["summary", "professional_experience", "education", "skills"],
+            "section_order": ["summary", "professional_experience", "education", "skills"],
+        },
+    )
+
+    _draft, review_flags = await service.get_draft_with_review_flags(
+        user_id="user-1",
+        application_id=created.id,
+    )
+
+    assert review_flags == []
+
+
+@pytest.mark.asyncio
+async def test_get_draft_with_review_flags_uses_generation_base_resume_id_when_selection_changes():
+    service, repository, _, _, _, _, drafts = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/1",
+        visible_status="in_progress",
+        internal_state="resume_ready",
+    )
+    repository.update_application(
+        application_id=created.id,
+        user_id="user-1",
+        updates={
+            "base_resume_id": "resume-2",
+            "job_title": "Platform Engineer",
+            "company": "Acme",
+            "job_description": "Build backend systems with Kubernetes and Terraform.",
+        },
+    )
+    service.base_resume_repository.add_resume(  # type: ignore[attr-defined]
+        user_id="user-1",
+        resume_id="resume-1",
+        content_md="## Summary\nBuilt backend services with Kubernetes.\n",
+    )
+    service.base_resume_repository.add_resume(  # type: ignore[attr-defined]
+        user_id="user-1",
+        resume_id="resume-2",
+        content_md="## Summary\nBuilt backend services.\n",
+    )
+    drafts.upsert_draft(
+        application_id=created.id,
+        user_id="user-1",
+        content_md="## Summary\nBuilt backend services with Kubernetes.\n",
+        generation_params={
+            "page_length": "1_page",
+            "aggressiveness": "medium",
+            "base_resume_id": "resume-1",
+        },
+        sections_snapshot={
+            "enabled_sections": ["summary", "professional_experience", "education", "skills"],
+            "section_order": ["summary", "professional_experience", "education", "skills"],
+        },
+    )
+
+    _draft, review_flags = await service.get_draft_with_review_flags(
+        user_id="user-1",
+        application_id=created.id,
+    )
+
+    assert review_flags == []
+
+
+@pytest.mark.asyncio
 async def test_manual_entry_with_duplicate_candidate_marks_duplicate_review_required():
     service, repository, notifications, _, _, _, _ = build_service()
     existing = repository.create_application(
@@ -2118,6 +2325,38 @@ async def test_cancelled_extraction_ignores_stale_success_callback():
 
 
 @pytest.mark.asyncio
+async def test_generation_timeout_profiles_match_prd_contract():
+    service, repository, _, _, _, _, _ = build_service()
+
+    generation_record = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/full",
+        visible_status="draft",
+        internal_state="generating",
+    )
+    section_regen_record = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/section",
+        visible_status="draft",
+        internal_state="regenerating_section",
+    )
+
+    assert service._generation_timeout_seconds(generation_record, None) == (240, 240)
+    assert service._generation_timeout_seconds(
+        section_regen_record,
+        ProgressRecord(
+            job_id="job-section",
+            workflow_kind="regeneration_section",
+            state="regenerating_section",
+            message="Section regeneration is running.",
+            percent_complete=50,
+            created_at="2026-04-14T12:00:00+00:00",
+            updated_at="2026-04-14T12:00:05+00:00",
+        ),
+    ) == (120, 120)
+
+
+@pytest.mark.asyncio
 async def test_stuck_generation_recovery_marks_timeout_and_terminal_progress():
     service, repository, _, progress_store, _, _, _ = build_service()
     created = repository.create_application(
@@ -2631,3 +2870,62 @@ def test_application_repository_wraps_jsonb_update_values():
 
     assert isinstance(wrapped, Jsonb)
     assert repository._cast_placeholder("generation_failure_details").as_string(None) == "%s::jsonb"
+
+
+def test_normalize_generation_failure_details_preserves_sanitized_attempt_diagnostics():
+    service, _, _, _, _, _, _ = build_service()
+
+    normalized = service._normalize_generation_failure_details(
+        message="Resume validation failed.",
+        failure_details={
+            "failure_stage": "validation",
+            "attempt_count": 2,
+            "terminal_error_code": "validation_failed",
+            "attempts": [
+                {
+                    "model": "openai/gpt-5-mini",
+                    "reasoning_effort": "medium",
+                    "transport_mode": "structured",
+                    "outcome": "structured_failed",
+                    "elapsed_ms": 1200,
+                    "retry_reason": "structured_failed",
+                    "raw_payload": "should not survive",
+                },
+                {
+                    "model": "google/gemini-flash-1.5",
+                    "reasoning_effort": "medium",
+                    "transport_mode": "json",
+                    "outcome": "success",
+                    "elapsed_ms": 980,
+                },
+            ],
+            "repair_error": {"error_type": "RuntimeError", "message": "provider failed", "payload": "drop-me"},
+            "validation_errors": ["summary: Missing evidence"],
+        },
+    )
+
+    assert normalized == {
+        "message": "Resume validation failed.",
+        "failure_stage": "validation",
+        "attempt_count": 2,
+        "terminal_error_code": "validation_failed",
+        "attempts": [
+            {
+                "model": "openai/gpt-5-mini",
+                "reasoning_effort": "medium",
+                "transport_mode": "structured",
+                "outcome": "structured_failed",
+                "elapsed_ms": 1200,
+                "retry_reason": "structured_failed",
+            },
+            {
+                "model": "google/gemini-flash-1.5",
+                "reasoning_effort": "medium",
+                "transport_mode": "json",
+                "outcome": "success",
+                "elapsed_ms": 980,
+            },
+        ],
+        "repair_error": {"error_type": "RuntimeError", "message": "provider failed"},
+        "validation_errors": ["summary: Missing evidence"],
+    }
