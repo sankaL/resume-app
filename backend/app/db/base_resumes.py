@@ -151,6 +151,16 @@ class BaseResumeRepository:
         return BaseResumeRecord.model_validate(row)
 
     def delete_resume(self, resume_id: str, user_id: str) -> bool:
+        clear_profile_default_query = """
+        update public.profiles
+        set default_base_resume_id = null
+        where id = %s and default_base_resume_id = %s
+        """
+        clear_application_references_query = """
+        update public.applications
+        set base_resume_id = null
+        where user_id = %s and base_resume_id = %s
+        """
         query = """
         delete from public.base_resumes
         where id = %s and user_id = %s
@@ -158,6 +168,8 @@ class BaseResumeRepository:
         """
 
         with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(clear_profile_default_query, (user_id, resume_id))
+            cursor.execute(clear_application_references_query, (user_id, resume_id))
             cursor.execute(query, (resume_id, user_id))
             row = cursor.fetchone()
             connection.commit()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Optional
 
+import psycopg
 from fastapi import Depends
 from pydantic import BaseModel
 
@@ -124,7 +125,15 @@ class BaseResumeService:
                     "Use force=true to delete anyway."
                 )
 
-        self.repo.delete_resume(resume_id, user_id)
+        try:
+            deleted = self.repo.delete_resume(resume_id, user_id)
+        except psycopg.errors.ForeignKeyViolation as error:
+            raise PermissionError(
+                "This resume cannot be deleted because related records still reference it."
+            ) from error
+
+        if not deleted:
+            raise LookupError("Base resume not found.")
 
     def set_default(self, user_id: str, resume_id: str) -> ResumeWithDefaultFlag:
         # Verify resume exists and belongs to user
