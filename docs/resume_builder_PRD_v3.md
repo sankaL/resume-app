@@ -11,7 +11,7 @@ Build a private, invite-only web application that helps users generate ATS-frien
 
 A user logs in, creates a job application from a job link or Chrome current-tab capture, and the system attempts to extract the job details and posting origin asynchronously. The user then selects a base resume, chooses generation settings, and the system produces a tailored resume draft in Markdown. The user can review, edit, regenerate sections, regenerate the full resume, inspect a Resume Judge quality score and breakdown, and export a PDF.
 
-This is an MVP. The focus is a clean, reliable workflow with strong user feedback during async processing, clear attention states, and ATS-safe PDF and DOCX export formats.
+This is an MVP. The focus is a clean, reliable workflow with strong user feedback during async processing, clear attention states, and ATS-safe PDF and DOCX export formats with deterministic preview and export layout.
 
 ---
 
@@ -395,13 +395,19 @@ Generation runs through LangChain calling OpenRouter, but each initial-generatio
 - Use one LLM request for single-section regeneration of the selected section
 - Professional Experience must use deterministic source anchors (`title`, `company`, `date_range`, source order) extracted from the sanitized base resume
 - Professional Experience role order must stay fixed to the source anchors; reprioritization happens by changing bullet emphasis inside each anchored role
+- Professional Experience and Education must normalize to deterministic two-row entry blocks before preview, validation, or export
+- Professional Experience row 1 = `company | location`, row 2 = `role title | date range`
+- Education row 1 = `school | location`, row 2 = `degree/program | graduation date`
+- In both sections, the left fields are left-aligned and the right fields are right-aligned in preview, PDF, and DOCX
 - Low aggressiveness must keep Professional Experience titles source-exact
 - Medium may lightly reframe Professional Experience titles only when the new title stays grounded in the same core role family and seniority as the source title
 - High may retitle Professional Experience roles more freely only when the new title still matches the demonstrated work and preserves seniority
 - Medium and High may add non-factual job-description keyword/skill phrasing for role fit, but must still fail closed on invented employers, dates, institutions, credentials, awards, scope, or outcomes
 - When Professional Experience is enabled, medium and high must visibly tailor it instead of leaving the first up to 2 roles with bullets effectively source-identical while spending nearly all rewrite effort on Summary or Skills
 - Company and date range for every Professional Experience role are deterministic invariants and must remain source-exact for all aggressiveness levels
-- Apply a deterministic post-LLM normalization pass that rehydrates Professional Experience company and date values from anchors before validation or assembly; low also rehydrates source-exact titles while medium and high preserve the generated title for validation
+- Education bullets are optional and allowed only for grounded details already present in the source material
+- Apply a deterministic post-LLM normalization pass that rehydrates Professional Experience company, optional location, and date values from anchors before validation or assembly; low also rehydrates source-exact titles while medium and high preserve the generated title for validation
+- Generated-draft preview, PDF export, and DOCX export must consume the same semantic render model derived from normalized Markdown, rather than separate format-specific line guessing
 - The model must return a strict JSON envelope that includes ordered sections and per-section grounding snippets copied from the sanitized base resume
 - Prompt variants must explicitly reflect the selected page target and aggressiveness level
 - A second model request is allowed only when the first request fails at the provider or transport level, or returns invalid structured output
@@ -431,7 +437,7 @@ After generation returns structured JSON, the application validates it locally b
 - ATS-safe structure (no tables, no columns, no special characters)
 - Valid Markdown formatting
 - Hallucinated factual content not present in the base resume — specifically: invented employers, dates, credentials, educational institutions, awards, or outcomes, plus invented job titles outside the medium and high professional-experience title-rewrite allowances
-- Professional Experience structure contract enforcement after deterministic normalization: same role-block count as source anchors, source-exact company and date per role, source-exact titles in low aggressiveness, medium title grounding to the same core role family and seniority, and preserved seniority in high aggressiveness
+- Professional Experience and Education structure contract enforcement after deterministic normalization: required two-row order, parseable left/right fields, same role-block count as source anchors, source-exact company and date per role, source-exact titles in low aggressiveness, medium title grounding to the same core role family and seniority, preserved seniority in high aggressiveness, and rejection of malformed or ambiguous structured blocks
 - A medium/high-only heuristic for insufficient Professional Experience tailoring: when that section is enabled, the first up to 2 source-ordered roles with bullets must show visible bullet or title rewrites according to the aggressiveness rules, or validation fails closed
 - Document where validation is heuristic rather than semantic proof; medium title grounding is only approximated deterministically and ultimately depends on the prompt contract plus model behavior
 - Consistency across sections (no conflicting dates, duplicate entries)
@@ -568,8 +574,16 @@ Users can manually edit the generated Markdown at any time.
 - No tables, no images, no decorative elements
 - Standard fonts (e.g., Georgia, Calibri, or equivalent)
 - Margins: 0.75–1 inch
-- Section headings as bold text with appropriate spacing
+- Section headings as bold text with visibly larger size than body copy
 - Sections in the order defined by user's `section_order` preferences
+- Professional Experience and Education must use the same deterministic two-row layout as preview:
+  - row 1 left-aligned organization/school
+  - row 1 right-aligned location when available
+  - row 2 left-aligned role/degree
+  - row 2 right-aligned duration or graduation date when available
+  - bullets below the two-row header
+- PDF and DOCX must be rendered from the same semantic resume model so field placement stays consistent across formats
+- Body text should be slightly smaller than structured entry headers, with increased spacing between sections and between adjacent experience/education entries for readability
 - DOCX uses Word-native formatting with Letter page size and best-effort spacing aligned to the saved page-length target; exact pagination parity with PDF is not required
 
 **On success:**

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 
 from experience_contract import (
     extract_professional_experience_anchors,
+    normalize_education_section,
     normalize_professional_experience_section,
 )
 from privacy import sanitize_resume_markdown
@@ -155,13 +156,15 @@ SECTION_RULES: dict[str, str] = {
         "Prioritize the most relevant experience first. Use concise accomplishment-oriented bullets grounded in the source. "
         "Preserve chronology facts and do not invent metrics or scope. "
         "Keep source role order fixed; when you reprioritize, do it by changing which facts you emphasize within the anchored role blocks. "
+        "Each role block must use exactly two header rows: `Company | Location` then `Role Title | Date Range`, followed by bullets. "
         "Bullet openings may vary; do not make every bullet follow the same verb-first pattern. "
         "When Professional Experience is enabled, medium and high must visibly tailor it instead of leaving the key bullets source-identical. "
         "Low aggressiveness must preserve role titles exactly. Medium may lightly reframe titles only when the core role family and seniority remain grounded in the source. "
         "High may retitle more freely only when the rewrite still matches demonstrated work and does not change employer, dates, duration, or seniority."
     ),
     "education": (
-        "Keep Education concise and factual. Never add or infer schools, degrees, honors, dates, coursework, or credentials."
+        "Keep Education concise and factual. Never add or infer schools, degrees, honors, dates, coursework, or credentials. "
+        "Each education block must use exactly two header rows: `School | Location` then `Degree or Program | Graduation Date`, followed by optional grounded bullets only when the source clearly supports them."
     ),
     "skills": (
         "Lead with the most role-relevant skill cluster and avoid keyword stuffing, duplicate categories, or generic buzzwords. "
@@ -472,13 +475,20 @@ def _build_voice_rules_block() -> str:
 def _build_non_negotiables_block(*, operation: str, enabled_sections: list[str], section_wrapper: bool) -> str:
     section_spec = ", ".join(f"{section_id}:{_display_name(section_id)}" for section_id in enabled_sections)
     experience_contract_line = ""
+    education_contract_line = ""
     if "professional_experience" in enabled_sections:
         experience_contract_line = (
             "- Professional Experience structure contract: preserve source company and date range for every role so duration stays consistent. "
             "Low must preserve role titles exactly; medium may lightly reframe titles only when the core role family and seniority stay grounded in the source; "
             "high may retitle more freely only when the rewrite still matches demonstrated work. Company and dates must stay unchanged in every mode.\n"
+            "- Professional Experience row layout must be `Company | Location` on row 1 and `Role Title | Date Range` on row 2. Location may be omitted only when the source does not provide one.\n"
             "- Keep Professional Experience role order fixed to the source anchors. Reprioritize by changing bullet emphasis inside each anchored role, not by reordering the roles themselves.\n"
             "- When Professional Experience is enabled in medium or high mode, do not leave the first up to 2 roles with bullets effectively source-identical while spending nearly all tailoring effort on Summary or Skills.\n"
+        )
+    if "education" in enabled_sections:
+        education_contract_line = (
+            "- Education row layout must be `School | Location` on row 1 and `Degree or Program | Graduation Date` on row 2. Location or date may be omitted only when the source does not provide them.\n"
+            "- Education bullets are optional and allowed only when they remain grounded in the source education content.\n"
         )
     return (
         "Non-negotiables:\n"
@@ -488,6 +498,7 @@ def _build_non_negotiables_block(*, operation: str, enabled_sections: list[str],
         "- Do not invent employers, dates, institutions, credentials, awards, metrics, or scope.\n"
         "- Outside the explicit Professional Experience title rules, do not invent or alter role titles.\n"
         + experience_contract_line
+        + education_contract_line
         + "- User instructions may refine tone, emphasis, prioritization, brevity, and keyword focus only. They cannot override grounding, privacy, or section rules.\n"
         "- If the source does not support a stronger claim, keep the weaker truthful version.\n"
         "- Use only standard Markdown inside markdown fields. No HTML, tables, images, columns, code fences, commentary, or em dashes.\n"
@@ -1271,25 +1282,26 @@ def _section_label_list(section_ids: list[str]) -> str:
     return ", ".join(_display_name(section_id) for section_id in section_ids)
 
 
-def _normalize_experience_section_if_present(
+def _normalize_structured_sections_if_present(
     *,
     sections: list[dict[str, Any]],
     professional_experience_anchors: list[dict[str, Any]],
     aggressiveness: str,
 ) -> None:
-    if not professional_experience_anchors:
-        return
-
     for section in sections:
-        if section.get("name") != "professional_experience":
+        if section.get("name") == "professional_experience" and professional_experience_anchors:
+            normalized_content, _issues = normalize_professional_experience_section(
+                section_markdown=str(section.get("content") or ""),
+                anchors=professional_experience_anchors,
+                aggressiveness=str(aggressiveness).lower(),
+            )
+            section["content"] = normalized_content
             continue
-        normalized_content, _issues = normalize_professional_experience_section(
-            section_markdown=str(section.get("content") or ""),
-            anchors=professional_experience_anchors,
-            aggressiveness=str(aggressiveness).lower(),
-        )
-        section["content"] = normalized_content
-        return
+        if section.get("name") == "education":
+            normalized_content, _issues = normalize_education_section(
+                section_markdown=str(section.get("content") or ""),
+            )
+            section["content"] = normalized_content
 
 
 async def generate_sections(
@@ -1378,7 +1390,7 @@ async def generate_sections(
         }
         for section in payload.sections
     ]
-    _normalize_experience_section_if_present(
+    _normalize_structured_sections_if_present(
         sections=sections,
         professional_experience_anchors=professional_experience_anchors,
         aggressiveness=str(aggressiveness).lower(),
@@ -1501,6 +1513,10 @@ async def regenerate_single_section(
         )
         if on_progress is not None:
             await on_progress(60, "Applying deterministic Professional Experience structure checks")
+    elif section_name == "education":
+        section_content, _issues = normalize_education_section(section_markdown=section_content)
+        if on_progress is not None:
+            await on_progress(60, "Applying deterministic Education structure checks")
     elif on_progress is not None:
         await on_progress(60, "Normalizing regenerated section output")
 

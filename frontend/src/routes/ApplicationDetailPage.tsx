@@ -20,6 +20,7 @@ import { useToast } from "@/components/ui/toast";
 import { StatusBadge } from "@/components/StatusBadge";
 import { AppliedToggleButton } from "@/components/AppliedToggleButton";
 import { MarkdownPreview } from "@/components/MarkdownPreview";
+import { ResumeRenderPreview } from "@/components/ResumeRenderPreview";
 import { GenerationProgress, ResumeSkeleton } from "@/components/ui/generation-progress";
 import { SkeletonCard } from "@/components/ui/skeleton";
 import {
@@ -81,6 +82,7 @@ const ACTIVE_GENERATION_PROGRESS_STATES = [
   "regenerating_full",
   "regenerating_section",
 ];
+const EXTRACTION_FAKE_PROGRESS_CAP = 88;
 const EXTRACTION_DETAIL_REFRESH_FALLBACK_MESSAGE =
   "Extraction finished, but results could not be synchronized. Retry extraction or complete manual entry.";
 const RESUME_JUDGE_DIMENSION_LABELS: Record<string, string> = {
@@ -91,6 +93,13 @@ const RESUME_JUDGE_DIMENSION_LABELS: Record<string, string> = {
   ats_safety_and_formatting: "ATS Safety",
   length_and_density: "Length",
 };
+
+function extractionFakeStep(percent: number) {
+  if (percent < 30) return 2.0;
+  if (percent < 55) return 1.2;
+  if (percent < 75) return 0.7;
+  return 0.3;
+}
 
 function getResumeJudgeDimensionEntries(result: ApplicationDetail["resume_judge_result"]) {
   if (!result?.dimension_scores) return [];
@@ -369,6 +378,7 @@ export function ApplicationDetailPage() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
   const [progress, setProgress] = useState<ExtractionProgress | null>(null);
+  const [extractionDisplayPercent, setExtractionDisplayPercent] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState("");
   const [notesState, setNotesState] = useState<"idle" | "saving" | "saved">("idle");
@@ -420,6 +430,8 @@ export function ApplicationDetailPage() {
   const [compareBaselineError, setCompareBaselineError] = useState<string | null>(null);
   const lastHandledExtractionProgressRef = useRef<string | null>(null);
   const lastHandledGenerationProgressRef = useRef<string | null>(null);
+  const lastDraftSyncDetailRef = useRef<string | null>(null);
+  const previousDetailRef = useRef<ApplicationDetail | null>(null);
   const leftColumnRef = useRef<HTMLDivElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const regenMenuRef = useRef<HTMLDivElement>(null);
@@ -432,21 +444,22 @@ export function ApplicationDetailPage() {
       detail &&
       (EXTRACTION_POLL_STATES.includes(detail.internal_state) || isGenerationWorkflowActive(detail) || resumeJudgePending),
   );
+  const { isStale: isApplicationStreamStale } = useApplicationEventStream(applicationId, shouldWatchApplication);
   const detailQuery = useApplicationDetailQuery(applicationId, {
-    refetchInterval: shouldWatchApplication ? 5000 : false,
+    refetchInterval: shouldWatchApplication && isApplicationStreamStale ? 5000 : false,
   });
   const shouldLoadDraft = Boolean(applicationId);
   const draftQuery = useApplicationDraftQuery(applicationId, shouldLoadDraft);
   const shouldPollProgress = Boolean(
     applicationId &&
       detail &&
-      (EXTRACTION_POLL_STATES.includes(detail.internal_state) || isGenerationWorkflowActive(detail)),
+      (EXTRACTION_POLL_STATES.includes(detail.internal_state) || isGenerationWorkflowActive(detail)) &&
+      isApplicationStreamStale,
   );
   const progressQuery = useApplicationProgressQuery(applicationId, {
     enabled: shouldPollProgress,
     refetchInterval: shouldPollProgress ? 5000 : false,
   });
-  useApplicationEventStream(applicationId, shouldWatchApplication);
   const extractionStates = ["extraction_pending", "extracting", "manual_entry_required", "duplicate_review_required"];
   const baseResumesQuery = useBaseResumesQuery(Boolean(detail && !extractionStates.includes(detail.internal_state)));
 
@@ -557,7 +570,10 @@ export function ApplicationDetailPage() {
       setShowOptimisticProgress(false);
     }
     if (options?.refreshShell) {
-      void invalidateApplicationQueries(queryClient, response.id);
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.applications }),
+      ]);
     }
   }
 
@@ -635,6 +651,36 @@ export function ApplicationDetailPage() {
   }, [detailQuery.data]);
 
   useEffect(() => {
+    if (!applicationId || !detail) {
+      previousDetailRef.current = detail;
+      return;
+    }
+
+    const previousDetail = previousDetailRef.current;
+    previousDetailRef.current = detail;
+
+    const completedGeneration = detail.internal_state === "resume_ready" && detail.failure_reason === null;
+    const completedGenerationFromActiveState = Boolean(
+      previousDetail && isGenerationWorkflowActive(previousDetail) && completedGeneration,
+    );
+    const draftMissingOrStale =
+      completedGeneration &&
+      draft !== undefined &&
+      (draft === null || draft.updated_at < detail.updated_at);
+    if (!completedGenerationFromActiveState && !draftMissingOrStale) {
+      return;
+    }
+
+    const syncKey = `${detail.id}:${detail.updated_at}`;
+    if (lastDraftSyncDetailRef.current === syncKey) {
+      return;
+    }
+    lastDraftSyncDetailRef.current = syncKey;
+
+    void invalidateApplicationDraftQueries(queryClient, applicationId);
+  }, [applicationId, detail, draft, queryClient]);
+
+  useEffect(() => {
     if (!(detailQuery.error instanceof Error)) return;
     setError(detailQuery.error.message);
   }, [detailQuery.error]);
@@ -693,6 +739,45 @@ export function ApplicationDetailPage() {
         }
       });
   }, [applicationId, detail, detailQuery, progressQuery.data]);
+
+  useEffect(() => {
+    if (!progress || !EXTRACTION_POLL_STATES.includes(progress.state)) {
+      setExtractionDisplayPercent(0);
+      return;
+    }
+    setExtractionDisplayPercent(progress.percent_complete);
+  }, [progress?.job_id, progress?.state, progress?.workflow_kind]);
+
+  useEffect(() => {
+    if (!progress || !EXTRACTION_POLL_STATES.includes(progress.state)) {
+      return;
+    }
+    if (progress.completed_at || progress.terminal_error_code || progress.percent_complete >= 100) {
+      setExtractionDisplayPercent(progress.percent_complete);
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setExtractionDisplayPercent((current) => {
+        const floor = Math.max(current, progress.percent_complete);
+        if (floor >= EXTRACTION_FAKE_PROGRESS_CAP) {
+          return floor;
+        }
+        return Math.min(
+          EXTRACTION_FAKE_PROGRESS_CAP,
+          Number((floor + extractionFakeStep(floor)).toFixed(1)),
+        );
+      });
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [
+    progress?.completed_at,
+    progress?.job_id,
+    progress?.percent_complete,
+    progress?.state,
+    progress?.terminal_error_code,
+  ]);
 
   useEffect(() => {
     if (!applicationId || !detail || !progressQuery.data) return;
@@ -1199,6 +1284,9 @@ export function ApplicationDetailPage() {
     detail && !["extraction_pending", "extracting", "manual_entry_required"].includes(detail.internal_state);
   const generationActive = isGenerationWorkflowActive(detail);
   const extractionActive = detail ? EXTRACTION_POLL_STATES.includes(detail.internal_state) : false;
+  const extractionPercent = progress
+    ? Math.min(100, Math.max(progress.percent_complete, extractionDisplayPercent))
+    : 0;
   const deleteBlocked = detail ? ACTIVE_GENERATION_STATES.includes(detail.internal_state) : false;
   const workspaceCardClass = "flex min-h-[32rem] flex-col overflow-hidden";
   const workspaceCardStyle = leftColumnHeight ? { height: `${leftColumnHeight}px` } : undefined;
@@ -1636,7 +1724,11 @@ export function ApplicationDetailPage() {
           </div>
         ) : (
           <div className={resumePreviewSurfaceClass}>
-            <MarkdownPreview content={draft?.content_md ?? ""} className="resume-preview-markdown" />
+            {draft?.render_model ? (
+              <ResumeRenderPreview model={draft.render_model} className="resume-preview-markdown" />
+            ) : (
+              <MarkdownPreview content={draft?.content_md ?? ""} className="resume-preview-markdown" />
+            )}
           </div>
         )}
       </Card>
@@ -1789,7 +1881,7 @@ export function ApplicationDetailPage() {
             <Card variant="success" density="compact" className="p-4">
               <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--color-spruce)" }}>Extraction Progress</h3>
               <div className="mt-3 h-2 overflow-hidden rounded-full" style={{ background: "var(--color-spruce-10)" }}>
-                <div className="h-full rounded-full transition-all" style={{ width: `${progress.percent_complete}%`, background: "var(--color-spruce)" }} />
+                <div className="h-full rounded-full transition-all" style={{ width: `${extractionPercent}%`, background: "var(--color-spruce)" }} />
               </div>
               <p className="mt-2 text-sm" style={{ color: "var(--color-ink)" }}>{progress.message}</p>
             </Card>

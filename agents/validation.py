@@ -9,6 +9,7 @@ from experience_contract import (
     extract_generated_experience_blocks,
     is_title_rewrite_allowed,
     normalize_text,
+    validate_education_contract,
     validate_professional_experience_contract,
 )
 from privacy import EMAIL_RE, PHONE_RE, URL_RE, sanitize_resume_markdown
@@ -517,6 +518,23 @@ def _check_professional_experience_structure(
     return errors
 
 
+def _check_education_structure(*, generated_sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    for section in generated_sections:
+        if section.get("name") != "education":
+            continue
+        contract_errors = validate_education_contract(section_markdown=str(section.get("content") or ""))
+        for detail in contract_errors:
+            errors.append(
+                {
+                    "type": "education_structure_violation",
+                    "section": "education",
+                    "detail": detail,
+                }
+            )
+    return errors
+
+
 def _check_professional_experience_tailoring(
     *,
     generated_sections: list[dict[str, Any]],
@@ -701,6 +719,7 @@ async def validate_resume(
             professional_experience_anchors=professional_experience_anchors,
         )
     )
+    all_errors.extend(_check_education_structure(generated_sections=generated_sections))
     all_errors.extend(
         _check_professional_experience_tailoring(
             generated_sections=generated_sections,

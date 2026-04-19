@@ -22,6 +22,15 @@ const STAGE_MESSAGES = [
   "Running quality validation...",
 ];
 
+const GENERATION_FAKE_PROGRESS_CAP = 94;
+
+function generationFakeStep(percent: number) {
+  if (percent < 30) return 1.9;
+  if (percent < 55) return 1.25;
+  if (percent < 75) return 0.75;
+  return 0.35;
+}
+
 export function GenerationProgress({
   progress,
   isOptimistic,
@@ -31,6 +40,14 @@ export function GenerationProgress({
 }: GenerationProgressProps) {
   const [stageIndex, setStageIndex] = useState(0);
   const [elapsed, setElapsed] = useState(0);
+  const defaultPercent = isOptimistic && !progress ? 5 : (progress?.percent_complete ?? 10);
+  const [displayPercent, setDisplayPercent] = useState(defaultPercent);
+  const sessionKey = isActive
+    ? `${progress?.workflow_kind ?? "optimistic"}:${progress?.job_id ?? "optimistic"}`
+    : "inactive";
+  const isTerminalProgress = Boolean(
+    progress?.completed_at || progress?.terminal_error_code || defaultPercent >= 100,
+  );
 
   // Rotate stage messages every 5 seconds when no real progress message
   useEffect(() => {
@@ -42,6 +59,22 @@ export function GenerationProgress({
 
     return () => clearInterval(interval);
   }, [isOptimistic, progress?.message]);
+
+  useEffect(() => {
+    if (!isActive) {
+      setDisplayPercent(defaultPercent);
+      return;
+    }
+    setDisplayPercent((current) => Math.max(current, defaultPercent));
+  }, [defaultPercent, isActive]);
+
+  useEffect(() => {
+    if (!isActive) {
+      return;
+    }
+    setElapsed(0);
+    setDisplayPercent(defaultPercent);
+  }, [defaultPercent, isActive, sessionKey]);
 
   // Elapsed time counter
   useEffect(() => {
@@ -57,13 +90,33 @@ export function GenerationProgress({
     return () => clearInterval(interval);
   }, [isActive]);
 
+  useEffect(() => {
+    if (!isActive || isTerminalProgress) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setDisplayPercent((current) => {
+        const floor = Math.max(current, defaultPercent);
+        if (floor >= GENERATION_FAKE_PROGRESS_CAP) {
+          return floor;
+        }
+        return Math.min(
+          GENERATION_FAKE_PROGRESS_CAP,
+          Number((floor + generationFakeStep(floor)).toFixed(1)),
+        );
+      });
+    }, 1200);
+
+    return () => window.clearInterval(interval);
+  }, [defaultPercent, isActive, isTerminalProgress, sessionKey]);
+
   const displayMessage =
     isOptimistic && !progress
       ? STAGE_MESSAGES[stageIndex]
       : progress?.message ?? STAGE_MESSAGES[stageIndex];
 
-  const percentComplete =
-    isOptimistic && !progress ? 5 : (progress?.percent_complete ?? 10);
+  const percentComplete = Math.min(100, Math.max(displayPercent, defaultPercent));
 
   const minutes = Math.floor(elapsed / 60);
   const seconds = elapsed % 60;

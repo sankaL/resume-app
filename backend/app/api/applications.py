@@ -22,6 +22,7 @@ from app.services.application_manager import (
     SourceCapturePayload,
     get_application_service,
 )
+from app.services.resume_render import build_render_document
 from app.services.progress import ProgressRecord, now_iso
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
@@ -368,6 +369,9 @@ class ResumeDraftResponse(BaseModel):
     generation_params: dict[str, Any]
     sections_snapshot: dict[str, Any]
     review_flags: list[dict[str, str]] = Field(default_factory=list)
+    render_contract_version: Optional[str] = None
+    render_model: Optional[dict[str, Any]] = None
+    render_error: Optional[str] = None
     last_generated_at: str
     last_exported_at: Optional[str]
     updated_at: str
@@ -450,6 +454,24 @@ def _map_service_error(error: Exception) -> HTTPException:
 
 def _format_sse_event(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+def _build_resume_draft_response_payload(
+    draft_payload: dict[str, Any],
+    *,
+    review_flags: Optional[list[dict[str, str]]] = None,
+) -> dict[str, Any]:
+    render_result = build_render_document(str(draft_payload.get("content_md") or ""))
+    payload = {
+        **draft_payload,
+        "review_flags": review_flags or [],
+        "render_contract_version": (
+            render_result.document.render_contract_version if render_result.document is not None else None
+        ),
+        "render_model": render_result.document.to_payload() if render_result.document is not None else None,
+        "render_error": render_result.error,
+    }
+    return payload
 
 
 @router.get("", response_model=list[ApplicationSummary])
@@ -750,10 +772,10 @@ async def get_draft(
         )
         if draft is None:
             return None
-        payload = {
-            **draft.model_dump(exclude={"user_id"}),
-            "review_flags": [flag.model_dump() for flag in review_flags],
-        }
+        payload = _build_resume_draft_response_payload(
+            draft.model_dump(exclude={"user_id"}),
+            review_flags=[flag.model_dump() for flag in review_flags],
+        )
         return ResumeDraftResponse.model_validate(payload)
     except Exception as error:
         raise _map_service_error(error) from error
@@ -950,7 +972,9 @@ async def save_draft(
             application_id=application_id,
             content=request.content,
         )
-        return ResumeDraftResponse.model_validate(draft.model_dump(exclude={"user_id"}))
+        return ResumeDraftResponse.model_validate(
+            _build_resume_draft_response_payload(draft.model_dump(exclude={"user_id"}))
+        )
     except Exception as error:
         raise _map_service_error(error) from error
 

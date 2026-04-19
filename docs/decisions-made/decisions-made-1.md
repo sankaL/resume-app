@@ -1,5 +1,17 @@
 # Decisions Made
 
+## 2026-04-19 13:30:00 EDT — Use one semantic render model to normalize and render Experience and Education across preview, PDF, and DOCX
+
+- Status: Accepted
+- Context: Generated drafts, manual edits, and export formatting were allowing layout drift in `Professional Experience` and `Education`. The product needed consistent placement for organization, role or degree, location, date, and bullets across the in-app preview and both export formats, while still preserving Markdown as the stored source of record.
+- Decision:
+  1. Add a shared backend resume render/parser service that parses stored Markdown into a semantic render model and serializes parseable drafts back into canonical Markdown.
+  2. Standardize `Professional Experience` and `Education` on the same two-row block pattern: row 1 left is organization or school, row 1 right is location, row 2 left is role title or degree, and row 2 right is duration or graduation date.
+  3. Normalize generated, regenerated, manually saved, and exported drafts through that same contract and fail closed on malformed or ambiguous structured blocks.
+  4. Render the generated-resume preview, PDF export, and DOCX export from the same semantic model rather than separate line-parsing heuristics.
+  5. Rebalance typography so section headings remain strongest, structured entry headers sit above body text, and section and entry spacing are roomier for readability.
+- Consequences: Experience and Education now remain visually and semantically aligned across preview and export surfaces, legacy parseable drafts converge to one canonical Markdown format over time, malformed manual edits are rejected instead of producing inconsistent output, and future layout changes can be made once in the shared render model instead of separately in preview, PDF, and DOCX.
+
 ## 2026-04-18 08:17:15 EDT — Cap Resume Judge reruns per draft and harden Railway callback delivery against stale backend ports
 
 - Status: Accepted

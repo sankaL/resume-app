@@ -262,20 +262,51 @@ def test_build_html_marks_dense_documents_in_html():
     )
 
     assert 'data-density="dense"' in html
-    assert "resume-root-dense" in html
+
+
+def test_build_html_keeps_structured_entry_case_and_font_hierarchy():
+    html = pdf_export._build_html(
+        (
+            "## Professional Experience\n"
+            "Deloitte Canada | Toronto, Ontario, Canada\n"
+            "Manager, Product Engineering | Jan 2022 - Present\n"
+            "- Led platform work.\n"
+        ),
+        pdf_export.LAYOUT_PRESETS[0],
+    )
+
+    section_heading_size = pdf_export.LAYOUT_PRESETS[0].section_heading_size
+    expected_primary_size = round(
+        min(
+            section_heading_size - 0.18,
+            max(
+                round(pdf_export.LAYOUT_PRESETS[0].body_font_size * 0.86, 2) + 0.32,
+                pdf_export.LAYOUT_PRESETS[0].body_font_size * 0.90,
+            ),
+        ),
+        2,
+    )
+    expected_content_size = round(pdf_export.LAYOUT_PRESETS[0].body_font_size * 0.86, 2)
+
+    assert "DELOITTE CANADA" not in html
+    assert "Deloitte Canada" in html
+    assert expected_primary_size <= section_heading_size
+    assert f"font-size: {expected_primary_size}pt;" in html
+    assert f"font-size: {expected_content_size}pt;" in html
 
 
 def test_build_html_bolds_only_professional_experience_role_title_split_rows():
     html = pdf_export._build_html(
         (
             "## Professional Experience\n"
-            "Senior Data Architect | Jan 2020 - Present\n"
             "Acme Corp | Toronto, ON\n"
+            "Senior Data Architect | Jan 2020 - Present\n"
         ),
         pdf_export.LAYOUT_PRESETS[0],
     )
 
-    assert html.count("split-left split-left-strong") == 1
+    assert "<span class='structured-left structured-left-primary'>Acme Corp</span>" in html
+    assert "<span class='structured-left structured-left-secondary'>Senior Data Architect</span>" in html
     assert "Senior Data Architect" in html
     assert "Acme Corp" in html
 
@@ -289,22 +320,22 @@ def test_build_html_does_not_bold_date_split_rows_outside_professional_experienc
         pdf_export.LAYOUT_PRESETS[0],
     )
 
-    assert "split-left split-left-strong" not in html
+    assert "structured-entry structured-entry-summary" not in html
 
 
 def test_build_html_preserves_blank_line_separation_between_split_row_groups():
     html = pdf_export._build_html(
         (
             "## Professional Experience\n"
-            "Senior Data Architect | Jan 2020 - Present\n"
-            "Acme Corp | Toronto, ON\n\n"
-            "Lead Engineer | Jan 2018 - Dec 2019\n"
+            "Acme Corp | Toronto, ON\n"
+            "Senior Data Architect | Jan 2020 - Present\n\n"
             "Beta Corp | Ottawa, ON\n"
+            "Lead Engineer | Jan 2018 - Dec 2019\n"
         ),
         pdf_export.LAYOUT_PRESETS[0],
     )
 
-    assert html.count("class='split-group'") == 2
+    assert html.count("class='structured-entry structured-entry-professional_experience'") == 2
 
 
 def test_build_export_document_reuses_one_normalized_header():
@@ -372,8 +403,8 @@ def test_render_docx_sync_renders_header_bullets_and_split_rows_without_tables()
             "# Alex Example\n"
             "alex@example.com | 555-0100 | Toronto, ON\n\n"
             "## Professional Experience\n"
-            "Senior Data Architect | Jan 2020 - Present\n"
             "Acme Corp | Toronto, ON\n"
+            "Senior Data Architect | Jan 2020 - Present\n"
             "- Led migration program\n"
         ),
         _personal_info(),
@@ -385,6 +416,7 @@ def test_render_docx_sync_renders_header_bullets_and_split_rows_without_tables()
     assert document.tables == []
     assert paragraph_text[0] == "Alex Example"
     assert any("PROFESSIONAL EXPERIENCE" == text for text in paragraph_text)
+    assert any("Acme Corp\tToronto, ON" == text for text in paragraph_text)
     assert any("Senior Data Architect\tJan 2020 - Present" == text for text in paragraph_text)
     assert any("Led migration program" in text for text in paragraph_text)
 
@@ -395,8 +427,8 @@ def test_render_docx_sync_bolds_only_professional_experience_role_title_split_ro
     docx_bytes = pdf_export._render_docx_sync(
         (
             "## Professional Experience\n"
-            "Senior Data Architect | Jan 2020 - Present\n"
             "Acme Corp | Toronto, ON\n"
+            "Senior Data Architect | Jan 2020 - Present\n"
             "## Summary\n"
             "Portfolio Lead | 2024 - Present\n"
         ),
@@ -404,10 +436,12 @@ def test_render_docx_sync_bolds_only_professional_experience_role_title_split_ro
         "1_page",
     )
     document = Document(io.BytesIO(docx_bytes))
+    company_paragraph = next(paragraph for paragraph in document.paragraphs if paragraph.text == "Acme Corp\tToronto, ON")
     role_paragraph = next(paragraph for paragraph in document.paragraphs if paragraph.text == "Senior Data Architect\tJan 2020 - Present")
     summary_paragraph = next(paragraph for paragraph in document.paragraphs if paragraph.text == "Portfolio Lead\t2024 - Present")
 
-    assert role_paragraph.runs[0].bold is True
+    assert company_paragraph.runs[0].bold is True
+    assert role_paragraph.runs[0].italic is True
     assert summary_paragraph.runs[0].bold in {False, None}
 
 

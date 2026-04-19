@@ -807,6 +807,151 @@ async def test_get_draft_with_review_flags_uses_generation_base_resume_id_when_s
 
 
 @pytest.mark.asyncio
+async def test_save_draft_edit_normalizes_legacy_experience_and_education_blocks():
+    service, repository, _, _, _, _, drafts = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/normalize",
+        visible_status="in_progress",
+        internal_state="resume_ready",
+    )
+    drafts.upsert_draft(
+        application_id=created.id,
+        user_id="user-1",
+        content_md="## Summary\nBuilt systems.\n",
+        generation_params={"page_length": "1_page", "aggressiveness": "medium"},
+        sections_snapshot={
+            "enabled_sections": ["summary", "professional_experience", "education"],
+            "section_order": ["summary", "professional_experience", "education"],
+        },
+    )
+
+    updated = await service.save_draft_edit(
+        user_id="user-1",
+        application_id=created.id,
+        content=(
+            "# Alex Example\n"
+            "alex@example.com | 555-0100 | Toronto, ON\n\n"
+            "## Professional Experience\n"
+            "VP Engineering | Google | Dec 2019 - Present\n"
+            "- Led platform work.\n\n"
+            "## Education\n"
+            "Master of Science in Mechanical Engineering with Honors | Masters University | Apr 2021\n"
+            "- Honors thesis.\n"
+        ),
+    )
+
+    assert "Google\nVP Engineering | Dec 2019 - Present" in updated.content_md
+    assert "Masters University\nMaster of Science in Mechanical Engineering with Honors | Apr 2021" in updated.content_md
+
+
+@pytest.mark.asyncio
+async def test_save_draft_edit_preserves_inline_markdown_inside_structured_sections():
+    service, repository, _, _, _, _, drafts = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/markdown-preservation",
+        visible_status="in_progress",
+        internal_state="resume_ready",
+    )
+    drafts.upsert_draft(
+        application_id=created.id,
+        user_id="user-1",
+        content_md="## Summary\nBuilt systems.\n",
+        generation_params={"page_length": "1_page", "aggressiveness": "medium"},
+        sections_snapshot={
+            "enabled_sections": ["professional_experience", "education"],
+            "section_order": ["professional_experience", "education"],
+        },
+    )
+
+    updated = await service.save_draft_edit(
+        user_id="user-1",
+        application_id=created.id,
+        content=(
+            "## Professional Experience\n"
+            "**Google**\n"
+            "*VP Engineering* | Dec 2019 - Present\n"
+            "- Led **GraphQL** migration with [`kubectl`](https://kubernetes.io/docs/reference/kubectl/).\n\n"
+            "## Education\n"
+            "[MIT](https://web.mit.edu)\n"
+            "MBA | 2022\n"
+            "- Reviewed [capstone](https://example.com/capstone).\n"
+        ),
+    )
+
+    assert "**Google**" in updated.content_md
+    assert "*VP Engineering* | Dec 2019 - Present" in updated.content_md
+    assert "- Led **GraphQL** migration with [`kubectl`](https://kubernetes.io/docs/reference/kubectl/)." in updated.content_md
+    assert "[MIT](https://web.mit.edu)" in updated.content_md
+    assert "- Reviewed [capstone](https://example.com/capstone)." in updated.content_md
+
+
+@pytest.mark.asyncio
+async def test_save_draft_edit_keeps_school_first_legacy_education_rows_in_original_order():
+    service, repository, _, _, _, _, drafts = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/school-first-education",
+        visible_status="in_progress",
+        internal_state="resume_ready",
+    )
+    drafts.upsert_draft(
+        application_id=created.id,
+        user_id="user-1",
+        content_md="## Summary\nBuilt systems.\n",
+        generation_params={"page_length": "1_page", "aggressiveness": "medium"},
+        sections_snapshot={
+            "enabled_sections": ["education"],
+            "section_order": ["education"],
+        },
+    )
+
+    updated = await service.save_draft_edit(
+        user_id="user-1",
+        application_id=created.id,
+        content=(
+            "## Education\n"
+            "MIT | MBA | 2022\n"
+        ),
+    )
+
+    assert "MIT\nMBA | 2022" in updated.content_md
+
+
+@pytest.mark.asyncio
+async def test_save_draft_edit_rejects_malformed_structured_experience_blocks():
+    service, repository, _, _, _, _, drafts = build_service()
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/malformed",
+        visible_status="in_progress",
+        internal_state="resume_ready",
+    )
+    drafts.upsert_draft(
+        application_id=created.id,
+        user_id="user-1",
+        content_md="## Summary\nBuilt systems.\n",
+        generation_params={"page_length": "1_page", "aggressiveness": "medium"},
+        sections_snapshot={
+            "enabled_sections": ["summary", "professional_experience"],
+            "section_order": ["summary", "professional_experience"],
+        },
+    )
+
+    with pytest.raises(ValueError, match="structured resume layout"):
+        await service.save_draft_edit(
+            user_id="user-1",
+            application_id=created.id,
+            content=(
+                "## Professional Experience\n"
+                "Google | Los Angeles, CA\n"
+                "- Led platform work.\n"
+            ),
+        )
+
+
+@pytest.mark.asyncio
 async def test_manual_entry_with_duplicate_candidate_marks_duplicate_review_required():
     service, repository, notifications, _, _, _, _ = build_service()
     existing = repository.create_application(
@@ -1948,13 +2093,85 @@ async def test_generation_success_callback_persists_draft_marks_resume_ready_and
     assert updated.internal_state == "resume_ready"
     assert updated.failure_reason is None
     assert drafts.fetch_draft("user-1", created.id) is not None
-    assert drafts.fetch_draft("user-1", created.id).content_md == "# Resume"
+    assert drafts.fetch_draft("user-1", created.id).content_md == "# Resume\n"
     assert updated.resume_judge_result is not None
     assert updated.resume_judge_result["status"] == "queued"
     assert (await progress_store.get(created.id)).state == "resume_ready"
     assert notifications.notifications[-1]["notification_type"] == "success"
     assert len(service.generation_job_queue.judge_jobs) == 1
-    assert service.generation_job_queue.judge_jobs[0]["generated_resume_content"] == "# Resume"
+    assert service.generation_job_queue.judge_jobs[0]["generated_resume_content"] == "# Resume\n"
+
+
+@pytest.mark.asyncio
+async def test_generation_success_callback_accepts_multiline_structured_bullets():
+    service, repository, notifications, progress_store, _, _, drafts = build_service()
+    service.base_resume_repository.add_resume(
+        user_id="user-1",
+        resume_id="resume-1",
+        content_md="## Summary\nBuilt reliable APIs.\n",
+    )
+    created = repository.create_application(
+        user_id="user-1",
+        job_url="https://example.com/jobs/structured-bullets",
+        visible_status="draft",
+        internal_state="generating",
+    )
+    repository.update_application(
+        application_id=created.id,
+        user_id="user-1",
+        updates={
+            "job_title": "Performance Engineer",
+            "job_description": "Build performance systems",
+            "base_resume_id": "resume-1",
+        },
+    )
+    await progress_store.set(
+        created.id,
+        ProgressRecord(
+            job_id="job-1",
+            workflow_kind="generation",
+            state="generating",
+            message="Resume generation is running.",
+            percent_complete=25,
+            created_at="2026-04-07T12:00:00+00:00",
+            updated_at="2026-04-07T12:00:00+00:00",
+            completed_at=None,
+            terminal_error_code=None,
+        ),
+    )
+
+    updated = await service.handle_generation_callback(
+        GenerationCallbackPayload.model_validate(
+            {
+                "application_id": created.id,
+                "user_id": "user-1",
+                "job_id": "job-1",
+                "event": "succeeded",
+                "generated": {
+                    "content_md": (
+                        "# Alex Example\n\n"
+                        "## Professional Experience\n"
+                        "Anthropic\n"
+                        "Performance Engineer | 2024 - Present\n"
+                        "- Led performance analysis across training and inference systems,\n"
+                        "  improving release confidence for critical workloads.\n"
+                    ),
+                    "generation_params": {"page_length": "1_page", "aggressiveness": "medium"},
+                    "sections_snapshot": {
+                        "enabled_sections": ["professional_experience"],
+                        "section_order": ["professional_experience"],
+                    },
+                },
+            }
+        )
+    )
+
+    draft = drafts.fetch_draft("user-1", created.id)
+    assert updated.internal_state == "resume_ready"
+    assert updated.failure_reason is None
+    assert draft is not None
+    assert "- Led performance analysis across training and inference systems,\n  improving release confidence" in draft.content_md
+    assert notifications.notifications[-1]["notification_type"] == "success"
 
 
 @pytest.mark.asyncio

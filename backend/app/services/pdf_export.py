@@ -5,11 +5,12 @@ import html
 import io
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Optional, Union
 
 import markdown
+from app.services.resume_render import build_render_document
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ class LayoutPreset:
 
     @property
     def section_margin_top(self) -> float:
-        return round(self.body_font_size * 0.58 * self.spacing_scale * self.section_spacing_scale, 2)
+        return round(self.body_font_size * 0.72 * self.spacing_scale * self.section_spacing_scale, 2)
 
     @property
     def section_margin_bottom(self) -> float:
@@ -84,7 +85,7 @@ class LayoutPreset:
 
     @property
     def contact_to_first_section_margin(self) -> float:
-        return round(max(9.0, self.body_font_size * 0.78 * self.spacing_scale), 2)
+        return round(max(10.0, self.body_font_size * 0.94 * self.spacing_scale), 2)
 
     @property
     def section_header_content_gap(self) -> float:
@@ -133,7 +134,7 @@ class DocxLayoutPreset:
 
     @property
     def section_heading_size(self) -> float:
-        return round(self.body_font_size * 0.98, 2)
+        return round(self.body_font_size * 0.95, 2)
 
 
 @dataclass(frozen=True)
@@ -169,7 +170,17 @@ class ExportSplitGroup:
     rows: list[ExportSplitRow]
 
 
-ExportBlock = Union[ExportParagraph, ExportSubheading, ExportBulletList, ExportSplitGroup]
+@dataclass(frozen=True)
+class ExportStructuredEntry:
+    primary_left_html: str
+    primary_right_html: Optional[str]
+    secondary_left_html: str
+    secondary_right_html: Optional[str]
+    bullets: list[str] = field(default_factory=list)
+    variant: str = "experience"
+
+
+ExportBlock = Union[ExportParagraph, ExportSubheading, ExportBulletList, ExportSplitGroup, ExportStructuredEntry]
 
 
 @dataclass(frozen=True)
@@ -188,50 +199,50 @@ class ExportDocument:
 
 
 LAYOUT_PRESETS = [
-    LayoutPreset(body_font_size=11.8, line_height=1.26, page_margin=0.60, spacing_scale=1.12, section_spacing_scale=1.08),
-    LayoutPreset(body_font_size=11.8, line_height=1.22, page_margin=0.56, spacing_scale=0.98, section_spacing_scale=1.0),
-    LayoutPreset(body_font_size=11.4, line_height=1.24, page_margin=0.54, spacing_scale=1.02, section_spacing_scale=1.02),
-    LayoutPreset(body_font_size=11.2, line_height=1.20, page_margin=0.50, spacing_scale=0.92, section_spacing_scale=0.96),
-    LayoutPreset(body_font_size=10.8, line_height=1.18, page_margin=0.48, spacing_scale=0.88, section_spacing_scale=0.92),
-    LayoutPreset(body_font_size=10.6, line_height=1.16, page_margin=0.46, spacing_scale=0.80, section_spacing_scale=0.88),
-    LayoutPreset(body_font_size=10.2, line_height=1.14, page_margin=0.44, spacing_scale=0.74, section_spacing_scale=0.84),
-    LayoutPreset(body_font_size=9.8, line_height=1.12, page_margin=0.42, spacing_scale=0.68, section_spacing_scale=0.78),
-    LayoutPreset(body_font_size=9.4, line_height=1.10, page_margin=0.40, spacing_scale=0.64, section_spacing_scale=0.72),
+    LayoutPreset(body_font_size=11.2, line_height=1.28, page_margin=0.60, spacing_scale=1.22, section_spacing_scale=1.24),
+    LayoutPreset(body_font_size=11.0, line_height=1.24, page_margin=0.56, spacing_scale=1.10, section_spacing_scale=1.14),
+    LayoutPreset(body_font_size=10.8, line_height=1.22, page_margin=0.54, spacing_scale=1.04, section_spacing_scale=1.10),
+    LayoutPreset(body_font_size=10.5, line_height=1.20, page_margin=0.50, spacing_scale=0.98, section_spacing_scale=1.06),
+    LayoutPreset(body_font_size=10.2, line_height=1.18, page_margin=0.48, spacing_scale=0.94, section_spacing_scale=1.02),
+    LayoutPreset(body_font_size=9.9, line_height=1.16, page_margin=0.46, spacing_scale=0.88, section_spacing_scale=0.98),
+    LayoutPreset(body_font_size=9.6, line_height=1.14, page_margin=0.44, spacing_scale=0.82, section_spacing_scale=0.94),
+    LayoutPreset(body_font_size=9.5, line_height=1.12, page_margin=0.42, spacing_scale=0.76, section_spacing_scale=0.90),
+    LayoutPreset(body_font_size=9.4, line_height=1.10, page_margin=0.40, spacing_scale=0.72, section_spacing_scale=0.86),
 ]
 
 DOCX_LAYOUT_PRESETS = {
     "1_page": DocxLayoutPreset(
-        body_font_size=10.6,
-        line_spacing=1.05,
+        body_font_size=10.1,
+        line_spacing=1.06,
         page_margin=0.55,
-        paragraph_spacing=2.8,
-        section_spacing_before=7.0,
-        section_spacing_after=4.6,
-        header_spacing_after=8.0,
+        paragraph_spacing=3.6,
+        section_spacing_before=10.8,
+        section_spacing_after=6.4,
+        header_spacing_after=10.4,
         bullet_indent=18.0,
-        split_row_spacing=2.4,
+        split_row_spacing=3.4,
     ),
     "2_page": DocxLayoutPreset(
-        body_font_size=11.0,
-        line_spacing=1.08,
+        body_font_size=10.5,
+        line_spacing=1.10,
         page_margin=0.65,
-        paragraph_spacing=3.2,
-        section_spacing_before=8.0,
-        section_spacing_after=5.0,
-        header_spacing_after=9.0,
+        paragraph_spacing=4.0,
+        section_spacing_before=11.2,
+        section_spacing_after=6.8,
+        header_spacing_after=10.8,
         bullet_indent=18.0,
-        split_row_spacing=2.8,
+        split_row_spacing=3.6,
     ),
     "3_page": DocxLayoutPreset(
-        body_font_size=11.2,
-        line_spacing=1.10,
+        body_font_size=10.8,
+        line_spacing=1.12,
         page_margin=0.72,
-        paragraph_spacing=3.5,
-        section_spacing_before=8.6,
-        section_spacing_after=5.4,
-        header_spacing_after=9.6,
+        paragraph_spacing=4.2,
+        section_spacing_before=11.6,
+        section_spacing_after=7.0,
+        header_spacing_after=11.2,
         bullet_indent=18.0,
-        split_row_spacing=3.0,
+        split_row_spacing=3.8,
     ),
 }
 
@@ -529,67 +540,55 @@ def _render_content_blocks(lines: list[str], *, section_heading: Optional[str] =
 
 def _build_export_document(markdown_content: str, personal_info: Optional[dict] = None) -> ExportDocument:
     normalized_markdown = _normalize_markdown_for_export(markdown_content, personal_info)
-    density_metrics = _calculate_content_density_metrics(normalized_markdown)
-    lines = normalized_markdown.strip().splitlines()
-    header: Optional[ExportHeader] = None
-    intro_lines: list[str] = []
+    render_result = build_render_document(normalized_markdown)
+    if render_result.document is None:
+        raise ValueError(render_result.error or "Resume render model could not be built for export.")
+
+    render_document = render_result.document
+    density_metrics = _calculate_content_density_metrics(render_document.normalized_markdown)
+    header = None
+    if render_document.header and (render_document.header.name or render_document.header.contact_line):
+        header = ExportHeader(
+            name=str(render_document.header.name or ""),
+            contact_line=str(render_document.header.contact_line or ""),
+        )
+
+    intro_blocks = _parse_content_blocks(list(render_document.header.extra_lines)) if render_document.header else []
     sections: list[ExportSection] = []
-
-    index = 0
-    while index < len(lines) and not lines[index].strip():
-        index += 1
-
-    if index < len(lines):
-        top_heading_match = TOP_HEADING_RE.match(lines[index].strip())
-        if top_heading_match:
-            header_name = top_heading_match.group(1).strip()
-            contact_line = ""
-            index += 1
-            while index < len(lines):
-                stripped = lines[index].strip()
-                if SECTION_HEADING_RE.match(stripped):
-                    break
-                if stripped:
-                    if not contact_line and _looks_like_contact_line(stripped):
-                        contact_line = stripped
-                    else:
-                        intro_lines.append(lines[index])
-                index += 1
-            header = ExportHeader(name=header_name, contact_line=contact_line)
-
-    current_heading: Optional[str] = None
-    current_lines: list[str] = []
-    while index < len(lines):
-        stripped = lines[index].strip()
-        section_match = SECTION_HEADING_RE.match(stripped)
-        if section_match:
-            if current_heading is not None:
-                sections.append(
-                    ExportSection(
-                        heading=current_heading,
-                        blocks=_parse_content_blocks(current_lines, section_heading=current_heading),
+    for section in render_document.sections:
+        if section.kind in {"professional_experience", "education"}:
+            structured_blocks: list[ExportBlock] = []
+            for entry in section.entries:
+                structured_blocks.append(
+                    ExportStructuredEntry(
+                        primary_left_html=_render_inline_markdown(entry.row1_left),
+                        primary_right_html=(
+                            _render_inline_markdown(entry.row1_right) if entry.row1_right else None
+                        ),
+                        secondary_left_html=_render_inline_markdown(entry.row2_left),
+                        secondary_right_html=(
+                            _render_inline_markdown(entry.row2_right) if entry.row2_right else None
+                        ),
+                        bullets=[_render_list_item_content(bullet) for bullet in entry.bullets],
+                        variant=section.kind,
                     )
                 )
-            current_heading = section_match.group(1).strip()
-            current_lines = []
-        else:
-            current_lines.append(lines[index])
-        index += 1
-
-    if current_heading is not None:
+            sections.append(ExportSection(heading=section.heading, blocks=structured_blocks))
+            continue
+        section_lines = section.markdown_body.splitlines() if section.markdown_body else []
         sections.append(
             ExportSection(
-                heading=current_heading,
-                blocks=_parse_content_blocks(current_lines, section_heading=current_heading),
+                heading=section.heading,
+                blocks=_parse_content_blocks(section_lines, section_heading=section.heading),
             )
         )
 
     return ExportDocument(
         header=header,
-        intro_blocks=_parse_content_blocks(intro_lines),
+        intro_blocks=intro_blocks,
         sections=sections,
         density_metrics=density_metrics,
-        normalized_markdown=normalized_markdown,
+        normalized_markdown=render_document.normalized_markdown,
     )
 
 
@@ -609,6 +608,25 @@ def _render_html_blocks(blocks: list[ExportBlock]) -> str:
             )
         return f"<div class='split-group'>{''.join(rows)}</div>"
 
+    def render_structured_entry(entry: ExportStructuredEntry) -> str:
+        bullet_html = ""
+        if entry.bullets:
+            items = "".join(f"<li>{item}</li>" for item in entry.bullets)
+            bullet_html = f"<ul>{items}</ul>"
+        return (
+            f"<div class='structured-entry structured-entry-{entry.variant}'>"
+            "<div class='structured-row structured-row-primary'>"
+            f"<span class='structured-left structured-left-primary'>{entry.primary_left_html}</span>"
+            f"<span class='structured-right structured-right-primary'>{entry.primary_right_html or ''}</span>"
+            "</div>"
+            "<div class='structured-row structured-row-secondary'>"
+            f"<span class='structured-left structured-left-secondary'>{entry.secondary_left_html}</span>"
+            f"<span class='structured-right structured-right-secondary'>{entry.secondary_right_html or ''}</span>"
+            "</div>"
+            f"{bullet_html}"
+            "</div>"
+        )
+
     for block in blocks:
         if isinstance(block, ExportParagraph):
             html_blocks.append(block.html_fragment)
@@ -619,6 +637,8 @@ def _render_html_blocks(blocks: list[ExportBlock]) -> str:
             html_blocks.append(f"<ul>{items}</ul>")
         elif isinstance(block, ExportSplitGroup):
             html_blocks.append(render_split_group(block))
+        elif isinstance(block, ExportStructuredEntry):
+            html_blocks.append(render_structured_entry(block))
     return "".join(html_blocks)
 
 
@@ -653,6 +673,15 @@ def _build_html(
     list_item_margin = round(max(0.24, preset.list_item_margin_bottom * spacing_factor), 2)
     bullet_indent = round(max(10.5, preset.bullet_indent), 2)
     bullet_padding = round(max(3.5, bullet_indent * 0.36), 2)
+    content_font_size = round(preset.body_font_size * 0.86, 2)
+    subheader_font_size = round(
+        min(
+            preset.section_heading_size - 0.18,
+            max(content_font_size + 0.32, preset.body_font_size * 0.90),
+        ),
+        2,
+    )
+    structured_entry_gap = round(max(split_group_margin * 3.0, paragraph_margin * 3.2), 2)
 
     intro_html = _render_html_blocks(document.intro_blocks)
     sections_html = "".join(
@@ -730,23 +759,69 @@ def _build_html(
     }}
     h3 {{
       margin: 0 0 {subheading_gap}pt 0;
-      font-size: {preset.body_font_size}pt;
+      font-size: {subheader_font_size}pt;
       font-weight: 700;
       line-height: 1.05;
     }}
     p {{
       margin: 0 0 {paragraph_margin}pt 0;
+      font-size: {content_font_size}pt;
     }}
     ul {{
       margin: 0 0 {paragraph_margin}pt {bullet_indent}pt;
       padding-left: {bullet_padding}pt;
+      font-size: {content_font_size}pt;
     }}
     li {{
       margin: 0 0 {list_item_margin}pt 0;
       padding-left: 0;
+      font-size: {content_font_size}pt;
     }}
     .split-group {{
       margin: 0 0 {split_group_margin}pt 0;
+    }}
+    .structured-entry {{
+      margin: 0 0 {structured_entry_gap}pt 0;
+    }}
+    .structured-row {{
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: {preset.split_row_gap}pt;
+      width: 100%;
+      margin: 0;
+    }}
+    .structured-row + .structured-row {{
+      margin-top: {round(max(1.6, paragraph_margin * 0.45), 2)}pt;
+    }}
+    .structured-left {{
+      flex: 1 1 auto;
+      min-width: 0;
+    }}
+    .structured-right {{
+      flex: 0 0 auto;
+      text-align: right;
+      white-space: nowrap;
+      font-style: italic;
+    }}
+    .structured-left-primary,
+    .structured-right-primary {{
+      font-size: {subheader_font_size}pt;
+      line-height: 1.02;
+    }}
+    .structured-left-secondary,
+    .structured-right-secondary {{
+      font-size: {subheader_font_size}pt;
+      line-height: 1.02;
+    }}
+    .structured-left-primary {{
+      font-weight: 700;
+    }}
+    .structured-left-secondary {{
+      font-style: italic;
+    }}
+    .structured-entry ul {{
+      margin-top: {round(max(1.8, paragraph_margin * 0.5), 2)}pt;
     }}
     .split-row {{
       display: flex;
@@ -940,6 +1015,11 @@ def _set_font(run, *, size: float, font_name: str = "Georgia", bold: Optional[bo
         run.bold = bold
 
 
+def _apply_font_to_paragraph_runs(paragraph, *, size: float, font_name: str = "Georgia") -> None:
+    for run in paragraph.runs:
+        _set_font(run, size=size, font_name=font_name)
+
+
 def _resolve_docx_layout(page_length: Optional[str], density_metrics: dict[str, float | int | bool | str]) -> DocxLayoutPreset:
     base = DOCX_LAYOUT_PRESETS.get(str(page_length or "1_page"), DOCX_LAYOUT_PRESETS["1_page"])
     if density_metrics["is_dense"]:
@@ -947,12 +1027,12 @@ def _resolve_docx_layout(page_length: Optional[str], density_metrics: dict[str, 
             body_font_size=max(10.0, round(base.body_font_size - 0.3, 2)),
             line_spacing=max(1.0, round(base.line_spacing - 0.03, 2)),
             page_margin=max(0.5, round(base.page_margin - 0.04, 2)),
-            paragraph_spacing=max(2.2, round(base.paragraph_spacing - 0.4, 2)),
-            section_spacing_before=max(6.0, round(base.section_spacing_before - 0.8, 2)),
-            section_spacing_after=max(4.0, round(base.section_spacing_after - 0.4, 2)),
-            header_spacing_after=max(7.0, round(base.header_spacing_after - 0.8, 2)),
+            paragraph_spacing=max(2.8, round(base.paragraph_spacing - 0.2, 2)),
+            section_spacing_before=max(8.8, round(base.section_spacing_before - 0.4, 2)),
+            section_spacing_after=max(5.4, round(base.section_spacing_after - 0.2, 2)),
+            header_spacing_after=max(8.8, round(base.header_spacing_after - 0.2, 2)),
             bullet_indent=base.bullet_indent,
-            split_row_spacing=max(2.0, round(base.split_row_spacing - 0.3, 2)),
+            split_row_spacing=max(2.8, round(base.split_row_spacing - 0.1, 2)),
         )
     if density_metrics["is_sparse"]:
         return DocxLayoutPreset(
@@ -1018,33 +1098,69 @@ def _render_docx_sync(
 
     def add_blocks(blocks: list[ExportBlock]) -> None:
         usable_width = section.page_width - section.left_margin - section.right_margin
+        content_font_size = max(9.0, round(layout.body_font_size - 0.45, 2))
+        subheader_font_size = min(layout.section_heading_size - 0.15, round(content_font_size + 0.35, 2))
+        entry_spacing_after = layout.paragraph_spacing + 2.8
 
         for block in blocks:
             if isinstance(block, ExportParagraph):
                 paragraph = doc.add_paragraph()
                 _set_paragraph_spacing(paragraph, after=layout.paragraph_spacing, line_spacing=layout.line_spacing)
                 _append_inline_html_runs(paragraph, block.html_fragment)
+                _apply_font_to_paragraph_runs(paragraph, size=content_font_size)
             elif isinstance(block, ExportSubheading):
                 paragraph = doc.add_paragraph()
                 _set_paragraph_spacing(paragraph, after=layout.paragraph_spacing, line_spacing=1.0)
                 run = paragraph.add_run(block.text)
-                _set_font(run, size=layout.body_font_size, bold=True)
+                _set_font(run, size=subheader_font_size, bold=True)
             elif isinstance(block, ExportBulletList):
-                for item in block.items:
+                last_index = len(block.items) - 1
+                for item_index, item in enumerate(block.items):
                     paragraph = doc.add_paragraph(style="List Bullet")
                     paragraph.paragraph_format.left_indent = Pt(layout.bullet_indent)
-                    _set_paragraph_spacing(paragraph, after=layout.paragraph_spacing, line_spacing=layout.line_spacing)
+                    paragraph_after = entry_spacing_after if item_index == last_index else layout.paragraph_spacing
+                    _set_paragraph_spacing(paragraph, after=paragraph_after, line_spacing=layout.line_spacing)
                     _append_inline_html_runs(paragraph, item)
+                    _apply_font_to_paragraph_runs(paragraph, size=content_font_size)
             elif isinstance(block, ExportSplitGroup):
                 last_index = len(block.rows) - 1
                 for row_index, row in enumerate(block.rows):
                     paragraph = doc.add_paragraph()
                     paragraph.paragraph_format.tab_stops.add_tab_stop(usable_width, WD_TAB_ALIGNMENT.RIGHT)
-                    paragraph_after = layout.split_row_spacing if row_index < last_index else layout.paragraph_spacing
+                    paragraph_after = layout.split_row_spacing if row_index < last_index else entry_spacing_after
                     _set_paragraph_spacing(paragraph, after=paragraph_after, line_spacing=layout.line_spacing)
                     _append_inline_html_runs(paragraph, row.left_html, bold=row.emphasize_left)
                     paragraph.add_run("\t")
                     _append_inline_html_runs(paragraph, row.right_html)
+                    _apply_font_to_paragraph_runs(paragraph, size=subheader_font_size if row.emphasize_left else content_font_size)
+            elif isinstance(block, ExportStructuredEntry):
+                primary = doc.add_paragraph()
+                primary.paragraph_format.tab_stops.add_tab_stop(usable_width, WD_TAB_ALIGNMENT.RIGHT)
+                _set_paragraph_spacing(primary, after=max(1.4, layout.split_row_spacing - 0.1), line_spacing=1.0)
+                _append_inline_html_runs(primary, block.primary_left_html, bold=True)
+                if block.primary_right_html:
+                    primary.add_run("\t")
+                    _append_inline_html_runs(primary, block.primary_right_html, italic=True)
+                _apply_font_to_paragraph_runs(primary, size=subheader_font_size)
+
+                secondary = doc.add_paragraph()
+                secondary.paragraph_format.tab_stops.add_tab_stop(usable_width, WD_TAB_ALIGNMENT.RIGHT)
+                secondary_after = entry_spacing_after if not block.bullets else max(2.2, layout.paragraph_spacing + 0.4)
+                _set_paragraph_spacing(secondary, after=secondary_after, line_spacing=1.0)
+                _append_inline_html_runs(secondary, block.secondary_left_html, italic=True)
+                if block.secondary_right_html:
+                    secondary.add_run("\t")
+                    _append_inline_html_runs(secondary, block.secondary_right_html, italic=True)
+                _apply_font_to_paragraph_runs(secondary, size=subheader_font_size)
+
+                last_index = len(block.bullets) - 1
+                for item_index, item in enumerate(block.bullets):
+                    paragraph = doc.add_paragraph(style="List Bullet")
+                    paragraph.paragraph_format.left_indent = Pt(layout.bullet_indent)
+                    paragraph_after = entry_spacing_after if item_index == last_index else layout.paragraph_spacing
+                    _set_paragraph_spacing(paragraph, after=paragraph_after, line_spacing=layout.line_spacing)
+                    _append_inline_html_runs(paragraph, item)
+                    _apply_font_to_paragraph_runs(paragraph, size=content_font_size)
 
     add_blocks(document_model.intro_blocks)
 
