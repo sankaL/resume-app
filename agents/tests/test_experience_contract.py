@@ -36,12 +36,14 @@ def test_extract_professional_experience_anchors_keeps_role_order_and_source_fie
             "role_index": 0,
             "source_title": "Backend Engineer",
             "source_company": "Acme Corp",
+            "source_location": None,
             "source_date_range": "2021 - Present",
         },
         {
             "role_index": 1,
             "source_title": "Software Engineer",
             "source_company": "Beta Labs",
+            "source_location": None,
             "source_date_range": "2018 - 2021",
         },
     ]
@@ -64,8 +66,8 @@ Lead Engineer | Different Co | 2017 - 2020
     )
 
     assert issues == []
-    assert "Backend Engineer | Acme Corp | 2021 - Present" in normalized
-    assert "Software Engineer | Beta Labs | 2018 - 2021" in normalized
+    assert "Acme Corp\nBackend Engineer | 2021 - Present" in normalized
+    assert "Beta Labs\nSoftware Engineer | 2018 - 2021" in normalized
     assert "- Built backend APIs." in normalized
     assert "- Shipped production features." in normalized
 
@@ -87,8 +89,8 @@ Lead Engineer | Different Co | 2017 - 2020
     )
 
     assert issues == []
-    assert "Platform Engineer | Acme Corp | 2021 - Present" in normalized
-    assert "Lead Engineer | Beta Labs | 2018 - 2021" in normalized
+    assert "Acme Corp\nPlatform Engineer | 2021 - Present" in normalized
+    assert "Beta Labs\nLead Engineer | 2018 - 2021" in normalized
 
 
 def test_normalize_professional_experience_section_medium_keeps_generated_titles_but_restores_company_and_dates():
@@ -108,17 +110,19 @@ Application Engineer | Beta Labs | 2018 - 2021
     )
 
     assert issues == []
-    assert "Platform Engineer | Acme Corp | 2021 - Present" in normalized
-    assert "Application Engineer | Beta Labs | 2018 - 2021" in normalized
+    assert "Acme Corp\nPlatform Engineer | 2021 - Present" in normalized
+    assert "Beta Labs\nApplication Engineer | 2018 - 2021" in normalized
 
 
 def test_validate_professional_experience_contract_allows_grounded_title_rewrite_for_medium():
     anchors = _anchors()
     section = """## Professional Experience
-Platform Engineer | Acme Corp | 2021 - Present
+Acme Corp
+Platform Engineer | 2021 - Present
 - Built backend APIs.
 
-Application Engineer | Beta Labs | 2018 - 2021
+Beta Labs
+Application Engineer | 2018 - 2021
 - Shipped production features.
 """
 
@@ -134,10 +138,12 @@ Application Engineer | Beta Labs | 2018 - 2021
 def test_validate_professional_experience_contract_allows_title_rewrite_for_high():
     anchors = _anchors()
     section = """## Professional Experience
-Platform Engineer | Acme Corp | 2021 - Present
+Acme Corp
+Platform Engineer | 2021 - Present
 - Built backend APIs.
 
-Software Engineer | Beta Labs | 2018 - 2021
+Beta Labs
+Software Engineer | 2018 - 2021
 - Shipped production features.
 """
 
@@ -153,10 +159,12 @@ Software Engineer | Beta Labs | 2018 - 2021
 def test_validate_professional_experience_contract_rejects_ungrounded_title_rewrite_for_medium():
     anchors = _anchors()
     section = """## Professional Experience
-Engagement Lead | Acme Corp | 2021 - Present
+Acme Corp
+Engagement Lead | 2021 - Present
 - Built backend APIs.
 
-Software Engineer | Beta Labs | 2018 - 2021
+Beta Labs
+Software Engineer | 2018 - 2021
 - Shipped production features.
 """
 
@@ -172,10 +180,12 @@ Software Engineer | Beta Labs | 2018 - 2021
 def test_validate_professional_experience_contract_rejects_seniority_change_for_high():
     anchors = _anchors()
     section = """## Professional Experience
-Senior Platform Engineer | Acme Corp | 2021 - Present
+Acme Corp
+Senior Platform Engineer | 2021 - Present
 - Built backend APIs.
 
-Software Engineer | Beta Labs | 2018 - 2021
+Beta Labs
+Software Engineer | 2018 - 2021
 - Shipped production features.
 """
 
@@ -191,7 +201,8 @@ Software Engineer | Beta Labs | 2018 - 2021
 def test_validate_professional_experience_contract_fails_when_role_blocks_are_missing():
     anchors = _anchors()
     section = """## Professional Experience
-Backend Engineer | Acme Corp | 2021 - Present
+Acme Corp
+Backend Engineer | 2021 - Present
 - Built backend APIs.
 """
 
@@ -211,7 +222,7 @@ async def test_validate_resume_fails_when_professional_experience_contract_is_un
             {
                 "name": "professional_experience",
                 "heading": "Professional Experience",
-                "content": "## Professional Experience\nBackend Engineer | Acme Corp | 2021 - Present\n- Built backend APIs.",
+                "content": "## Professional Experience\nAcme Corp\nBackend Engineer | 2021 - Present\n- Built backend APIs.",
                 "supporting_snippets": ["Built backend APIs.", "Acme Corp"],
             }
         ],

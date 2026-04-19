@@ -2496,7 +2496,6 @@ describe("phase 1 applications UI", () => {
   });
 
   it("stops generation polling when terminal progress is returned but detail refresh fails", async () => {
-    vi.useFakeTimers();
     api.fetchApplicationDetail
       .mockResolvedValueOnce({
         id: "app-1",
@@ -2537,30 +2536,20 @@ describe("phase 1 applications UI", () => {
       terminal_error_code: "generation_failed",
     });
 
-    await act(async () => {
-      renderWithAppProvider(
-        <Routes>
-          <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
-        </Routes>,
-        { initialEntries: ["/app/applications/app-1"] },
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
 
     await waitFor(() => expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1));
-    expect(screen.getByText(/application request failed/i)).toBeInTheDocument();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(8000);
-    });
-
-    expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/^draft$/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /cancel generation/i })).not.toBeInTheDocument();
     expect(api.fetchApplicationDetail).toHaveBeenCalledTimes(2);
   });
 
   it("stops extraction polling and shows manual-entry fallback when terminal extraction progress cannot sync detail state", async () => {
-    vi.useFakeTimers();
     api.fetchApplicationDetail
       .mockResolvedValueOnce(
         buildApplicationDetail({
@@ -2590,32 +2579,20 @@ describe("phase 1 applications UI", () => {
       terminal_error_code: "extraction_failed",
     });
 
-    await act(async () => {
-      renderWithAppProvider(
-        <Routes>
-          <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
-        </Routes>,
-        { initialEntries: ["/app/applications/app-1"] },
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
 
     await waitFor(() => expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(api.fetchApplicationDetail).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("heading", { name: /manual entry required/i })).toBeInTheDocument();
     expect(screen.getByText(/automatic extraction failed\. manual entry is required\./i)).toBeInTheDocument();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(8000);
-    });
-
-    expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1);
   });
 
   it("maps terminal extraction success progress to generation-pending fallback when detail sync lags", async () => {
-    vi.useFakeTimers();
     api.fetchApplicationDetail
       .mockResolvedValueOnce(
         buildApplicationDetail({
@@ -2647,17 +2624,12 @@ describe("phase 1 applications UI", () => {
       terminal_error_code: null,
     });
 
-    await act(async () => {
-      renderWithAppProvider(
-        <Routes>
-          <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
-        </Routes>,
-        { initialEntries: ["/app/applications/app-1"] },
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
 
     await waitFor(() => expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(api.fetchApplicationDetail).toHaveBeenCalledTimes(2));
@@ -2785,6 +2757,203 @@ describe("phase 1 applications UI", () => {
     });
 
     expect(await screen.findByText(/applying deterministic professional experience structure checks/i)).toBeInTheDocument();
+  });
+
+  it("disables repeated watchdog polling while live stream heartbeats are flowing", async () => {
+    api.fetchApplicationDetail.mockResolvedValue(
+      buildApplicationDetail({
+        id: "app-1",
+        visible_status: "draft",
+        internal_state: "generating",
+        failure_reason: null,
+      }),
+    );
+    api.fetchApplicationProgress.mockResolvedValue(
+      buildProgressPayload({
+        workflow_kind: "generation",
+        state: "generating",
+        message: "Resume generation is running.",
+      }),
+    );
+
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
+
+    await waitFor(() => expect(api.openApplicationEventStream).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.fetchApplicationDetail).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      latestStreamHandlers().onHeartbeat?.({ sent_at: "2026-04-07T12:01:00Z" });
+      await Promise.resolve();
+    });
+
+    expect(api.fetchApplicationDetail).toHaveBeenCalledTimes(1);
+    expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes the generated draft from a live completion event without a page reload", async () => {
+    api.fetchApplicationDetail.mockResolvedValue(
+      buildApplicationDetail({
+        id: "app-1",
+        visible_status: "draft",
+        internal_state: "generating",
+        failure_reason: null,
+        base_resume_id: "resume-1",
+        base_resume_name: "Default Resume",
+      }),
+    );
+    api.fetchApplicationProgress.mockResolvedValue(
+      buildProgressPayload({
+        workflow_kind: "generation",
+        state: "generating",
+        message: "Resume generation is running.",
+      }),
+    );
+    api.fetchDraft
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "draft-1",
+        application_id: "app-1",
+        content_md: "# Resume\n\n## Summary\nTailored summary",
+        generation_params: {
+          base_resume_id: "resume-1",
+          page_length: "1_page",
+          aggressiveness: "medium",
+          additional_instructions: "",
+        },
+        sections_snapshot: {
+          enabled_sections: ["summary", "professional_experience", "education", "skills"],
+          section_order: ["summary", "professional_experience", "education", "skills"],
+        },
+        last_generated_at: "2026-04-07T12:10:00Z",
+        last_exported_at: null,
+        updated_at: "2026-04-07T12:10:00Z",
+      });
+
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
+
+    await waitFor(() => expect(api.openApplicationEventStream).toHaveBeenCalledTimes(1));
+    await screen.findByText(/resume generation is running/i);
+
+    await act(async () => {
+      latestStreamHandlers().onDetail(
+        buildApplicationDetail({
+          id: "app-1",
+          visible_status: "in_progress",
+          internal_state: "resume_ready",
+          failure_reason: null,
+          base_resume_id: "resume-1",
+          base_resume_name: "Default Resume",
+          updated_at: "2026-04-07T12:10:00Z",
+          resume_judge_result: {
+            status: "queued",
+            message: "Resume Judge is queued.",
+            evaluated_draft_updated_at: "2026-04-07T12:10:00Z",
+            job_context_signature: "backend engineer\u001facme\u001fbuild apis",
+          },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(api.fetchDraft).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/scoring draft/i)).toBeInTheDocument();
+  });
+
+  it("refreshes the draft when live completion detail arrives after polling fallback already marked resume ready", async () => {
+    api.fetchApplicationDetail
+      .mockResolvedValueOnce(
+        buildApplicationDetail({
+          id: "app-1",
+          visible_status: "draft",
+          internal_state: "generating",
+          failure_reason: null,
+          base_resume_id: "resume-1",
+          base_resume_name: "Default Resume",
+          updated_at: "2026-04-07T12:00:00Z",
+        }),
+      )
+      .mockRejectedValueOnce(new Error("application request failed"));
+    api.fetchApplicationProgress.mockResolvedValue(
+      buildProgressPayload({
+        workflow_kind: "generation",
+        state: "resume_ready",
+        message: "Resume generation complete.",
+        percent_complete: 100,
+        updated_at: "2026-04-07T12:10:00Z",
+        completed_at: "2026-04-07T12:10:00Z",
+        terminal_error_code: null,
+      }),
+    );
+    api.fetchDraft
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "draft-1",
+        application_id: "app-1",
+        content_md: "# Resume\n\n## Summary\nTailored summary",
+        generation_params: {
+          base_resume_id: "resume-1",
+          page_length: "1_page",
+          aggressiveness: "medium",
+          additional_instructions: "",
+        },
+        sections_snapshot: {
+          enabled_sections: ["summary", "professional_experience", "education", "skills"],
+          section_order: ["summary", "professional_experience", "education", "skills"],
+        },
+        last_generated_at: "2026-04-07T12:10:00Z",
+        last_exported_at: null,
+        updated_at: "2026-04-07T12:10:00Z",
+      });
+
+    renderWithAppProvider(
+      <Routes>
+        <Route path="/app/applications/:applicationId" element={<ApplicationDetailPage />} />
+      </Routes>,
+      { initialEntries: ["/app/applications/app-1"] },
+    );
+
+    await waitFor(() => expect(api.fetchApplicationProgress).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.fetchApplicationDetail).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(api.fetchDraft).toHaveBeenCalledTimes(3));
+    expect(await screen.findByText(/^in progress$/i)).toBeInTheDocument();
+    expect(screen.queryByText(/scoring draft/i)).not.toBeInTheDocument();
+
+    await act(async () => {
+      latestStreamHandlers().onDetail(
+        buildApplicationDetail({
+          id: "app-1",
+          visible_status: "in_progress",
+          internal_state: "resume_ready",
+          failure_reason: null,
+          base_resume_id: "resume-1",
+          base_resume_name: "Default Resume",
+          updated_at: "2026-04-07T12:10:00Z",
+          resume_judge_result: {
+            status: "queued",
+            message: "Resume Judge is queued.",
+            evaluated_draft_updated_at: "2026-04-07T12:10:00Z",
+            job_context_signature: "backend engineer\u001facme\u001fbuild apis",
+          },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(api.fetchDraft).toHaveBeenCalledTimes(4));
+    expect(await screen.findByText(/scoring draft/i)).toBeInTheDocument();
   });
 
   it("keeps the saved draft visible while regeneration is running after a refresh", async () => {

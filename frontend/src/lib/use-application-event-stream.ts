@@ -11,6 +11,7 @@ import {
 import { queryKeys } from "@/lib/queries";
 
 const MAX_RECONNECT_DELAY_MS = 5000;
+const STALE_STREAM_AFTER_MS = 20 * 1000;
 
 function isNewerProgress(
   current: ExtractionProgress | undefined,
@@ -36,12 +37,30 @@ export function useApplicationEventStream(
   const queryClient = useQueryClient();
   const [connected, setConnected] = useState(false);
   const [lastEventAt, setLastEventAt] = useState<string | null>(null);
+  const [isStale, setIsStale] = useState(false);
   const reconnectAttemptRef = useRef(0);
+  const staleTimerRef = useRef<number | null>(null);
+
+  const clearStaleTimer = () => {
+    if (staleTimerRef.current !== null) {
+      window.clearTimeout(staleTimerRef.current);
+      staleTimerRef.current = null;
+    }
+  };
+
+  const scheduleStaleTimer = () => {
+    clearStaleTimer();
+    staleTimerRef.current = window.setTimeout(() => {
+      setIsStale(true);
+    }, STALE_STREAM_AFTER_MS);
+  };
 
   useEffect(() => {
     if (!applicationId || !enabled) {
       setConnected(false);
       setLastEventAt(null);
+      setIsStale(false);
+      clearStaleTimer();
       reconnectAttemptRef.current = 0;
       return;
     }
@@ -53,6 +72,8 @@ export function useApplicationEventStream(
     const markEvent = () => {
       setConnected(true);
       setLastEventAt(new Date().toISOString());
+      setIsStale(false);
+      scheduleStaleTimer();
       reconnectAttemptRef.current = 0;
     };
 
@@ -95,6 +116,8 @@ export function useApplicationEventStream(
         return;
       }
       setConnected(false);
+      setIsStale(true);
+      clearStaleTimer();
       reconnectAttemptRef.current += 1;
       const delay = Math.min(1000 * 2 ** (reconnectAttemptRef.current - 1), MAX_RECONNECT_DELAY_MS);
       reconnectTimer = window.setTimeout(() => {
@@ -107,6 +130,7 @@ export function useApplicationEventStream(
       if (disposed) {
         return;
       }
+      setIsStale(true);
       activeController = new AbortController();
 
       try {
@@ -133,6 +157,8 @@ export function useApplicationEventStream(
     return () => {
       disposed = true;
       setConnected(false);
+      setIsStale(false);
+      clearStaleTimer();
       if (reconnectTimer !== null) {
         window.clearTimeout(reconnectTimer);
       }
@@ -140,5 +166,5 @@ export function useApplicationEventStream(
     };
   }, [applicationId, enabled, queryClient]);
 
-  return { connected, lastEventAt };
+  return { connected, lastEventAt, isStale };
 }

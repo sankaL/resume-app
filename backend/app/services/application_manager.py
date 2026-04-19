@@ -39,6 +39,7 @@ from app.services.progress import (
     build_progress,
     get_progress_store,
 )
+from app.services.resume_render import normalize_resume_markdown
 from app.services.resume_privacy import sanitize_resume_markdown
 from app.services.workflow import derive_visible_status
 
@@ -821,10 +822,14 @@ class ApplicationService:
             if record.internal_state == "resume_ready" and record.failure_reason is None:
                 return record
 
-            recovered_success = await self._reconcile_generation_success_from_progress_cache(
-                record=record,
-                progress=progress,
-            )
+            try:
+                recovered_success = await self._reconcile_generation_success_from_progress_cache(
+                    record=record,
+                    progress=progress,
+                )
+            except ValueError:
+                logger.exception("Failed reconciling cached generation success payload for %s", record.id)
+                recovered_success = None
             if recovered_success is not None:
                 return recovered_success
 
@@ -1145,7 +1150,7 @@ class ApplicationService:
         draft = self.draft_repository.upsert_draft(
             application_id=record.id,
             user_id=record.user_id,
-            content_md=generated.content_md,
+            content_md=self._normalize_draft_content(generated.content_md),
             generation_params=generated.generation_params,
             sections_snapshot=generated.sections_snapshot,
         )
@@ -1540,7 +1545,7 @@ class ApplicationService:
             draft = self.draft_repository.upsert_draft(
                 application_id=record.id,
                 user_id=record.user_id,
-                content_md=payload.generated.content_md,
+                content_md=self._normalize_draft_content(payload.generated.content_md),
                 generation_params=payload.generated.generation_params,
                 sections_snapshot=payload.generated.sections_snapshot,
             )
@@ -1971,7 +1976,7 @@ class ApplicationService:
             draft = self.draft_repository.upsert_draft(
                 application_id=record.id,
                 user_id=record.user_id,
-                content_md=payload.generated.content_md,
+                content_md=self._normalize_draft_content(payload.generated.content_md),
                 generation_params=payload.generated.generation_params,
                 sections_snapshot=payload.generated.sections_snapshot,
             )
@@ -2134,7 +2139,7 @@ class ApplicationService:
         updated_draft = self.draft_repository.update_draft_content(
             application_id=application_id,
             user_id=user_id,
-            content_md=content,
+            content_md=self._normalize_draft_content(content),
         )
 
         # If current state indicates export happened, transition back to resume_ready
@@ -2232,7 +2237,7 @@ class ApplicationService:
 
         try:
             export_bytes = await generator(
-                markdown_content=draft.content_md,
+                markdown_content=self._normalize_draft_content(draft.content_md),
                 personal_info=personal_info,
                 page_length=str(draft.generation_params.get("page_length") or "1_page"),
             )
@@ -2594,6 +2599,12 @@ class ApplicationService:
     def _require_profile_name(self, profile, *, action: str) -> None:
         if not self._clean_profile_value(getattr(profile, "name", None)):
             raise ValueError(f"Complete your profile name before {action}.")
+
+    def _normalize_draft_content(self, content: str) -> str:
+        try:
+            return normalize_resume_markdown(content)
+        except ValueError as exc:
+            raise ValueError(f"Draft content does not match the structured resume layout: {exc}") from exc
 
     def _build_personal_info(self, profile) -> dict[str, Optional[str]]:
         return {

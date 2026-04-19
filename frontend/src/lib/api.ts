@@ -151,12 +151,43 @@ export type ResumeJudgeResult = {
   } | null;
 };
 
+export type ResumeRenderEntry = {
+  row1_left: string;
+  row1_right: string | null;
+  row2_left: string;
+  row2_right: string | null;
+  bullets: string[];
+};
+
+export type ResumeRenderSection = {
+  heading: string;
+  kind: "professional_experience" | "education" | "markdown";
+  markdown_body?: string | null;
+  entries: ResumeRenderEntry[];
+};
+
+export type ResumeRenderHeader = {
+  name?: string | null;
+  contact_line?: string | null;
+  extra_lines: string[];
+};
+
+export type ResumeRenderModel = {
+  render_contract_version: string;
+  header?: ResumeRenderHeader | null;
+  sections: ResumeRenderSection[];
+  normalized_markdown: string;
+};
+
 export type ResumeDraft = {
   id: string;
   application_id: string;
   content_md: string;
   generation_params: Record<string, unknown>;
   sections_snapshot: Record<string, unknown>;
+  render_contract_version?: string | null;
+  render_model?: ResumeRenderModel | null;
+  render_error?: string | null;
   review_flags?: Array<{
     section_name: string;
     text: string;

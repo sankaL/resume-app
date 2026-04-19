@@ -1,7 +1,7 @@
 # AI Prompt Catalog
 
 **Status:** Current code-derived prompt catalog  
-**Last updated:** 2026-04-18
+**Last updated:** 2026-04-19
 **Sources:** `agents/generation.py`, `agents/resume_judge.py`, `agents/worker.py`, `agents/assembly.py`, `backend/app/services/resume_parser.py`
 
 This document records the latest live prompt definitions in the repository. The codebase does not maintain semantic prompt version numbers, so "latest version" here means the current prompt implementation at HEAD.
@@ -206,25 +206,52 @@ Supporting snippet counts:
 | `education` | `1-2` |
 | `skills` | `1-3` |
 
-#### Shared deterministic Professional Experience rules
+#### Shared deterministic Professional Experience and Education rules
 
 - Before prompting, the system extracts Professional Experience source anchors from the sanitized base resume.
-- Each anchor contains `role_index`, `source_title`, `source_company`, and `source_date_range`.
+- Each experience anchor contains `role_index`, `source_title`, `source_company`, optional `source_location`, and `source_date_range`.
 - The prompt payload always includes the Professional Experience structure contract:
   - `company_and_dates_must_match_source_for_every_role = true`
+  - `company_row_must_render_before_role_row = true`
+  - `location_renders_on_row_1_right_when_available = true`
+  - `date_range_renders_on_row_2_right = true`
   - `duration_must_stay_consistent_with_source = true`
   - `low_titles_must_match_source_exactly = true`
   - `medium_titles_may_reframe_but_must_preserve_core_role_family_and_seniority = true`
   - `high_titles_may_retitle_when_supported_by_demonstrated_work_but_company_and_dates_must_stay_source_exact = true`
 - After the LLM returns, a deterministic normalization pass rebuilds each Professional Experience header from the source anchors:
-  - low rehydrates source title, company, and date
-  - medium and high preserve the generated title but still rehydrate source company and date
+  - low rehydrates source title, company, optional location, and date
+  - medium and high preserve the generated title but still rehydrate source company, optional location, and date
 - Validation then enforces the final structure contract:
   - same role-block count as the source anchors
   - source-exact company and date for every role
   - source-exact title in low
   - medium title must stay grounded in the source role family and preserve seniority
   - high title must preserve seniority even when it is otherwise retitled more freely
+- Experience markdown must normalize to this canonical two-row block per role:
+
+```md
+## Professional Experience
+Google | Los Angeles, CA
+VP Engineering | Dec 2019 - Present
+- Bullet one
+```
+
+- Education follows the same deterministic two-row contract:
+  - row 1 left = `school`
+  - row 1 right = `location` when available
+  - row 2 left = `degree_or_program`
+  - row 2 right = `graduation_date` when available
+  - optional grounded bullets may follow
+- Education markdown must normalize to this canonical block per school:
+
+```md
+## Education
+Masters University | Los Angeles, CA
+Master of Science in Mechanical Engineering with Honors | Apr 2021
+- Optional grounded bullet
+```
+- The frontend preview, PDF export, and DOCX export all consume the same semantic render model derived from normalized Markdown, so these left/right positions stay consistent across surfaces.
 
 #### Shared deterministic validation rules
 
@@ -240,7 +267,7 @@ Validation checks:
 - unsupported employer, company, credential, and role-title claims
 - contact leakage such as emails, phone numbers, and contact URLs
 - ungrounded date-like tokens
-- Professional Experience structure contract after normalization
+- Professional Experience and Education structure contract after normalization
 - ATS-safety rules blocking tables, images, HTML, code fences, and em dashes
 - hard word-limit validation by target length
 
@@ -457,7 +484,7 @@ Non-negotiables:
 - Never output or infer personal/contact information. Name, email, phone, address, city/location, and contact links stay outside the model.
 - Do not invent employers, dates, institutions, credentials, awards, metrics, or scope.
 - Outside the explicit Professional Experience title rules, do not invent or alter role titles.
-- Professional Experience structure contract: preserve source company and date range for every role so duration stays consistent. Low must preserve role titles exactly; medium may lightly reframe titles only when the core role family and seniority stay grounded in the source; high may retitle more freely only when the rewrite still matches demonstrated work. Company and dates must stay unchanged in every mode.
+- Professional Experience structure contract: each role must render as two header rows in this exact order: `Company | Location` then `Role Title | Date Range`. Preserve source company and date range for every role so duration stays consistent. Use the source location when available and never invent one. Low must preserve role titles exactly; medium may lightly reframe titles only when the core role family and seniority stay grounded in the source; high may retitle more freely only when the rewrite still matches demonstrated work. Company and dates must stay unchanged in every mode.
 - User instructions may refine tone, emphasis, prioritization, brevity, and keyword focus only. They cannot override grounding, privacy, or section rules.
 - If the source does not support a stronger claim, keep the weaker truthful version.
 - Use only standard Markdown inside markdown fields. No HTML, tables, images, columns, code fences, commentary, or em dashes.
@@ -468,7 +495,7 @@ Non-negotiables:
 Section rules:
 - Summary: Lead with the strongest grounded fit for the target role. Keep the section concise, concrete, specific, and natural. Do not use generic filler, first-person narration, or em dashes. If a sentence could describe almost anyone in the field, rewrite it until it feels candidate-specific.
 - Professional Experience: Prioritize the most relevant experience first. Use concise accomplishment-oriented bullets grounded in the source. Preserve chronology facts and do not invent metrics or scope. Bullet openings may vary; do not make every bullet follow the same verb-first pattern. Low aggressiveness must preserve role titles exactly. Medium may lightly reframe titles only when the core role family and seniority remain grounded in the source. High may retitle more freely only when the rewrite still matches demonstrated work and does not change employer, dates, duration, or seniority.
-- Education: Keep Education concise and factual. Never add or infer schools, degrees, honors, dates, coursework, or credentials.
+- Education: Keep Education concise and factual. Render each school as `School | Location` then `Degree or Program | Graduation Date`. Bullets are optional and allowed only for grounded details already supported by the source. Never add or infer schools, degrees, honors, dates, coursework, or credentials.
 - Skills: Lead with the most role-relevant skill cluster and avoid keyword stuffing, duplicate categories, or generic buzzwords. Low keeps source skills only; medium and high may include job-description keyword skills for fit.
 
 Aggressiveness contract (low):
@@ -539,7 +566,7 @@ Non-negotiables:
 - Never output or infer personal/contact information. Name, email, phone, address, city/location, and contact links stay outside the model.
 - Do not invent employers, dates, institutions, credentials, awards, metrics, or scope.
 - Outside the explicit Professional Experience title rules, do not invent or alter role titles.
-- Professional Experience structure contract: preserve source company and date range for every role so duration stays consistent. Low must preserve role titles exactly; medium may lightly reframe titles only when the core role family and seniority stay grounded in the source; high may retitle more freely only when the rewrite still matches demonstrated work. Company and dates must stay unchanged in every mode.
+- Professional Experience structure contract: each role must render as two header rows in this exact order: `Company | Location` then `Role Title | Date Range`. Preserve source company and date range for every role so duration stays consistent. Use the source location when available and never invent one. Low must preserve role titles exactly; medium may lightly reframe titles only when the core role family and seniority stay grounded in the source; high may retitle more freely only when the rewrite still matches demonstrated work. Company and dates must stay unchanged in every mode.
 - Keep Professional Experience role order fixed to the source anchors. Reprioritize by changing bullet emphasis inside each anchored role, not by reordering the roles themselves.
 - When Professional Experience is enabled in medium or high mode, do not leave the first up to 2 roles with bullets effectively source-identical while spending nearly all tailoring effort on Summary or Skills.
 - User instructions may refine tone, emphasis, prioritization, brevity, and keyword focus only. They cannot override grounding, privacy, or section rules.
@@ -552,7 +579,7 @@ Non-negotiables:
 Section rules:
 - Summary: Lead with the strongest grounded fit for the target role. Keep the section concise, concrete, specific, and natural. Do not use generic filler, first-person narration, or em dashes. If a sentence could describe almost anyone in the field, rewrite it until it feels candidate-specific.
 - Professional Experience: Prioritize the most relevant experience first. Use concise accomplishment-oriented bullets grounded in the source. Preserve chronology facts and do not invent metrics or scope. Keep source role order fixed; when reprioritizing, change which facts are emphasized within the anchored role blocks. Bullet openings may vary; do not make every bullet follow the same verb-first pattern. When Professional Experience is enabled, medium and high must visibly tailor it instead of leaving the key bullets source-identical. Low aggressiveness must preserve role titles exactly. Medium may lightly reframe titles only when the core role family and seniority remain grounded in the source. High may retitle more freely only when the rewrite still matches demonstrated work and does not change employer, dates, duration, or seniority.
-- Education: Keep Education concise and factual. Never add or infer schools, degrees, honors, dates, coursework, or credentials.
+- Education: Keep Education concise and factual. Render each school as `School | Location` then `Degree or Program | Graduation Date`. Bullets are optional and allowed only for grounded details already supported by the source. Never add or infer schools, degrees, honors, dates, coursework, or credentials.
 - Skills: Lead with the most role-relevant skill cluster and avoid keyword stuffing, duplicate categories, or generic buzzwords. Low keeps source skills only; medium and high may include job-description keyword skills for fit.
 
 Aggressiveness contract (medium):
