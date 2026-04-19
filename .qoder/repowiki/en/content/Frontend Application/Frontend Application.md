@@ -12,6 +12,7 @@
 - [ProfilePage.tsx](file://frontend/src/routes/ProfilePage.tsx)
 - [LoginPage.tsx](file://frontend/src/routes/LoginPage.tsx)
 - [MarkdownPreview.tsx](file://frontend/src/components/MarkdownPreview.tsx)
+- [ResumeRenderPreview.tsx](file://frontend/src/components/ResumeRenderPreview.tsx)
 - [StatusBadge.tsx](file://frontend/src/components/StatusBadge.tsx)
 - [button.tsx](file://frontend/src/components/ui/button.tsx)
 - [card.tsx](file://frontend/src/components/ui/card.tsx)
@@ -22,6 +23,7 @@
 - [env.ts](file://frontend/src/lib/env.ts)
 - [utils.ts](file://frontend/src/lib/utils.ts)
 - [application-options.ts](file://frontend/src/lib/application-options.ts)
+- [use-application-event-stream.ts](file://frontend/src/lib/use-application-event-stream.ts)
 - [package.json](file://frontend/package.json)
 - [vite.config.ts](file://frontend/vite.config.ts)
 - [tailwind.config.ts](file://frontend/tailwind.config.ts)
@@ -37,6 +39,14 @@
 - [Dockerfile](file://frontend/Dockerfile)
 - [dev-entrypoint.sh](file://frontend/dev-entrypoint.sh)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Updated ApplicationDetailPage documentation to reflect new streaming APIs and real-time communication
+- Added comprehensive coverage of ResumeRenderPreview component for structured resume rendering
+- Enhanced state management documentation with new useApplicationEventStream hook
+- Updated architecture diagrams to show streaming event handling and real-time updates
+- Added new section on real-time communication patterns and event streaming
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -54,11 +64,13 @@
 ## Introduction
 This document describes the React 19-based frontend application for the AI Resume Builder. It covers the application structure, routing with React Router DOM, state management patterns, component architecture, styling with Tailwind CSS, Chrome extension integration, authentication and session management, responsive design, accessibility, cross-browser compatibility, and integration with the backend API.
 
+**Updated** The application now features major modernization with streaming APIs, improved state management, new ResumeRenderPreview component, enhanced ApplicationDetailPage with streaming progress updates, and new hooks for real-time communication.
+
 ## Project Structure
 The frontend is a Vite-powered React application configured with TypeScript and Tailwind CSS. It uses React Router DOM for client-side routing and @supabase/supabase-js for authentication and session persistence. The application is organized into:
 - Routes: Page-level components under src/routes
-- Components: Reusable UI primitives under src/components/ui and specialized components like MarkdownPreview
-- Library: API clients, environment configuration, and utilities under src/lib
+- Components: Reusable UI primitives under src/components/ui and specialized components like ResumeRenderPreview
+- Library: API clients, environment configuration, utilities, and new streaming hooks under src/lib
 - Public assets: Chrome extension code under frontend/public/chrome-extension
 
 ```mermaid
@@ -67,19 +79,20 @@ A["main.tsx<br/>Bootstraps React and Router"] --> B["App.tsx<br/>Top-level Route
 B --> C["ProtectedRoute.tsx<br/>Auth gating"]
 C --> D["AppShell.tsx<br/>Layout shell"]
 D --> E["ApplicationsDashboardPage.tsx"]
-D --> F["ApplicationDetailPage.tsx"]
+D --> F["ApplicationDetailPage.tsx<br/>Enhanced with streaming"]
 D --> G["ExtensionPage.tsx"]
 D --> H["ProfilePage.tsx"]
 B --> I["LoginPage.tsx"]
 D --> J["button.tsx / card.tsx / input.tsx / label.tsx"]
-K["api.ts<br/>Enhanced API client with resume generation"] --> L["supabase.ts<br/>Supabase client"]
+K["api.ts<br/>Enhanced API client with streaming"] --> L["supabase.ts<br/>Supabase client"]
 M["env.ts<br/>Environment variables"] --> K
 N["tailwind.config.ts<br/>Theme and colors"] --> O["index.css<br/>Global styles"]
 P["vite.config.ts<br/>Aliases, host validation, and test setup"] --> Q["package.json<br/>Dependencies and scripts"]
-R["MarkdownPreview.tsx<br/>Markdown rendering component"] --> S["ReactMarkdown + GFM"]
-T["application-options.ts<br/>Constants for UI options"] --> U["Generation settings"]
-V["Railway Deployment<br/>GitHub Actions workflow"] --> W["Production Environment"]
-X["Dockerfile & Dev Entrypoint<br/>Containerized development"] --> Y["Local Development"]
+R["ResumeRenderPreview.tsx<br/>Structured resume rendering"] --> S["Markdown + GFM"]
+T["use-application-event-stream.ts<br/>Real-time event streaming"] --> U["React Query Integration"]
+V["MarkdownPreview.tsx<br/>Basic markdown rendering"] --> W["ReactMarkdown + GFM"]
+X["Railway Deployment<br/>GitHub Actions workflow"] --> Y["Production Environment"]
+Z["Dockerfile & Dev Entrypoint<br/>Containerized development"] --> AA["Local Development"]
 ```
 
 **Diagram sources**
@@ -88,10 +101,12 @@ X["Dockerfile & Dev Entrypoint<br/>Containerized development"] --> Y["Local Deve
 - [ProtectedRoute.tsx:1-44](file://frontend/src/routes/ProtectedRoute.tsx#L1-L44)
 - [AppShell.tsx:1-89](file://frontend/src/routes/AppShell.tsx#L1-L89)
 - [ApplicationsDashboardPage.tsx:1-264](file://frontend/src/routes/ApplicationsDashboardPage.tsx#L1-L264)
-- [ApplicationDetailPage.tsx:1-1289](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L1289)
+- [ApplicationDetailPage.tsx:1-2832](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L2832)
 - [ExtensionPage.tsx:1-200](file://frontend/src/routes/ExtensionPage.tsx#L1-L200)
 - [ProfilePage.tsx:1-264](file://frontend/src/routes/ProfilePage.tsx#L1-L264)
 - [LoginPage.tsx:1-111](file://frontend/src/routes/LoginPage.tsx#L1-L111)
+- [ResumeRenderPreview.tsx:1-125](file://frontend/src/components/ResumeRenderPreview.tsx#L1-L125)
+- [use-application-event-stream.ts:1-171](file://frontend/src/lib/use-application-event-stream.ts#L1-L171)
 - [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
 - [button.tsx:1-23](file://frontend/src/components/ui/button.tsx#L1-L23)
 - [card.tsx](file://frontend/src/components/ui/card.tsx)
@@ -121,33 +136,38 @@ X["Dockerfile & Dev Entrypoint<br/>Containerized development"] --> Y["Local Deve
 - ProtectedRoute: Guards protected routes using Supabase auth state.
 - UI primitives: Button, Card, Input, Label provide consistent styling and behavior.
 - Pages: Dashboard, Application Detail, Extension, Profile, Login.
-- **Enhanced ApplicationDetailPage**: Comprehensive resume generation UI with draft preview/editing, section-specific regeneration, and PDF export.
-- **MarkdownPreview**: Dedicated component for rendering markdown content with GitHub Flavored Markdown support.
+- **Enhanced ApplicationDetailPage**: Comprehensive resume generation UI with draft preview/editing, section-specific regeneration, PDF export, and real-time streaming updates.
+- **ResumeRenderPreview**: New component for structured resume rendering with specialized formatting for professional experience and education sections.
+- **useApplicationEventStream**: New hook for real-time event streaming with automatic reconnection and stale detection.
 
 Key patterns:
 - Centralized API client with bearer token injection via Supabase session.
 - Deferred UI updates using useDeferredValue for search performance.
 - Controlled forms with optimistic UI updates and rollback on errors.
-- Polling for long-running operations (extraction and generation progress).
-- **Enhanced state management**: Complex state handling for resume drafts, edit modes, and regeneration workflows.
+- **Enhanced**: Real-time event streaming with automatic reconnection and stale detection for extraction/generation progress.
+- **Enhanced**: Structured resume rendering with specialized components for different section types.
+- **Enhanced**: Improved state management with React Query integration and streaming event handling.
 
 **Section sources**
 - [AppShell.tsx:1-89](file://frontend/src/routes/AppShell.tsx#L1-L89)
 - [ProtectedRoute.tsx:1-44](file://frontend/src/routes/ProtectedRoute.tsx#L1-L44)
 - [button.tsx:1-23](file://frontend/src/components/ui/button.tsx#L1-L23)
 - [ApplicationsDashboardPage.tsx:1-264](file://frontend/src/routes/ApplicationsDashboardPage.tsx#L1-L264)
-- [ApplicationDetailPage.tsx:1-1289](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L1289)
+- [ApplicationDetailPage.tsx:1-2832](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L2832)
 - [ExtensionPage.tsx:1-200](file://frontend/src/routes/ExtensionPage.tsx#L1-L200)
 - [ProfilePage.tsx:1-264](file://frontend/src/routes/ProfilePage.tsx#L1-L264)
+- [ResumeRenderPreview.tsx:1-125](file://frontend/src/components/ResumeRenderPreview.tsx#L1-L125)
+- [use-application-event-stream.ts:1-171](file://frontend/src/lib/use-application-event-stream.ts#L1-L171)
 - [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
 - [api.ts:414-495](file://frontend/src/lib/api.ts#L414-L495)
 
 ## Architecture Overview
-The frontend follows a layered architecture:
-- Presentation layer: React components and pages with enhanced resume generation capabilities
+The frontend follows a layered architecture with enhanced real-time capabilities:
+- Presentation layer: React components and pages with enhanced resume generation and streaming updates
 - Routing layer: React Router DOM with nested routes and guards
-- State layer: React hooks for local component state; Supabase for auth session
-- Data layer: Enhanced API module with comprehensive resume generation endpoints
+- State layer: React hooks for local component state; Supabase for auth session; React Query for data caching
+- Streaming layer: Real-time event streaming with automatic reconnection and stale detection
+- Data layer: Enhanced API module with comprehensive resume generation endpoints and streaming support
 - Infrastructure: Tailwind CSS for styling, Vite for build tooling, and Railway for deployment
 
 ```mermaid
@@ -155,17 +175,26 @@ graph TB
 subgraph "Presentation"
 R["Routes and Pages"]
 U["UI Components"]
+RRP["ResumeRenderPreview"]
 MP["MarkdownPreview Component"]
+end
+subgraph "Streaming Layer"
+UES["useApplicationEventStream Hook"]
+ES["Event Stream Manager"]
+SD["Stale Detection"]
+AR["Automatic Reconnection"]
+end
+subgraph "State"
+SR["Supabase Auth"]
+RQ["React Query Cache"]
 end
 subgraph "Routing"
 RR["React Router DOM"]
 end
-subgraph "State"
-SR["Supabase Auth"]
-end
 subgraph "Data"
-AC["Enhanced API Client (api.ts)"]
+AC["Enhanced API Client"]
 BE["Backend API"]
+SES["Server-Sent Events"]
 end
 subgraph "Infrastructure"
 TW["Tailwind CSS"]
@@ -175,11 +204,15 @@ DC["Docker Containerization"]
 end
 R --> RR
 U --> TW
+RRP --> R
 MP --> R
-RR --> SR
-R --> AC
+UES --> ES
+ES --> SES
+SES --> AC
 AC --> BE
-SR --> AC
+UES --> RQ
+RQ --> SR
+RR --> SR
 VT --> R
 RD --> VT
 DC --> VT
@@ -188,6 +221,8 @@ DC --> VT
 **Diagram sources**
 - [App.tsx:1-36](file://frontend/src/App.tsx#L1-L36)
 - [ProtectedRoute.tsx:1-44](file://frontend/src/routes/ProtectedRoute.tsx#L1-L44)
+- [ResumeRenderPreview.tsx:97-125](file://frontend/src/components/ResumeRenderPreview.tsx#L97-L125)
+- [use-application-event-stream.ts:33-171](file://frontend/src/lib/use-application-event-stream.ts#L33-L171)
 - [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
 - [api.ts:414-495](file://frontend/src/lib/api.ts#L414-L495)
 - [supabase.ts:1-26](file://frontend/src/lib/supabase.ts#L1-L26)
@@ -286,23 +321,28 @@ Error --> |Yes| Continue["Show updated state"]
 - [ApplicationsDashboardPage.tsx:1-264](file://frontend/src/routes/ApplicationsDashboardPage.tsx#L1-L264)
 - [api.ts:244-267](file://frontend/src/lib/api.ts#L244-L267)
 
-### Application Detail
-- Loads application detail and progress, polls for extraction/generation updates.
-- Handles manual entry, retry extraction, duplicate review, and generation controls.
-- **Enhanced**: Manages comprehensive resume draft editing with preview/edit modes, section-specific regeneration, and PDF export.
+### Application Detail with Streaming Updates
+- **Enhanced**: Real-time event streaming with automatic reconnection and stale detection.
+- **Enhanced**: Structured resume rendering with ResumeRenderPreview component.
+- **Enhanced**: Comprehensive resume generation UI with draft preview/editing, section-specific regeneration, and PDF export.
+- **Enhanced**: Improved state management with React Query integration and streaming event handling.
 
-**Updated** Enhanced with comprehensive resume generation UI, draft preview/editing capabilities, section-specific regeneration controls, and PDF export functionality.
+**Updated** Major modernization with streaming APIs, improved state management, new ResumeRenderPreview component, enhanced ApplicationDetailPage with streaming progress updates, and new hooks for real-time communication.
 
 ```mermaid
 sequenceDiagram
 participant Page as "ApplicationDetailPage"
+participant StreamHook as "useApplicationEventStream"
 participant API as "api.ts"
 participant BE as "Backend"
 participant Timer as "Window Intervals"
-Page->>API : "fetchApplicationDetail(id)"
-API->>BE : "GET /api/applications/ : id"
-BE-->>API : "ApplicationDetail"
-API-->>Page : "Detail state"
+Page->>StreamHook : "Initialize with applicationId"
+StreamHook->>API : "openApplicationEventStream()"
+API->>BE : "SSE Connection"
+BE-->>API : "Event snapshots"
+API-->>StreamHook : "onSnapshot callback"
+StreamHook->>Page : "setQueryData updates"
+Page->>Page : "Update UI state"
 Page->>Timer : "Start polling for progress"
 loop Every 2s while extracting/generating
 Page->>API : "fetchApplicationProgress(id)"
@@ -329,17 +369,21 @@ API-->>Page : "Download PDF"
 ```
 
 **Diagram sources**
-- [ApplicationDetailPage.tsx:88-152](file://frontend/src/routes/ApplicationDetailPage.tsx#L88-L152)
+- [ApplicationDetailPage.tsx:442-447](file://frontend/src/routes/ApplicationDetailPage.tsx#L442-L447)
+- [use-application-event-stream.ts:129-153](file://frontend/src/lib/use-application-event-stream.ts#L129-L153)
 - [api.ts:414-495](file://frontend/src/lib/api.ts#L414-L495)
 - [api.ts:429-441](file://frontend/src/lib/api.ts#L429-L441)
 - [api.ts:474-494](file://frontend/src/lib/api.ts#L474-L494)
 
 **Section sources**
-- [ApplicationDetailPage.tsx:1-1289](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L1289)
+- [ApplicationDetailPage.tsx:1-2832](file://frontend/src/routes/ApplicationDetailPage.tsx#L1-L2832)
+- [use-application-event-stream.ts:1-171](file://frontend/src/lib/use-application-event-stream.ts#L1-L171)
+- [ResumeRenderPreview.tsx:1-125](file://frontend/src/components/ResumeRenderPreview.tsx#L1-L125)
 - [api.ts:414-495](file://frontend/src/lib/api.ts#L414-L495)
 
-### Resume Generation and Draft Management
-- **Draft Preview Mode**: Renders markdown content using the new MarkdownPreview component with GitHub Flavored Markdown support.
+### Resume Rendering and Draft Management
+- **ResumeRenderPreview**: New component for structured resume rendering with specialized formatting for professional experience and education sections.
+- **Draft Preview Mode**: Renders markdown content using the new ResumeRenderPreview component with GitHub Flavored Markdown support.
 - **Edit Mode**: Allows direct markdown editing with syntax highlighting and real-time preview.
 - **Section-specific Regeneration**: Dropdown selection for specific resume sections (summary, professional experience, education, skills, certifications, projects) with instruction-based regeneration.
 - **Full Regeneration**: Complete resume regeneration with current settings.
@@ -349,8 +393,14 @@ API-->>Page : "Download PDF"
 flowchart TD
 Draft["Resume Draft"] --> Preview["Preview Mode"]
 Draft --> Edit["Edit Mode"]
-Preview --> Markdown["MarkdownPreview Component"]
+Preview --> ResumeRender["ResumeRenderPreview Component"]
 Edit --> DirectEdit["Direct Markdown Editing"]
+ResumeRender --> Structured["Structured Rendering"]
+ResumeRender --> Markdown["Markdown Rendering"]
+Structured --> Professional["Professional Experience"]
+Structured --> Education["Education Sections"]
+Professional --> PreviewSections["Preview Sections"]
+Education --> PreviewSections
 Markdown --> RegenControls["Regeneration Controls"]
 DirectEdit --> SaveDraft["Save Draft"]
 RegenControls --> SectionSelect["Section Selection"]
@@ -364,16 +414,61 @@ Export --> Download["Download PDF"]
 ```
 
 **Diagram sources**
-- [ApplicationDetailPage.tsx:1149-1283](file://frontend/src/routes/ApplicationDetailPage.tsx#L1149-L1283)
-- [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
+- [ApplicationDetailPage.tsx:1726-1733](file://frontend/src/routes/ApplicationDetailPage.tsx#L1726-L1733)
+- [ResumeRenderPreview.tsx:97-125](file://frontend/src/components/ResumeRenderPreview.tsx#L97-L125)
 - [api.ts:429-441](file://frontend/src/lib/api.ts#L429-L441)
 - [api.ts:443-466](file://frontend/src/lib/api.ts#L443-L466)
 - [api.ts:474-494](file://frontend/src/lib/api.ts#L474-L494)
 
 **Section sources**
-- [ApplicationDetailPage.tsx:1149-1283](file://frontend/src/routes/ApplicationDetailPage.tsx#L1149-L1283)
-- [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
+- [ApplicationDetailPage.tsx:1726-1733](file://frontend/src/routes/ApplicationDetailPage.tsx#L1726-L1733)
+- [ResumeRenderPreview.tsx:1-125](file://frontend/src/components/ResumeRenderPreview.tsx#L1-L125)
 - [api.ts:429-494](file://frontend/src/lib/api.ts#L429-L494)
+
+### Real-Time Event Streaming
+- **useApplicationEventStream**: New hook for managing real-time event streams with automatic reconnection and stale detection.
+- **Event Handling**: Supports snapshots, progress updates, detail updates, and heartbeats.
+- **Connection Management**: Automatic reconnection with exponential backoff and stale timer.
+- **React Query Integration**: Seamless integration with React Query for state synchronization.
+
+**New** Comprehensive real-time communication system with automatic reconnection and stale detection.
+
+```mermaid
+sequenceDiagram
+participant Hook as "useApplicationEventStream"
+participant Controller as "AbortController"
+participant API as "openApplicationEventStream"
+participant Server as "Backend SSE"
+Hook->>Controller : "Create AbortController"
+Hook->>API : "Connect with callbacks"
+API->>Server : "Establish SSE connection"
+Server-->>API : "Event stream"
+API-->>Hook : "onSnapshot callback"
+Hook->>Hook : "markEvent() - setConnected"
+Hook->>Hook : "scheduleStaleTimer()"
+Loop Event Stream
+Server-->>API : "Progress update"
+API-->>Hook : "onProgress callback"
+Hook->>Hook : "setQueryData progress"
+Server-->>API : "Detail update"
+API-->>Hook : "onDetail callback"
+Hook->>Hook : "setQueryData detail"
+Server-->>API : "Heartbeat"
+API-->>Hook : "onHeartbeat callback"
+Hook->>Hook : "markEvent() - reset stale"
+end
+Hook->>Hook : "Connection lost"
+Hook->>Hook : "scheduleReconnect()"
+Hook->>Controller : "abort() on cleanup"
+```
+
+**Diagram sources**
+- [use-application-event-stream.ts:129-153](file://frontend/src/lib/use-application-event-stream.ts#L129-L153)
+- [use-application-event-stream.ts:114-127](file://frontend/src/lib/use-application-event-stream.ts#L114-L127)
+- [use-application-event-stream.ts:44-56](file://frontend/src/lib/use-application-event-stream.ts#L44-L56)
+
+**Section sources**
+- [use-application-event-stream.ts:1-171](file://frontend/src/lib/use-application-event-stream.ts#L1-L171)
 
 ### Chrome Extension Integration
 - ExtensionPage manages connection lifecycle: issue token, revoke token, and listen for bridge messages.
@@ -433,6 +528,7 @@ Web->>Ext : "postMessage REVOKE_EXTENSION_TOKEN {appUrl}"
 - Utility-first classes applied directly in components for rapid iteration.
 - Responsive breakpoints and spacing scales ensure consistent layouts across devices.
 - **Enhanced**: Custom prose styling for markdown preview with controlled typography and spacing.
+- **Enhanced**: Specialized styling for ResumeRenderPreview with structured section formatting.
 
 **Section sources**
 - [tailwind.config.ts:1-25](file://frontend/tailwind.config.ts#L1-L25)
@@ -440,6 +536,7 @@ Web->>Ext : "postMessage REVOKE_EXTENSION_TOKEN {appUrl}"
 - [card.tsx](file://frontend/src/components/ui/card.tsx)
 - [input.tsx](file://frontend/src/components/ui/input.tsx)
 - [label.tsx](file://frontend/src/components/ui/label.tsx)
+- [ResumeRenderPreview.tsx:31-95](file://frontend/src/components/ResumeRenderPreview.tsx#L31-L95)
 - [MarkdownPreview.tsx:9-14](file://frontend/src/components/MarkdownPreview.tsx#L9-L14)
 
 ## Dependency Analysis
@@ -447,7 +544,8 @@ Web->>Ext : "postMessage REVOKE_EXTENSION_TOKEN {appUrl}"
 - @supabase/supabase-js handles authentication and session persistence.
 - Tailwind CSS provides styling; Vite builds the app and aliases paths.
 - The API module centralizes authenticated requests and error handling.
-- **Enhanced**: New dependencies for markdown rendering and processing.
+- **Enhanced**: New dependencies for real-time communication and structured rendering.
+- **Enhanced**: React Query for data caching and state synchronization.
 
 ```mermaid
 graph LR
@@ -461,6 +559,9 @@ Vite["vite@^6.2.4"] --> Build["vite.config.ts"]
 Types["typescript@^5.8.3"] --> TSConfig["tsconfig.app.json"]
 Markdown["react-markdown@^10.1.0"] --> MP["MarkdownPreview.tsx"]
 GFM["remark-gfm@^4.0.1"] --> MP
+Markdown --> RRP["ResumeRenderPreview.tsx"]
+ReactQuery["@tanstack/react-query@^5.0.0"] --> RQ["React Query"]
+UES["use-application-event-stream.ts"] --> RQ
 ```
 
 **Diagram sources**
@@ -470,6 +571,8 @@ GFM["remark-gfm@^4.0.1"] --> MP
 - [tailwind.config.ts:1-25](file://frontend/tailwind.config.ts#L1-L25)
 - [vite.config.ts:1-28](file://frontend/vite.config.ts#L1-L28)
 - [MarkdownPreview.tsx:1-2](file://frontend/src/components/MarkdownPreview.tsx#L1-L2)
+- [ResumeRenderPreview.tsx:1-4](file://frontend/src/components/ResumeRenderPreview.tsx#L1-L4)
+- [use-application-event-stream.ts:1-11](file://frontend/src/lib/use-application-event-stream.ts#L1-L11)
 
 **Section sources**
 - [package.json:1-42](file://frontend/package.json#L1-L42)
@@ -479,6 +582,9 @@ GFM["remark-gfm@^4.0.1"] --> MP
 ## Performance Considerations
 - useDeferredValue for search input reduces re-renders during typing.
 - Optimistic UI updates followed by server sync improve perceived responsiveness.
+- **Enhanced**: Real-time event streaming with automatic reconnection and stale detection.
+- **Enhanced**: React Query integration for efficient data caching and synchronization.
+- **Enhanced**: Structured resume rendering with specialized components for better performance.
 - Polling intervals are conservative (every 2 seconds) to balance UX and resource usage.
 - Tailwind JIT compilation and minimal CSS reduce bundle size.
 - **Enhanced**: Debounced autosave for notes and efficient markdown rendering with memoization.
@@ -536,16 +642,20 @@ Common issues and resolutions:
 - Styling inconsistencies: Ensure Tailwind content paths include all component files and rebuild the project.
 - **Enhanced**: Markdown rendering issues: Verify react-markdown and remark-gfm dependencies are properly installed and configured.
 - **Enhanced**: Production access blocked: Verify `.up.railway.app` is included in Vite's allowed hosts configuration for both server and preview modes.
+- **Enhanced**: Real-time streaming issues: Check browser console for SSE connection errors and verify backend streaming endpoints.
+- **Enhanced**: Resume rendering problems: Verify ResumeRenderPreview props and ensure render_model structure matches expected format.
 
 **Section sources**
 - [api.ts:190-214](file://frontend/src/lib/api.ts#L190-L214)
 - [ExtensionPage.tsx:43-72](file://frontend/src/routes/ExtensionPage.tsx#L43-L72)
 - [tailwind.config.ts:4-5](file://frontend/tailwind.config.ts#L4-L5)
 - [MarkdownPreview.tsx:1-16](file://frontend/src/components/MarkdownPreview.tsx#L1-L16)
+- [ResumeRenderPreview.tsx:1-125](file://frontend/src/components/ResumeRenderPreview.tsx#L1-L125)
+- [use-application-event-stream.ts:114-127](file://frontend/src/lib/use-application-event-stream.ts#L114-L127)
 - [vite.config.ts:13-21](file://frontend/vite.config.ts#L13-L21)
 
 ## Conclusion
-The frontend application is a modular, authenticated React 19 app with clear separation of concerns. It leverages Supabase for authentication, React Router for navigation, and a centralized API client for backend integration. The UI is built with reusable components and Tailwind CSS, ensuring a consistent and responsive design. The Chrome extension integration demonstrates secure, scoped communication for job capture. **The enhanced ApplicationDetailPage now provides comprehensive resume generation capabilities with draft preview/editing, section-specific regeneration controls, and PDF export functionality, making it a complete solution for AI-powered resume creation.** The recent Vite configuration improvements ensure seamless operation in Railway's production environment with proper host validation for dynamic hostnames.
+The frontend application is a modular, authenticated React 19 app with clear separation of concerns. It leverages Supabase for authentication, React Router for navigation, and a centralized API client for backend integration. The UI is built with reusable components and Tailwind CSS, ensuring a consistent and responsive design. The Chrome extension integration demonstrates secure, scoped communication for job capture. **The enhanced ApplicationDetailPage now provides comprehensive resume generation capabilities with draft preview/editing, section-specific regeneration controls, PDF export functionality, and real-time streaming updates, making it a complete solution for AI-powered resume creation.** The new ResumeRenderPreview component offers specialized structured rendering for professional experience and education sections. The useApplicationEventStream hook enables robust real-time communication with automatic reconnection and stale detection. The recent Vite configuration improvements ensure seamless operation in Railway's production environment with proper host validation for dynamic hostnames.
 
 ## Appendices
 
@@ -582,6 +692,7 @@ class ApplicationDetailPage {
 +handleSectionRegeneration()
 +handleSaveDraft()
 +handleExportPdf()
++useApplicationEventStream()
 }
 class ExtensionPage {
 +status
@@ -599,10 +710,24 @@ class LoginPage {
 +password
 +handleSubmit()
 }
+class ResumeRenderPreview {
++model : ResumeRenderModel
++className : string
++render()
+}
 class MarkdownPreview {
 +content : string
 +className : string
 +render()
+}
+class useApplicationEventStream {
++applicationId : string
++enabled : boolean
++connected : boolean
++lastEventAt : string
++isStale : boolean
++connect()
++scheduleReconnect()
 }
 class Button
 class Card
@@ -619,7 +744,8 @@ ApplicationsDashboardPage --> Card : "uses"
 ApplicationDetailPage --> Button : "uses"
 ApplicationDetailPage --> Card : "uses"
 ApplicationDetailPage --> Input : "uses"
-ApplicationDetailPage --> MarkdownPreview : "uses"
+ApplicationDetailPage --> ResumeRenderPreview : "uses"
+ApplicationDetailPage --> useApplicationEventStream : "uses"
 ExtensionPage --> Button : "uses"
 ExtensionPage --> Card : "uses"
 ProfilePage --> Button : "uses"
@@ -635,11 +761,13 @@ LoginPage --> Label : "uses"
 - [ProtectedRoute.tsx:6-43](file://frontend/src/routes/ProtectedRoute.tsx#L6-L43)
 - [AppShell.tsx:8-88](file://frontend/src/routes/AppShell.tsx#L8-L88)
 - [ApplicationsDashboardPage.tsx:16-263](file://frontend/src/routes/ApplicationsDashboardPage.tsx#L16-L263)
-- [ApplicationDetailPage.tsx:38-1289](file://frontend/src/routes/ApplicationDetailPage.tsx#L38-L1289)
+- [ApplicationDetailPage.tsx:373-2832](file://frontend/src/routes/ApplicationDetailPage.tsx#L373-L2832)
 - [ExtensionPage.tsx:26-199](file://frontend/src/routes/ExtensionPage.tsx#L26-L199)
 - [ProfilePage.tsx:17-263](file://frontend/src/routes/ProfilePage.tsx#L17-L263)
 - [LoginPage.tsx:10-110](file://frontend/src/routes/LoginPage.tsx#L10-L110)
+- [ResumeRenderPreview.tsx:6-125](file://frontend/src/components/ResumeRenderPreview.tsx#L6-L125)
 - [MarkdownPreview.tsx:4-15](file://frontend/src/components/MarkdownPreview.tsx#L4-L15)
+- [use-application-event-stream.ts:33-171](file://frontend/src/lib/use-application-event-stream.ts#L33-L171)
 - [button.tsx:8-22](file://frontend/src/components/ui/button.tsx#L8-L22)
 - [card.tsx](file://frontend/src/components/ui/card.tsx)
 - [input.tsx](file://frontend/src/components/ui/input.tsx)
@@ -651,12 +779,14 @@ LoginPage --> Label : "uses"
 - Sufficient color contrast and readable typography scales.
 - Responsive grids and flexible layouts adapt to mobile and desktop.
 - **Enhanced**: Proper markdown accessibility with semantic HTML rendering and screen reader support.
+- **Enhanced**: Structured resume rendering with accessible section formatting and ARIA attributes.
 
 **Section sources**
 - [button.tsx:1-23](file://frontend/src/components/ui/button.tsx#L1-L23)
 - [input.tsx](file://frontend/src/components/ui/input.tsx)
 - [label.tsx](file://frontend/src/components/ui/label.tsx)
 - [tailwind.config.ts:6-21](file://frontend/tailwind.config.ts#L6-L21)
+- [ResumeRenderPreview.tsx:31-95](file://frontend/src/components/ResumeRenderPreview.tsx#L31-L95)
 - [MarkdownPreview.tsx:9-14](file://frontend/src/components/MarkdownPreview.tsx#L9-L14)
 
 ### Cross-Browser Compatibility
@@ -664,6 +794,7 @@ LoginPage --> Label : "uses"
 - Tailwind utilities provide consistent rendering across browsers.
 - PostCSS and autoprefixer ensure vendor prefixes where needed.
 - **Enhanced**: React Markdown compatibility across modern browsers with fallbacks for older versions.
+- **Enhanced**: Server-Sent Events compatibility with polyfills for older browsers.
 
 **Section sources**
 - [package.json:29-35](file://frontend/package.json#L29-L35)
@@ -679,6 +810,7 @@ The API module now includes comprehensive resume generation endpoints:
 - **triggerSectionRegeneration**: Section-specific regeneration with instruction-based customization
 - **cancelGeneration**: Cancel ongoing generation processes
 - **exportPdf**: Generate and download PDF resume with automatic detail refresh
+- **openApplicationEventStream**: New streaming endpoint for real-time progress updates
 
 **Section sources**
 - [api.ts:414-495](file://frontend/src/lib/api.ts#L414-L495)
@@ -693,3 +825,15 @@ The Vite configuration includes several key settings for optimal development and
 
 **Section sources**
 - [vite.config.ts:5-27](file://frontend/vite.config.ts#L5-L27)
+
+### Real-Time Communication Architecture
+The new streaming architecture provides robust real-time updates:
+
+- **Automatic Reconnection**: Exponential backoff with maximum 5-second delay
+- **Stale Detection**: 20-second timeout for detecting disconnected streams
+- **Event Types**: Support for snapshots, progress updates, detail changes, and heartbeats
+- **React Query Integration**: Seamless state synchronization with React Query cache
+- **Error Handling**: Graceful degradation with fallback polling mechanisms
+
+**Section sources**
+- [use-application-event-stream.ts:13-171](file://frontend/src/lib/use-application-event-stream.ts#L13-L171)

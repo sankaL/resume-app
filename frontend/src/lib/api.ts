@@ -771,10 +771,10 @@ export async function updateBaseResume(
   });
 }
 
-export async function deleteBaseResume(resumeId: string, force?: boolean): Promise<void> {
+export async function deleteBaseResume(resumeId: string, force: boolean = true): Promise<void> {
   const token = await getAccessToken();
   const response = await fetch(
-    `${env.VITE_API_URL}/api/base-resumes/${resumeId}?force=${force ?? false}`,
+    `${env.VITE_API_URL}/api/base-resumes/${resumeId}?force=${force}`,
     {
       method: "DELETE",
       headers: {

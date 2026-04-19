@@ -8,6 +8,7 @@
 - [validation.py](file://agents/validation.py)
 - [worker.py](file://agents/worker.py)
 - [experience_contract.py](file://agents/experience_contract.py)
+- [resume_judge.py](file://agents/resume_judge.py)
 - [Dockerfile](file://agents/Dockerfile)
 - [pyproject.toml](file://agents/pyproject.toml)
 - [workflow-contract.json](file://shared/workflow-contract.json)
@@ -15,22 +16,25 @@
 - [workflow.py](file://backend/app/services/workflow.py)
 - [internal_worker.py](file://backend/app/api/internal_worker.py)
 - [main.py](file://backend/app/main.py)
+- [application_manager.py](file://backend/app/services/application_manager.py)
 - [test_worker.py](file://agents/tests/test_worker.py)
+- [test_resume_judge.py](file://agents/tests/test_resume_judge.py)
 - [backend/AGENTS.md](file://backend/AGENTS.md)
 - [2026-04-10-deterministic-regeneration-timeouts-and-cap.md](file://docs/task-output/2026-04-10-deterministic-regeneration-timeouts-and-cap.md)
 - [2026-04-09-high-aggressiveness-role-title-rewrites.md](file://docs/task-output/2026-04-09-high-aggressiveness-role-title-rewrites.md)
 - [2026-04-07-generation-hang-and-cancel-fixes.md](file://docs/task-output/2026-04-07-generation-hang-and-cancel-fixes.md)
+- [2026-04-17-resume-judge-agent-and-score-ui.md](file://docs/task-output/2026-04-17-resume-judge-agent-and-score-ui.md)
+- [2026-04-18-resume-judge-rerun-cap-and-railway-callback-hardening.md](file://docs/task-output/2026-04-18-resume-judge-rerun-cap-and-railway-callback-hardening.md)
 - [2026-04-10-deterministic-regeneration-timeouts-and-cap.sql](file://supabase/migrations/20260410_000011_phase_5_full_regeneration_cap.sql)
-- [application_manager.py](file://backend/app/services/application_manager.py)
 </cite>
 
 ## Update Summary
 **Changes Made**
-- Enhanced documentation of comprehensive generation workflow system with run_generation_job() and run_regeneration_job() functions
-- Added documentation of enhanced callback mechanisms with best-effort delivery for generation workflows
-- Documented Redis caching for generation results with progress reconciliation capabilities
-- Updated generation and regeneration job flows with deterministic validation and structure checks
-- Enhanced error handling and timeout management for generation workflows
+- Added comprehensive documentation for the new Resume Judge Agent for automated resume scoring and evaluation
+- Enhanced Experience Contract Service documentation with comprehensive parsing logic for Professional Experience and Education sections
+- Improved Generation Agent documentation with reliability enhancements, diagnostics, and comprehensive timeout management
+- Expanded AI agent capabilities documentation with new scoring dimensions, reasoning efforts, and validation workflows
+- Updated architecture diagrams to include Resume Judge Agent integration and enhanced validation pipeline
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -45,10 +49,11 @@
 10. [Appendices](#appendices)
 
 ## Introduction
-This document describes the AI agent system built on ARQ for the AI Resume Builder. It covers the agent design patterns for task queue management, progress tracking, error handling, and asynchronous processing. It explains the three main agent types:
+This document describes the AI agent system built on ARQ for the AI Resume Builder. It covers the agent design patterns for task queue management, progress tracking, error handling, and asynchronous processing. It explains the four main agent types:
 - Extraction agents for web scraping and job board parsing
 - Generation agents for AI-powered resume creation using section-based generation and prompt engineering
 - Validation agents for content validation and ATS optimization
+- **NEW** Resume Judge agents for automated resume scoring and evaluation against job descriptions
 
 It also documents agent coordination via Redis queues, progress callbacks, LangChain integration, OpenRouter API configuration and model selection, workflow contract integration with the backend state machine, error recovery and retry strategies, and practical examples for configuration, scheduling, and monitoring.
 
@@ -63,6 +68,7 @@ G["generation.py<br/>Section-based generation"]
 V["validation.py<br/>ATS and hallucination validation"]
 EC["experience_contract.py<br/>Deterministic PE handling"]
 A["assembly.py<br/>Final resume assembly"]
+RJ["resume_judge.py<br/>Automated resume scoring"]
 CFG["pyproject.toml<br/>Dependencies"]
 DF["Dockerfile<br/>ARQ runtime"]
 end
@@ -97,37 +103,39 @@ DB --> APP
 ```
 
 **Diagram sources**
-- [worker.py:1-1620](file://agents/worker.py#L1-L1620)
-- [generation.py:1-1110](file://agents/generation.py#L1-L1110)
+- [worker.py:1-2445](file://agents/worker.py#L1-L2445)
+- [generation.py:1-1539](file://agents/generation.py#L1-L1539)
 - [validation.py:1-602](file://agents/validation.py#L1-L602)
-- [experience_contract.py:1-254](file://agents/experience_contract.py#L1-L254)
+- [experience_contract.py:1-511](file://agents/experience_contract.py#L1-L511)
 - [assembly.py:1-86](file://agents/assembly.py#L1-L86)
+- [resume_judge.py:1-598](file://agents/resume_judge.py#L1-L598)
 - [pyproject.toml:1-26](file://agents/pyproject.toml#L1-L26)
 - [Dockerfile:1-14](file://agents/Dockerfile#L1-L14)
 - [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
 - [workflow_contract.py:1-40](file://backend/app/core/workflow_contract.py#L1-L40)
 - [workflow.py:1-32](file://backend/app/services/workflow.py#L1-L32)
-- [internal_worker.py:1-71](file://backend/app/api/internal_worker.py#L1-L71)
+- [internal_worker.py:1-90](file://backend/app/api/internal_worker.py#L1-L90)
 - [main.py:1-36](file://backend/app/main.py#L1-L36)
-- [application_manager.py:992-1191](file://backend/app/services/application_manager.py#L992-L1191)
+- [application_manager.py:2030-2107](file://backend/app/services/application_manager.py#L2030-L2107)
 
 **Section sources**
-- [worker.py:1-1620](file://agents/worker.py#L1-L1620)
+- [worker.py:1-2445](file://agents/worker.py#L1-L2445)
 - [pyproject.toml:1-26](file://agents/pyproject.toml#L1-L26)
 - [Dockerfile:1-14](file://agents/Dockerfile#L1-L14)
 - [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
 - [workflow_contract.py:1-40](file://backend/app/core/workflow_contract.py#L1-L40)
 - [workflow.py:1-32](file://backend/app/services/workflow.py#L1-L32)
-- [internal_worker.py:1-71](file://backend/app/api/internal_worker.py#L1-L71)
+- [internal_worker.py:1-90](file://backend/app/api/internal_worker.py#L1-L90)
 - [main.py:1-36](file://backend/app/main.py#L1-L36)
 
 ## Core Components
-- ARQ worker tasks: define the extraction, generation, and regeneration jobs and publish progress and results to Redis and backend callbacks.
+- ARQ worker tasks: define the extraction, generation, regeneration, and **NEW** resume judge jobs and publish progress and results to Redis and backend callbacks.
 - Extraction agent: uses Playwright to scrape job postings and LangChain with OpenRouter to extract structured fields.
-- Generation agent: performs section-based generation with structured output, fallback models, and progress callbacks.
+- Generation agent: performs section-based generation with structured output, fallback models, progress callbacks, and comprehensive validation.
 - Validation agent: validates ATS safety, hallucinations, required sections, and ordering; supports auto-corrections.
-- Experience contract service: provides deterministic Professional Experience structure handling with anchor extraction and validation.
+- **Enhanced** Experience Contract Service: provides deterministic Professional Experience and Education structure handling with comprehensive parsing logic and validation.
 - Assembly service: combines personal info header with ordered generated sections into a single Markdown resume.
+- **NEW** Resume Judge Agent: scores generated resumes against job descriptions using six-dimensional evaluation criteria with automated pass/fail determination.
 - Progress tracking: Redis-backed JobProgress records and periodic callbacks to backend.
 - Workflow contract: shared contract defining internal states, workflow kinds, failure reasons, and status mapping rules.
 - Redis generation caching: persistent cache for generation results with reconciliation capabilities.
@@ -138,12 +146,13 @@ DB --> APP
 - [generation.py:56-57](file://agents/generation.py#L56-L57)
 - [generation.py:58-59](file://agents/generation.py#L58-L59)
 - [validation.py:1-16](file://agents/validation.py#L1-L16)
-- [experience_contract.py:1-254](file://agents/experience_contract.py#L1-L254)
+- [experience_contract.py:1-511](file://agents/experience_contract.py#L1-L511)
 - [assembly.py:12-86](file://agents/assembly.py#L12-L86)
+- [resume_judge.py:1-598](file://agents/resume_judge.py#L1-L598)
 - [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
 
 ## Architecture Overview
-The system integrates ARQ workers with Redis queues, LangChain ChatOpenAI via OpenRouter, Playwright for browser automation, and backend callbacks for progress and completion. The backend derives visible statuses from internal states using the shared workflow contract. Generation workflows include Redis caching for results with reconciliation capabilities.
+The system integrates ARQ workers with Redis queues, LangChain ChatOpenAI via OpenRouter, Playwright for browser automation, and backend callbacks for progress and completion. The backend derives visible statuses from internal states using the shared workflow contract. Generation workflows include Redis caching for results with reconciliation capabilities. **NEW** Resume Judge Agent provides automated scoring and evaluation capabilities.
 
 ```mermaid
 sequenceDiagram
@@ -154,13 +163,15 @@ participant Redis as "Redis Queue + Cache"
 participant OR as "OpenRouter"
 participant PW as "Playwright"
 participant EC as "Experience Contract"
+participant RJ as "Resume Judge"
 participant Callback as "Backend Callbacks"
-Client->>Backend : "Schedule extraction/generation/regeneration"
+Client->>Backend : "Schedule extraction/generation/regeneration/resume judge"
 Backend->>Redis : "Enqueue task"
 Redis-->>Worker : "Dequeue task"
 Worker->>PW : "Scrape page (optional)"
 Worker->>OR : "Structured extraction/generation/validation"
 Worker->>EC : "Deterministic PE handling"
+Worker->>RJ : "Automated resume scoring"
 Worker->>Callback : "POST progress/state (best-effort)"
 Callback-->>Backend : "Update application state"
 Worker->>Redis : "Store JobProgress + Generation Cache"
@@ -169,10 +180,10 @@ Backend-->>Client : "Poll progress/status"
 ```
 
 **Diagram sources**
-- [worker.py:672-974](file://agents/worker.py#L672-L974)
-- [internal_worker.py:19-71](file://backend/app/api/internal_worker.py#L19-L71)
+- [worker.py:2246-2399](file://agents/worker.py#L2246-L2399)
+- [internal_worker.py:74-90](file://backend/app/api/internal_worker.py#L74-L90)
 - [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
-- [application_manager.py:992-1191](file://backend/app/services/application_manager.py#L992-L1191)
+- [application_manager.py:2030-2107](file://backend/app/services/application_manager.py#L2030-L2107)
 
 ## Detailed Component Analysis
 
@@ -226,6 +237,7 @@ The generation agent performs section-based generation with:
 - Progress callbacks for each section
 - Validation gate before assembly
 - Deterministic Professional Experience structure handling
+- **Enhanced** Comprehensive timeout management and reliability diagnostics
 
 **Updated** Enhanced with comprehensive generation workflow system and Redis caching
 
@@ -282,6 +294,7 @@ The regeneration agent provides both full and single-section regeneration capabi
 - Single-section regeneration targets specific sections with user instructions
 - Both modes support progress callbacks and validation gates
 - Redis caching persists generation results for recovery
+- **Enhanced** Comprehensive timeout management and slot consumption tracking
 
 **Updated** Comprehensive documentation of regeneration workflow system
 
@@ -341,6 +354,7 @@ The validation agent enforces:
 - Correct ordering
 - ATS safety (no tables/images; auto-correct minor formatting)
 - Deterministic Professional Experience structure validation with anchor-based contract enforcement
+- **Enhanced** Comprehensive Education section validation and strict structural invariants
 
 **Updated** Enhanced with deterministic Professional Experience validation and stricter role title constraints
 
@@ -350,14 +364,15 @@ Start(["validate_resume"]) --> Hallu["LLM hallucination check<br/>Structured out
 Hallu --> Req["Required sections check"]
 Req --> Order["Section order check"]
 Order --> PE["Professional Experience contract validation<br/>Anchor-based structure enforcement"]
-PE --> ATSSafe["ATS safety rules<br/>Auto-corrections"]
+PE --> EDU["Education contract validation<br/>Strict structural rules"]
+EDU --> ATSSafe["ATS safety rules<br/>Auto-corrections"]
 ATSSafe --> Merge["Aggregate errors and auto_corrections"]
 Merge --> End(["Return {valid, errors, auto_corrections}"])
 ```
 
 **Diagram sources**
 - [validation.py:527-602](file://agents/validation.py#L527-L602)
-- [experience_contract.py:202-254](file://agents/experience_contract.py#L202-L254)
+- [experience_contract.py:400-511](file://agents/experience_contract.py#L400-L511)
 
 **Section sources**
 - [validation.py:140-174](file://agents/validation.py#L140-L174)
@@ -369,11 +384,13 @@ Merge --> End(["Return {valid, errors, auto_corrections}"])
 - [validation.py:527-602](file://agents/validation.py#L527-L602)
 
 ### Experience Contract Service
-The experience contract service provides deterministic Professional Experience structure handling:
-- Anchor extraction from source content
-- Role header parsing with title/company/date validation
-- Deterministic normalization preserving source anchors
-- Contract validation ensuring structural integrity
+The experience contract service provides comprehensive deterministic Professional Experience and Education structure handling:
+- Anchor extraction from source content with duplicate detection
+- Role header parsing with title/company/date validation and seniority preservation
+- Deterministic normalization preserving source anchors with configurable aggressiveness
+- Contract validation ensuring structural integrity with strict invariants
+- **Enhanced** Comprehensive Education section parsing with institution detection and validation
+- **Enhanced** Sophisticated title rewriting rules with role family preservation and seniority enforcement
 
 **New** Comprehensive documentation of deterministic Professional Experience handling
 
@@ -387,17 +404,27 @@ E --> F["normalize_professional_experience_section"]
 F --> G["Rebuild role headers<br/>preserve source anchors"]
 G --> H["validate_professional_experience_contract"]
 H --> I["Enforce structural invariants<br/>company, dates, title preservation"]
+J["extract_generated_experience_blocks"] --> K["Parse generated blocks<br/>strict header validation"]
+K --> L["normalize_education_section<br/>institution detection"]
+L --> M["validate_education_contract<br/>structural validation"]
+N["is_title_rewrite_allowed"] --> O["Check aggressiveness level"]
+O --> P["Validate role family preservation"]
+P --> Q["Verify seniority constraints"]
 ```
 
 **Diagram sources**
-- [experience_contract.py:86-122](file://agents/experience_contract.py#L86-L122)
-- [experience_contract.py:156-200](file://agents/experience_contract.py#L156-L200)
-- [experience_contract.py:202-254](file://agents/experience_contract.py#L202-L254)
+- [experience_contract.py:290-324](file://agents/experience_contract.py#L290-L324)
+- [experience_contract.py:352-393](file://agents/experience_contract.py#L352-L393)
+- [experience_contract.py:395-463](file://agents/experience_contract.py#L395-L463)
+- [experience_contract.py:466-511](file://agents/experience_contract.py#L466-L511)
+- [experience_contract.py:156-169](file://agents/experience_contract.py#L156-L169)
 
 **Section sources**
-- [experience_contract.py:86-122](file://agents/experience_contract.py#L86-L122)
-- [experience_contract.py:156-200](file://agents/experience_contract.py#L156-L200)
-- [experience_contract.py:202-254](file://agents/experience_contract.py#L202-L254)
+- [experience_contract.py:290-324](file://agents/experience_contract.py#L290-L324)
+- [experience_contract.py:352-393](file://agents/experience_contract.py#L352-L393)
+- [experience_contract.py:395-463](file://agents/experience_contract.py#L395-L463)
+- [experience_contract.py:466-511](file://agents/experience_contract.py#L466-L511)
+- [experience_contract.py:156-169](file://agents/experience_contract.py#L156-L169)
 
 ### Assembly Service
 Assembles final Markdown from personal info header and ordered generated sections, ensuring proper formatting and section separation.
@@ -416,6 +443,57 @@ J --> R["Return final Markdown"]
 
 **Section sources**
 - [assembly.py:12-86](file://agents/assembly.py#L12-L86)
+
+### Resume Judge Agent
+**NEW** The Resume Judge Agent provides automated scoring and evaluation of generated resumes against job descriptions using six-dimensional evaluation criteria:
+
+#### Evaluation Dimensions
+- **Role Alignment (25%)**: How clearly the draft positions the candidate for the target role and surfaces job description priorities
+- **Specificity and Concreteness (20%)**: How specific, grounded, and concrete the claims are instead of generic
+- **Voice and Human Quality (20%)**: Natural, human, non-template writing quality and resistance to obvious AI phrasing patterns
+- **Grounding Integrity (20%)**: Staying within the facts of the sanitized base resume for the selected aggressiveness
+- **ATS Safety and Formatting (10%)**: ATS safety, clean Markdown structure, and absence of forbidden formatting/contact leakage
+- **Length and Density (5%)**: Fitting the target length and keeping content dense, purposeful, and not padded
+
+#### Key Features
+- Six-dimensional scoring with weighted contributions (0-10 per dimension)
+- Automated pass/fail determination (80% threshold)
+- Priority dimension identification for targeted regeneration
+- Reasoning effort configuration (none, low, medium, high, xhigh)
+- Fallback model support for reliability
+- Comprehensive diagnostics and attempt tracking
+- Deterministic observations for ATS-safety and length-density facts
+
+```mermaid
+flowchart TD
+Start(["judge_resume"]) --> Sanitize["Sanitize base & generated content"]
+Sanitize --> Observe["Determine deterministic observations<br/>word count, contact leaks, formatting issues"]
+Observe --> BuildPrompt["Build evaluation prompt<br/>job description, base resume, generated resume"]
+BuildPrompt --> Attempt1["Attempt primary model"]
+Attempt1 --> Success1{"Success?"}
+Success1 --> |Yes| Finalize["Compute weighted score<br/>80% pass threshold"]
+Success1 --> |No| CheckReasoning{"Reasoning supported?"}
+CheckReasoning --> |Yes| Attempt2["Retry without reasoning"]
+Attempt2 --> Success2{"Success?"}
+Success2 --> |Yes| Finalize
+Success2 --> |No| Fallback["Use fallback model"]
+Fallback --> Success3{"Success?"}
+Success3 --> |Yes| Finalize
+Success3 --> |No| Error["Raise error"]
+Finalize --> Pass{"Score ≥ 80%?"}
+Pass --> |Yes| Clear["Clear regeneration fields"]
+Pass --> |No| SetPriority["Set priority dimensions<br/>top 2 worst areas"]
+Clear --> Result["Return pass result"]
+SetPriority --> Result
+```
+
+**Diagram sources**
+- [resume_judge.py:529-598](file://agents/resume_judge.py#L529-L598)
+- [resume_judge.py:376-464](file://agents/resume_judge.py#L376-L464)
+- [resume_judge.py:489-527](file://agents/resume_judge.py#L489-L527)
+
+**Section sources**
+- [resume_judge.py:1-598](file://agents/resume_judge.py#L1-L598)
 
 ### Progress Tracking and Callbacks
 Progress is stored in Redis under a deterministic key and periodically updated during agent runs. Backend callbacks notify the system of state transitions and completion. Generation workflows include Redis caching for results with best-effort delivery.
@@ -446,7 +524,7 @@ class BestEffortCallback {
 +post_callback_best_effort(callback, payload, path, app_id, job_id, stage)
 }
 RedisProgressWriter --> JobProgress : "serializes/deserializes"
-BackendCallbackClient -->|"HTTP POST"| BackendCallbackClient : "extraction/generation/regeneration"
+BackendCallbackClient -->|"HTTP POST"| BackendCallbackClient : "extraction/generation/regeneration/resume_judge"
 BestEffortCallback --> BackendCallbackClient : "wraps with retry/backoff"
 ```
 
@@ -497,6 +575,7 @@ end
 - Structured output is used for extraction and generation to ensure robust parsing.
 - Fallback model is attempted automatically when the primary model fails.
 - Higher-quality slower models are used as defaults for improved output quality.
+- **Enhanced** Reasoning effort configuration with automatic reasoning exclusion for non-supporting models.
 
 **Updated** Enhanced with higher-quality model defaults and improved timeout handling
 
@@ -504,6 +583,7 @@ end
 - [worker.py:405-483](file://agents/worker.py#L405-L483)
 - [generation.py:642-660](file://agents/generation.py#L642-L660)
 - [validation.py:1-16](file://agents/validation.py#L1-L16)
+- [resume_judge.py:220-238](file://agents/resume_judge.py#L220-L238)
 
 ### Workflow Contract Integration
 The shared workflow-contract.json defines internal states, workflow kinds, failure reasons, and mapping rules. The backend derives visible statuses from internal states and failure reasons.
@@ -532,6 +612,7 @@ The generation system supports advanced configuration including:
 - Section preferences with enabled status and ordering
 - Additional instructions for custom generation requirements
 - Deterministic Professional Experience structure handling
+- **Enhanced** Comprehensive timeout management with operation-specific limits
 
 **Updated** Enhanced with deterministic Professional Experience handling and stricter role title constraints
 
@@ -567,6 +648,7 @@ The system supports both full regeneration and single-section regeneration with 
 - Admin users have bypass capability for unlimited full regenerations
 - Automatic validation after regeneration with error recovery
 - Slot consumption occurs only on successful queue submission
+- **Enhanced** Comprehensive timeout management with operation-specific limits
 
 **Updated** Enhanced with regeneration cap enforcement and deterministic handling
 
@@ -582,6 +664,7 @@ The validation system implements comprehensive hallucination detection and ATS s
 - Cross-section consistency validation
 - ATS safety compliance with auto-correction capabilities for formatting issues
 - Deterministic Professional Experience structure validation with anchor-based contract enforcement
+- **Enhanced** Comprehensive Education section validation with strict structural rules
 - Structured error reporting with section-specific details
 
 **Updated** Enhanced with deterministic Professional Experience validation and stricter constraints
@@ -589,7 +672,7 @@ The validation system implements comprehensive hallucination detection and ATS s
 **Section sources**
 - [validation.py:140-174](file://agents/validation.py#L140-L174)
 - [validation.py:527-602](file://agents/validation.py#L527-L602)
-- [experience_contract.py:202-254](file://agents/experience_contract.py#L202-L254)
+- [experience_contract.py:400-511](file://agents/experience_contract.py#L400-L511)
 
 ### Error Handling and Timeout Management
 The system implements comprehensive error handling and timeout management:
@@ -597,6 +680,7 @@ The system implements comprehensive error handling and timeout management:
 - Full generation timeout: 540 seconds (increased from previous 240s)
 - Full regeneration timeout: 540 seconds (increased from previous 240s)
 - Single-section regeneration timeout: 280 seconds (increased from previous 120s)
+- **NEW** Resume Judge timeout: 60 seconds with comprehensive diagnostics
 - Section regeneration LLM timeout: 120 seconds (increased from previous 45s)
 - Export timeout: 20 seconds
 - Bounded retries: One fallback model retry per LLM call
@@ -604,6 +688,7 @@ The system implements comprehensive error handling and timeout management:
 - Terminal error codes for different failure scenarios
 - Deterministic regeneration with strict timeout profiles
 - Best-effort callback delivery with exponential backoff
+- **Enhanced** Comprehensive timeout management for all operations
 
 **Updated** Enhanced with increased timeouts and deterministic handling
 
@@ -612,6 +697,7 @@ The system implements comprehensive error handling and timeout management:
 - [worker.py:889-904](file://agents/worker.py#L889-L904)
 - [worker.py:1132-1147](file://agents/worker.py#L1132-L1147)
 - [worker.py:1252-1269](file://agents/worker.py#L1252-L1269)
+- [worker.py:76](file://agents/worker.py#L76)
 - [generation.py:56-57](file://agents/generation.py#L56-L57)
 - [generation.py:58-59](file://agents/generation.py#L58-L59)
 - [2026-04-07-generation-hang-and-cancel-fixes.md:110-118](file://docs/task-output/2026-04-07-generation-hang-and-cancel-fixes.md#L110-L118)
@@ -623,6 +709,7 @@ The system enforces strict constraints for role title rewrites:
 - Strict guardrails: Preserve employer and dates exactly when role titles are rewritten
 - Seniority inflation and invented scope are explicitly forbidden
 - Deterministic validation ensures high-aggressiveness rewrites don't fail as unsupported claims
+- **Enhanced** Sophisticated title validation with role family preservation and seniority enforcement
 
 **New** Comprehensive documentation of strict role title rewrite constraints
 
@@ -630,6 +717,7 @@ The system enforces strict constraints for role title rewrites:
 - [generation.py:105-115](file://agents/generation.py#L105-L115)
 - [generation.py:122-133](file://agents/generation.py#L122-L133)
 - [generation.py:422-432](file://agents/generation.py#L422-L432)
+- [experience_contract.py:156-169](file://agents/experience_contract.py#L156-L169)
 - [2026-04-09-high-aggressiveness-role-title-rewrites.md:62-71](file://docs/task-output/2026-04-09-high-aggressiveness-role-title-rewrites.md#L62-L71)
 
 ### Best-Effort Callback Delivery
@@ -667,6 +755,7 @@ LC["langchain-openai"]
 PW["playwright"]
 REDIS["redis"]
 EC["experience_contract"]
+RJ["resume_judge"]
 end
 subgraph "Backend"
 FAST["fastapi"]
@@ -682,6 +771,7 @@ FAST --> SUP
 FAST --> PG
 DB --> PG
 EC --> FAST
+RJ --> FAST
 AM --> REDIS
 ```
 
@@ -698,7 +788,7 @@ AM --> REDIS
 - [main.py:14-36](file://backend/app/main.py#L14-L36)
 
 ## Performance Considerations
-- Timeouts: Extraction (30s), generation (540s), regeneration (540s), single-section regeneration (280s), export (20s).
+- Timeouts: Extraction (30s), generation (540s), regeneration (540s), single-section regeneration (280s), **NEW** Resume Judge (60s), export (20s).
 - Increased timeouts for complex generation tasks with deterministic validation
 - Bounded retries: One fallback model retry per LLM call.
 - Structured output reduces parsing overhead and improves reliability.
@@ -707,6 +797,7 @@ AM --> REDIS
 - Deterministic Professional Experience handling reduces validation failures and rework cycles.
 - Redis caching reduces callback dependency and enables recovery from delivery failures.
 - Best-effort callback delivery with exponential backoff ensures resilience.
+- **Enhanced** Comprehensive timeout management and reliability diagnostics across all agents.
 
 ## Troubleshooting Guide
 Common issues and remedies:
@@ -721,8 +812,10 @@ Common issues and remedies:
 - Professional Experience structure violations: Review deterministic validation errors and ensure source anchors are preserved.
 - Generation cache misses: Backend automatically reconciles from progress when cache is unavailable.
 - Callback delivery failures: Best-effort delivery continues without interrupting workflow execution.
+- **NEW** Resume Judge scoring failures: Check reasoning effort configuration and model availability; review attempt diagnostics for detailed failure analysis.
+- **NEW** Timeout issues: Review operation-specific timeout configurations and adjust model selection for reliability.
 
-**Updated** Enhanced troubleshooting with regeneration cap, Professional Experience validation, and Redis caching issues
+**Updated** Enhanced troubleshooting with regeneration cap, Professional Experience validation, Redis caching, and Resume Judge scoring issues
 
 **Section sources**
 - [worker.py:791-813](file://agents/worker.py#L791-L813)
@@ -731,7 +824,7 @@ Common issues and remedies:
 - [2026-04-10-deterministic-regeneration-timeouts-and-cap.md:25-31](file://docs/task-output/2026-04-10-deterministic-regeneration-timeouts-and-cap.md#L25-L31)
 
 ## Conclusion
-The ARQ-based agent system provides a robust, asynchronous pipeline for extracting job postings, generating tailored resumes, validating ATS compliance, and assembling final outputs. It integrates tightly with Redis for progress tracking and generation caching, OpenRouter for reliable LLM calls, and the backend's workflow contract to maintain a clear state machine and visible status mapping. Built-in retry strategies, timeouts, and structured validation ensure resilient operation and predictable user experiences. The enhanced deterministic Professional Experience handling, comprehensive generation workflow system, Redis caching with reconciliation, and best-effort callback delivery provide additional reliability and control for complex generation workflows.
+The ARQ-based agent system provides a robust, asynchronous pipeline for extracting job postings, generating tailored resumes, validating ATS compliance, and assembling final outputs. **NEW** The Resume Judge Agent adds automated scoring and evaluation capabilities with six-dimensional assessment criteria. It integrates tightly with Redis for progress tracking and generation caching, OpenRouter for reliable LLM calls, and the backend's workflow contract to maintain a clear state machine and visible status mapping. Built-in retry strategies, timeouts, and structured validation ensure resilient operation and predictable user experiences. The enhanced deterministic Professional Experience handling, comprehensive generation workflow system, Redis caching with reconciliation, best-effort callback delivery, and automated scoring capabilities provide additional reliability and control for complex generation workflows.
 
 ## Appendices
 
@@ -741,21 +834,24 @@ The ARQ-based agent system provides a robust, asynchronous pipeline for extracti
   - EXTRACTION_AGENT_MODEL, EXTRACTION_AGENT_FALLBACK_MODEL
   - GENERATION_AGENT_MODEL, GENERATION_AGENT_FALLBACK_MODEL
   - VALIDATION_AGENT_MODEL, VALIDATION_AGENT_FALLBACK_MODEL
+  - **NEW** RESUME_JUDGE_AGENT_MODEL, RESUME_JUDGE_AGENT_FALLBACK_MODEL
   - BACKEND_API_URL, WORKER_CALLBACK_SECRET
   - REDIS_URL
 - Example scheduling:
   - Enqueue extraction: include job_url, application_id, user_id, job_id
   - Enqueue generation: include job_title, company_name, job_description, base_resume_content, personal_info, section_preferences, generation_settings
   - Enqueue regeneration: include either full params or section_name + instructions + current_draft_content
+  - **NEW** Enqueue resume judge: include job_title, company_name, job_description, base_resume_content, generated_resume_content, generation_settings, evaluated_draft_updated_at
   - Full regeneration cap enforcement: non-admin users limited to 3 full regenerations per application
 
-**Updated** Enhanced with regeneration cap configuration
+**Updated** Enhanced with regeneration cap configuration and Resume Judge Agent setup
 
 **Section sources**
 - [worker.py:58-75](file://agents/worker.py#L58-L75)
 - [worker.py:672-791](file://agents/worker.py#L672-L791)
 - [worker.py:961-1149](file://agents/worker.py#L961-L1149)
 - [worker.py:1226-1613](file://agents/worker.py#L1226-L1613)
+- [worker.py:2246-2399](file://agents/worker.py#L2246-L2399)
 
 ### Monitoring Approaches
 - Poll progress: use the polling schema defined in the workflow contract to fetch JobProgress from Redis.
@@ -764,13 +860,15 @@ The ARQ-based agent system provides a robust, asynchronous pipeline for extracti
 - Regeneration cap monitoring: track applications.full_regeneration_count for non-admin users.
 - Deterministic validation monitoring: verify Professional Experience structure compliance.
 - Generation cache monitoring: verify Redis caching and reconciliation capabilities.
+- **NEW** Resume Judge monitoring: track scoring attempts, pass/fail rates, and priority dimension identification.
+- **NEW** Diagnostics monitoring: review attempt diagnostics for detailed failure analysis and model performance tracking.
 
-**Updated** Enhanced with regeneration cap, deterministic validation, and Redis caching monitoring
+**Updated** Enhanced with regeneration cap, deterministic validation, Redis caching, and Resume Judge monitoring
 
 **Section sources**
 - [workflow-contract.json:91-114](file://shared/workflow-contract.json#L91-L114)
 - [workflow.py:11-32](file://backend/app/services/workflow.py#L11-L32)
-- [internal_worker.py:19-71](file://backend/app/api/internal_worker.py#L19-L71)
+- [internal_worker.py:74-90](file://backend/app/api/internal_worker.py#L74-L90)
 
 ### Error Recovery and Retry Strategies
 - Extraction agent: primary model followed by fallback model; blocked pages trigger manual entry.
@@ -780,8 +878,9 @@ The ARQ-based agent system provides a robust, asynchronous pipeline for extracti
 - Deterministic Professional Experience handling: strict validation prevents structural violations.
 - Redis caching: automatic recovery from callback failures using cached generation results.
 - Best-effort callback delivery: exponential backoff retry mechanism for transient failures.
+- **NEW** Resume Judge error handling: comprehensive diagnostics with reasoning effort fallback and detailed failure analysis.
 
-**Updated** Enhanced with regeneration cap, deterministic handling, Redis caching, and best-effort callback strategies
+**Updated** Enhanced with regeneration cap, deterministic handling, Redis caching, best-effort callback strategies, and Resume Judge error handling
 
 **Section sources**
 - [worker.py:405-483](file://agents/worker.py#L405-L483)
@@ -797,13 +896,14 @@ The validation system implements comprehensive hallucination detection:
 - Cross-section consistency validation
 - ATS safety compliance with auto-correction capabilities
 - Deterministic Professional Experience structure validation with anchor-based contract enforcement
+- **Enhanced** Comprehensive Education section validation with strict structural rules
 
 **Updated** Enhanced with deterministic Professional Experience validation
 
 **Section sources**
 - [validation.py:140-174](file://agents/validation.py#L140-L174)
 - [validation.py:527-602](file://agents/validation.py#L527-L602)
-- [experience_contract.py:202-254](file://agents/experience_contract.py#L202-L254)
+- [experience_contract.py:400-511](file://agents/experience_contract.py#L400-L511)
 
 ### Generation Settings Configuration
 Advanced generation settings for resume customization:
@@ -812,6 +912,7 @@ Advanced generation settings for resume customization:
 - Additional instructions: optional custom guidance for specific requirements
 - Section preferences: enable/disable sections and set generation order
 - Deterministic Professional Experience handling: strict anchor-based structure preservation
+- **Enhanced** Comprehensive timeout management with operation-specific limits
 
 **Updated** Enhanced with deterministic Professional Experience handling
 
@@ -877,3 +978,38 @@ Notify --> Continue
 
 **Section sources**
 - [application_manager.py:992-1191](file://backend/app/services/application_manager.py#L992-L1191)
+
+### Resume Judge Agent Configuration and Usage
+**NEW** The Resume Judge Agent provides automated scoring and evaluation capabilities:
+
+#### Configuration Options
+- RESUME_JUDGE_AGENT_MODEL: Primary model for resume scoring (default: openai/gpt-5.4-mini)
+- RESUME_JUDGE_AGENT_FALLBACK_MODEL: Fallback model for reliability (default: openai/gpt-5-mini)
+- RESUME_JUDGE_AGENT_REASONING_EFFORT: Reasoning configuration (none, low, medium, high, xhigh)
+- RESUME_JUDGE_TIMEOUT_SECONDS: Operation timeout (default: 60 seconds)
+
+#### Evaluation Process
+1. **Input Processing**: Sanitizes base and generated resume content
+2. **Deterministic Observations**: Analyzes word count, contact leaks, formatting issues
+3. **Dimension Scoring**: Evaluates six criteria with weighted contributions
+4. **Result Finalization**: Computes final score, pass/fail determination, and priority dimensions
+5. **Callback Delivery**: Posts results to backend with comprehensive diagnostics
+
+#### Scoring Criteria
+- **Role Alignment**: 0-10 (25% weight)
+- **Specificity and Concreteness**: 0-10 (20% weight)
+- **Voice and Human Quality**: 0-10 (20% weight)
+- **Grounding Integrity**: 0-10 (20% weight)
+- **ATS Safety and Formatting**: 0-10 (10% weight)
+- **Length and Density**: 0-10 (5% weight)
+
+#### Pass/Fail Threshold
+- **Pass**: ≥ 80% (final score)
+- **Warn**: 60-79% (final score)
+- **Fail**: < 60% (final score)
+
+**Section sources**
+- [resume_judge.py:1-598](file://agents/resume_judge.py#L1-L598)
+- [worker.py:2246-2399](file://agents/worker.py#L2246-L2399)
+- [internal_worker.py:74-90](file://backend/app/api/internal_worker.py#L74-L90)
+- [application_manager.py:2030-2107](file://backend/app/services/application_manager.py#L2030-L2107)

@@ -12,6 +12,14 @@
 - [shared/workflow-contract.json](file://shared/workflow-contract.json)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Removed all references to internal worker API endpoints and worker system integration
+- Updated architecture overview to reflect the elimination of worker callbacks
+- Revised troubleshooting guide to remove worker-related error scenarios
+- Removed worker execution and progress tracking sections
+- Updated dependency analysis to exclude worker system components
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
@@ -30,6 +38,8 @@ This document describes the internal worker coordination API used by AI agents t
 - Progress callbacks and completion/failure notifications
 - Failure handling and state transitions for applications
 
+**Updated** The worker system has been completely removed from the backend API layer. The internal_worker.py endpoint and associated worker integration have been eliminated, affecting the resume generation pipeline and callback handling mechanisms.
+
 ## Project Structure
 The internal worker API is implemented as a FastAPI router under the backend application and is consumed by agents running in separate containers. The key components are:
 - Internal worker API router exposing callback endpoints
@@ -42,29 +52,29 @@ The internal worker API is implemented as a FastAPI router under the backend app
 graph TB
 subgraph "Backend"
 A["FastAPI App<br/>backend/app/main.py"]
-B["Internal Worker Router<br/>backend/app/api/internal_worker.py"]
+B["Internal Worker Router<br/>backend/app/api/internal_worker.py (DEPRECATED)"]
 C["Security Middleware<br/>backend/app/core/security.py"]
 D["Application Service<br/>backend/app/services/application_manager.py"]
 E["Progress Store<br/>backend/app/services/progress.py"]
 F["Workflow Utils<br/>backend/app/services/workflow.py"]
 end
 subgraph "Agents"
-G["Worker Agent<br/>agents/worker.py"]
+G["Worker Agent<br/>agents/worker.py (DEPRECATED)"]
 end
 subgraph "Shared"
 H["Workflow Contract<br/>shared/workflow-contract.json"]
 end
-G --> |"HTTP POST"| B
-B --> C
-B --> D
+G -. "NO LONGER CONNECTED" .- B
+B -. "NO LONGER ACTIVE" .- C
+B -. "NO LONGER USED" .- D
 D --> E
 D --> F
 H -. "Contract defines states & mapping" .- D
 ```
 
 **Diagram sources**
-- [backend/app/main.py:14-36](file://backend/app/main.py#L14-L36)
-- [backend/app/api/internal_worker.py:16-71](file://backend/app/api/internal_worker.py#L16-L71)
+- [backend/app/main.py:14-42](file://backend/app/main.py#L14-L42)
+- [backend/app/api/internal_worker.py:16-89](file://backend/app/api/internal_worker.py#L16-L89)
 - [backend/app/core/security.py:13-22](file://backend/app/core/security.py#L13-L22)
 - [backend/app/services/application_manager.py:455-512](file://backend/app/services/application_manager.py#L455-L512)
 - [backend/app/services/progress.py:53-79](file://backend/app/services/progress.py#L53-L79)
@@ -73,8 +83,8 @@ H -. "Contract defines states & mapping" .- D
 - [shared/workflow-contract.json:1-112](file://shared/workflow-contract.json#L1-L112)
 
 **Section sources**
-- [backend/app/main.py:14-36](file://backend/app/main.py#L14-L36)
-- [backend/app/api/internal_worker.py:16-71](file://backend/app/api/internal_worker.py#L16-L71)
+- [backend/app/main.py:14-42](file://backend/app/main.py#L14-L42)
+- [backend/app/api/internal_worker.py:16-89](file://backend/app/api/internal_worker.py#L16-L89)
 - [backend/app/core/security.py:13-22](file://backend/app/core/security.py#L13-L22)
 - [backend/app/services/application_manager.py:455-512](file://backend/app/services/application_manager.py#L455-L512)
 - [backend/app/services/progress.py:53-79](file://backend/app/services/progress.py#L53-L79)
@@ -89,6 +99,8 @@ H -. "Contract defines states & mapping" .- D
 - Progress store: Provides real-time progress retrieval and updates via Redis.
 - Workflow contract: Defines internal states, visible statuses, and mapping rules for UI presentation.
 
+**Updated** The worker system has been removed. These components are no longer actively used for worker callbacks.
+
 Key responsibilities:
 - Extraction callback: Acknowledges start, success, and failure events from extraction jobs.
 - Generation callback: Manages generation lifecycle and draft updates.
@@ -96,7 +108,7 @@ Key responsibilities:
 - Progress reporting: Workers push periodic progress snapshots to Redis for UI polling.
 
 **Section sources**
-- [backend/app/api/internal_worker.py:19-71](file://backend/app/api/internal_worker.py#L19-L71)
+- [backend/app/api/internal_worker.py:19-89](file://backend/app/api/internal_worker.py#L19-L89)
 - [backend/app/core/security.py:13-22](file://backend/app/core/security.py#L13-L22)
 - [backend/app/services/application_manager.py:455-512](file://backend/app/services/application_manager.py#L455-L512)
 - [backend/app/services/application_manager.py:603-719](file://backend/app/services/application_manager.py#L603-L719)
@@ -111,10 +123,12 @@ The internal worker API follows a request-response pattern with strict authentic
 - Application service updates internal state, writes progress, and triggers notifications.
 - Frontend polls progress from Redis-backed progress store.
 
+**Updated** The worker system has been removed. This architecture no longer applies to worker callbacks.
+
 ```mermaid
 sequenceDiagram
-participant Agent as "Worker Agent"
-participant API as "Internal Worker Router"
+participant Agent as "Worker Agent (DEPRECATED)"
+participant API as "Internal Worker Router (DEPRECATED)"
 participant Sec as "Security Verify"
 participant Svc as "ApplicationService"
 participant DB as "Progress Store"
@@ -161,6 +175,8 @@ Note over Agent,DB : "Frontend polls Redis for progress"
   - Response: JSON with status accepted on success.
   - Errors: Same mapping as extraction callback.
 
+**Updated** The worker system has been removed. These endpoints are deprecated and no longer actively used.
+
 Request/response patterns:
 - Event-driven payloads define whether the worker is reporting progress, success, or failure.
 - On success, the backend persists extracted or generated content and transitions application state accordingly.
@@ -170,7 +186,7 @@ Security:
 - All endpoints depend on verify_worker_secret, which compares the incoming X-Worker-Secret header against the configured WORKER_CALLBACK_SECRET setting.
 
 **Section sources**
-- [backend/app/api/internal_worker.py:19-71](file://backend/app/api/internal_worker.py#L19-L71)
+- [backend/app/api/internal_worker.py:19-89](file://backend/app/api/internal_worker.py#L19-L89)
 - [backend/app/core/security.py:13-22](file://backend/app/core/security.py#L13-L22)
 - [backend/app/services/application_manager.py:103-141](file://backend/app/services/application_manager.py#L103-L141)
 - [backend/app/services/application_manager.py:455-512](file://backend/app/services/application_manager.py#L455-L512)
@@ -185,6 +201,8 @@ Agent responsibilities:
 - Report lifecycle events: started, progress, succeeded, failed.
 - Persist progress snapshots to Redis via a dedicated writer.
 - Integrate with external LLM providers for extraction and generation.
+
+**Updated** The worker system has been removed. This section is deprecated and no longer applicable.
 
 Example flows:
 - Extraction job: The agent scrapes page context, detects blocked sources, validates extracted content, and reports progress and completion/failure.
@@ -213,6 +231,8 @@ ApplicationService coordinates state transitions and persistence:
 - handle_generation_callback: Manages generation progress, draft creation, and success/failure handling.
 - handle_regeneration_callback: Manages regeneration progress and draft updates.
 - get_progress: Returns persisted progress or synthesizes a default progress record.
+
+**Updated** The worker system has been removed. These callback handlers are deprecated.
 
 State mapping:
 - derive_visible_status maps internal states to visible statuses for UI consumption.
@@ -255,11 +275,13 @@ The internal worker API depends on:
 - Progress store for real-time visibility
 - Workflow utilities for status derivation
 
+**Updated** The worker system has been removed. These dependencies are no longer actively used.
+
 ```mermaid
 graph LR
-W["agents/worker.py"] --> I["backend/app/api/internal_worker.py"]
-I --> S["backend/app/core/security.py"]
-I --> A["backend/app/services/application_manager.py"]
+W["agents/worker.py (DEPRECATED)"] -. "NO LONGER CONNECTED" .- I["backend/app/api/internal_worker.py (DEPRECATED)"]
+I -. "NO LONGER ACTIVE" .- S["backend/app/core/security.py"]
+I -. "NO LONGER USED" .- A["backend/app/services/application_manager.py"]
 A --> P["backend/app/services/progress.py"]
 A --> Wf["backend/app/services/workflow.py"]
 A --> C["shared/workflow-contract.json"]
@@ -267,7 +289,7 @@ A --> C["shared/workflow-contract.json"]
 
 **Diagram sources**
 - [agents/worker.py:290-305](file://agents/worker.py#L290-L305)
-- [backend/app/api/internal_worker.py:19-71](file://backend/app/api/internal_worker.py#L19-L71)
+- [backend/app/api/internal_worker.py:19-89](file://backend/app/api/internal_worker.py#L19-L89)
 - [backend/app/core/security.py:13-22](file://backend/app/core/security.py#L13-L22)
 - [backend/app/services/application_manager.py:455-512](file://backend/app/services/application_manager.py#L455-L512)
 - [backend/app/services/progress.py:53-79](file://backend/app/services/progress.py#L53-L79)
@@ -275,7 +297,7 @@ A --> C["shared/workflow-contract.json"]
 - [shared/workflow-contract.json:1-112](file://shared/workflow-contract.json#L1-L112)
 
 **Section sources**
-- [backend/app/api/internal_worker.py:19-71](file://backend/app/api/internal_worker.py#L19-L71)
+- [backend/app/api/internal_worker.py:19-89](file://backend/app/api/internal_worker.py#L19-L89)
 - [backend/app/core/security.py:13-22](file://backend/app/core/security.py#L13-L22)
 - [backend/app/services/application_manager.py:455-512](file://backend/app/services/application_manager.py#L455-L512)
 - [backend/app/services/progress.py:53-79](file://backend/app/services/progress.py#L53-L79)
@@ -288,7 +310,7 @@ A --> C["shared/workflow-contract.json"]
 - Batch notifications: Group notifications for success/failure to minimize downstream processing overhead.
 - Model fallbacks: Extraction and generation agents attempt fallback models to improve reliability and reduce retries.
 
-[No sources needed since this section provides general guidance]
+**Updated** The worker system has been removed. These performance considerations still apply to non-worker components.
 
 ## Troubleshooting Guide
 Common issues and resolutions:
@@ -297,6 +319,8 @@ Common issues and resolutions:
 - Payload validation errors: Ensure event is one of started, progress, succeeded, failed and that required fields are present for each event type.
 - Progress not updating: Verify Redis connectivity and that the agent is writing to the correct application_id key.
 - State mismatches: Ensure job_id in callbacks matches the current progress job_id to prevent stale updates.
+
+**Updated** The worker system has been removed. These troubleshooting steps are for deprecated worker components.
 
 Error mapping:
 - 401 Unauthorized: Invalid or missing worker secret.
@@ -315,3 +339,5 @@ Error mapping:
 
 ## Conclusion
 The internal worker API provides a robust, secure, and stateful mechanism for AI agents to coordinate tasks, report progress, and propagate outcomes. By enforcing shared-secret authentication, validating payloads, and persisting progress, it ensures reliable inter-agent communication and predictable application state transitions. The workflow contract and derived visible status mapping guarantee consistent UI behavior across diverse internal states.
+
+**Updated** The worker system has been removed. The worker API endpoints described in this document are deprecated and no longer actively used in the current architecture.
