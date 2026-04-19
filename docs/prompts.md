@@ -267,7 +267,7 @@ Validation checks:
 - unsupported employer, company, credential, and role-title claims
 - contact leakage such as emails, phone numbers, and contact URLs
 - ungrounded date-like tokens
-- Professional Experience and Education structure contract after normalization
+- Professional Experience and Education structure contract after normalization, including strict two-row Professional Experience entry parsing even when source anchors are unavailable
 - ATS-safety rules blocking tables, images, HTML, code fences, and em dashes
 - hard word-limit validation by target length
 

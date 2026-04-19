@@ -15,6 +15,13 @@
 - [docs/database_schema.md](file://docs/database_schema.md)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Updated deletion endpoint documentation to reflect enhanced proactive reference clearing logic
+- Added improved error handling for foreign key violations with clearer messaging
+- Updated frontend API documentation to reflect new force parameter defaults
+- Enhanced troubleshooting guide with new deletion scenarios
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [Project Structure](#project-structure)
@@ -73,9 +80,9 @@ SCHEMA --> REPO_PROFILE
 ```
 
 **Diagram sources**
-- [backend/app/api/base_resumes.py:1-242](file://backend/app/api/base_resumes.py#L1-L242)
-- [backend/app/services/base_resumes.py:1-154](file://backend/app/services/base_resumes.py#L1-L154)
-- [backend/app/db/base_resumes.py:1-184](file://backend/app/db/base_resumes.py#L1-L184)
+- [backend/app/api/base_resumes.py:1-256](file://backend/app/api/base_resumes.py#L1-L256)
+- [backend/app/services/base_resumes.py:1-163](file://backend/app/services/base_resumes.py#L1-L163)
+- [backend/app/db/base_resumes.py:1-196](file://backend/app/db/base_resumes.py#L1-L196)
 - [backend/app/services/resume_parser.py:1-228](file://backend/app/services/resume_parser.py#L1-L228)
 - [frontend/src/lib/api.ts:328-397](file://frontend/src/lib/api.ts#L328-L397)
 - [frontend/src/routes/BaseResumesPage.tsx:1-185](file://frontend/src/routes/BaseResumesPage.tsx#L1-L185)
@@ -86,7 +93,7 @@ SCHEMA --> REPO_PROFILE
 - [docs/database_schema.md:46-246](file://docs/database_schema.md#L46-L246)
 
 **Section sources**
-- [backend/app/api/base_resumes.py:1-242](file://backend/app/api/base_resumes.py#L1-L242)
+- [backend/app/api/base_resumes.py:1-256](file://backend/app/api/base_resumes.py#L1-L256)
 - [frontend/src/lib/api.ts:328-397](file://frontend/src/lib/api.ts#L328-L397)
 - [frontend/src/routes/BaseResumesPage.tsx:1-185](file://frontend/src/routes/BaseResumesPage.tsx#L1-L185)
 - [frontend/src/routes/BaseResumeEditorPage.tsx:1-472](file://frontend/src/routes/BaseResumeEditorPage.tsx#L1-L472)
@@ -104,9 +111,9 @@ Key relationships:
 - Applications reference base resumes for generation and export.
 
 **Section sources**
-- [backend/app/api/base_resumes.py:85-242](file://backend/app/api/base_resumes.py#L85-L242)
-- [backend/app/services/base_resumes.py:32-154](file://backend/app/services/base_resumes.py#L32-L154)
-- [backend/app/db/base_resumes.py:31-184](file://backend/app/db/base_resumes.py#L31-L184)
+- [backend/app/api/base_resumes.py:85-256](file://backend/app/api/base_resumes.py#L85-L256)
+- [backend/app/services/base_resumes.py:32-163](file://backend/app/services/base_resumes.py#L32-L163)
+- [backend/app/db/base_resumes.py:31-196](file://backend/app/db/base_resumes.py#L31-L196)
 - [backend/app/services/resume_parser.py:13-228](file://backend/app/services/resume_parser.py#L13-L228)
 - [frontend/src/lib/api.ts:328-397](file://frontend/src/lib/api.ts#L328-L397)
 - [docs/database_schema.md:48-113](file://docs/database_schema.md#L48-L113)
@@ -148,7 +155,7 @@ API-->>UI : "200 OK BaseResumeSummary"
 ```
 
 **Diagram sources**
-- [backend/app/api/base_resumes.py:94-242](file://backend/app/api/base_resumes.py#L94-L242)
+- [backend/app/api/base_resumes.py:94-256](file://backend/app/api/base_resumes.py#L94-L256)
 - [backend/app/services/base_resumes.py:55-141](file://backend/app/services/base_resumes.py#L55-L141)
 - [backend/app/db/base_resumes.py:59-165](file://backend/app/db/base_resumes.py#L59-L165)
 - [backend/app/db/profiles.py:196-220](file://backend/app/db/profiles.py#L196-L220)
@@ -173,17 +180,19 @@ API-->>UI : "200 OK BaseResumeSummary"
   - Response: BaseResumeDetail
 - Update base resume
   - Method: PATCH
-  - Path: /api/base-resumes/{resume_id}
+  - Path: /api/base-resumes/{id}
   - Request: UpdateBaseResumeRequest (optional name, content_md)
   - Response: BaseResumeDetail
 - Delete base resume
   - Method: DELETE
-  - Path: /api/base-resumes/{resume_id}?force=false
+  - Path: /api/base-resumes/{id}?force=true
   - Response: 204 No Content
 - Set default base resume
   - Method: POST
-  - Path: /api/base-resumes/{resume_id}/set-default
+  - Path: /api/base-resumes/{id}/set-default
   - Response: BaseResumeSummary
+
+**Updated** Enhanced deletion functionality now includes proactive reference clearing and improved error handling
 
 Request/Response Schemas
 - CreateBaseResumeRequest
@@ -213,7 +222,7 @@ Error Handling
 - 500 Internal Server Error: Unexpected server error
 
 **Section sources**
-- [backend/app/api/base_resumes.py:85-242](file://backend/app/api/base_resumes.py#L85-L242)
+- [backend/app/api/base_resumes.py:85-256](file://backend/app/api/base_resumes.py#L85-L256)
 - [backend/app/api/base_resumes.py:27-70](file://backend/app/api/base_resumes.py#L27-L70)
 
 ### PDF Upload and LLM Cleanup
@@ -242,8 +251,10 @@ Error Handling
 - Default resume computation via profile repository
 - Deletion safety: prevents deletion if referenced by applications unless force=true
 
+**Updated** Enhanced deletion logic now includes proactive reference clearing and improved error handling
+
 **Section sources**
-- [backend/app/services/base_resumes.py:32-154](file://backend/app/services/base_resumes.py#L32-L154)
+- [backend/app/services/base_resumes.py:32-163](file://backend/app/services/base_resumes.py#L32-L163)
 
 ### Database Layer: Repositories
 - BaseResumeRepository
@@ -257,12 +268,14 @@ Error Handling
   - fetch_default_resume_id(user_id)
   - update_default_resume(user_id, resume_id)
 
+**Updated** Enhanced deletion functionality now includes proactive reference clearing logic
+
 RLS and Constraints
 - base_resumes: RLS per user; composite foreign keys; CHECK constraints on non-blank name/content
 - profiles: default_base_resume_id references base_resumes with ON DELETE SET NULL
 
 **Section sources**
-- [backend/app/db/base_resumes.py:31-184](file://backend/app/db/base_resumes.py#L31-L184)
+- [backend/app/db/base_resumes.py:31-196](file://backend/app/db/base_resumes.py#L31-L196)
 - [backend/app/db/profiles.py:38-225](file://backend/app/db/profiles.py#L38-L225)
 - [supabase/migrations/20260407_000004_phase_2_base_resumes.sql:14-76](file://supabase/migrations/20260407_000004_phase_2_base_resumes.sql#L14-L76)
 - [docs/database_schema.md:84-113](file://docs/database_schema.md#L84-L113)
@@ -271,6 +284,8 @@ RLS and Constraints
 - BaseResumesPage: Lists base resumes, sets default, deletes
 - BaseResumeEditorPage: New from blank or upload; edit; save; set default; delete
 - API helpers: listBaseResumes, createBaseResume, fetchBaseResume, updateBaseResume, deleteBaseResume, setDefaultBaseResume, uploadBaseResume
+
+**Updated** Frontend API now defaults to force=true for delete operations
 
 **Section sources**
 - [frontend/src/routes/BaseResumesPage.tsx:12-185](file://frontend/src/routes/BaseResumesPage.tsx#L12-L185)
@@ -292,6 +307,36 @@ RLS and Constraints
 - [backend/app/services/base_resumes.py:41-43](file://backend/app/services/base_resumes.py#L41-L43)
 - [backend/app/api/profiles.py:13-51](file://backend/app/api/profiles.py#L13-L51)
 - [docs/database_schema.md:48-71](file://docs/database_schema.md#L48-L71)
+
+### Enhanced Deletion Functionality
+
+**Updated** The base resume deletion functionality has been significantly enhanced with proactive reference clearing logic and improved error handling.
+
+#### Proactive Reference Clearing
+The database layer now automatically clears all references to a base resume before deletion:
+
+1. **Profile Default Clearing**: Updates any profile with this resume as default back to null
+2. **Application Reference Clearing**: Sets base_resume_id to null for all applications referencing this resume
+3. **Safe Deletion**: Only proceeds with actual deletion after references are cleared
+
+#### Improved Error Handling
+Enhanced error handling provides clearer feedback for different deletion scenarios:
+
+- **Referenced Without Force**: When a base resume is referenced by applications and force=false, returns a clear error message
+- **Foreign Key Violations**: Maps PostgreSQL foreign key violations to PermissionError with descriptive messaging
+- **Not Found Errors**: Distinguishes between missing records and deletion failures
+
+#### Frontend API Defaults
+The frontend API now defaults to force=true for delete operations, providing a smoother user experience while maintaining safety:
+
+- **Default Behavior**: deleteBaseResume(resumeId) automatically uses force=true
+- **Explicit Control**: Can still override with deleteBaseResume(resumeId, force=false) for manual control
+- **User Experience**: Reduces friction for users who want to delete referenced resumes
+
+**Section sources**
+- [backend/app/db/base_resumes.py:153-177](file://backend/app/db/base_resumes.py#L153-L177)
+- [backend/app/services/base_resumes.py:109-136](file://backend/app/services/base_resumes.py#L109-L136)
+- [frontend/src/lib/api.ts:774-796](file://frontend/src/lib/api.ts#L774-L796)
 
 ### Example Workflows
 
@@ -339,6 +384,23 @@ Note: Section-based editing is performed on application drafts; base resume cont
 - [frontend/src/lib/api.ts:379-383](file://frontend/src/lib/api.ts#L379-L383)
 - [backend/app/api/profiles.py:77-88](file://backend/app/api/profiles.py#L77-L88)
 
+#### Enhanced Deletion Workflow
+**Updated** Enhanced deletion workflow with proactive reference clearing
+
+- **Automatic Deletion**: DELETE /api/base-resumes/{id}?force=true
+  - Proactively clears profile default references
+  - Clears application base_resume_id references
+  - Deletes the base resume safely
+- **Manual Control**: DELETE /api/base-resumes/{id}?force=false
+  - Prevents deletion if referenced by applications
+  - Requires explicit force=true to proceed
+- **Frontend Usage**: deleteBaseResume(resumeId) - automatically uses force=true
+
+**Section sources**
+- [backend/app/api/base_resumes.py:225-239](file://backend/app/api/base_resumes.py#L225-L239)
+- [backend/app/db/base_resumes.py:153-177](file://backend/app/db/base_resumes.py#L153-L177)
+- [frontend/src/lib/api.ts:774-796](file://frontend/src/lib/api.ts#L774-L796)
+
 ## Dependency Analysis
 The API depends on the service layer, which in turn depends on repositories and profile management. The frontend relies on API helpers for all operations.
 
@@ -361,9 +423,9 @@ API_PROF["backend/app/api/profiles.py"] --> REPO_PROF
 - [backend/app/api/profiles.py:8-9](file://backend/app/api/profiles.py#L8-L9)
 
 **Section sources**
-- [backend/app/api/base_resumes.py:1-242](file://backend/app/api/base_resumes.py#L1-L242)
-- [backend/app/services/base_resumes.py:1-154](file://backend/app/services/base_resumes.py#L1-L154)
-- [backend/app/db/base_resumes.py:1-184](file://backend/app/db/base_resumes.py#L1-L184)
+- [backend/app/api/base_resumes.py:1-256](file://backend/app/api/base_resumes.py#L1-L256)
+- [backend/app/services/base_resumes.py:1-163](file://backend/app/services/base_resumes.py#L1-L163)
+- [backend/app/db/base_resumes.py:1-196](file://backend/app/db/base_resumes.py#L1-L196)
 - [backend/app/db/profiles.py:1-225](file://backend/app/db/profiles.py#L1-L225)
 - [frontend/src/lib/api.ts:1-489](file://frontend/src/lib/api.ts#L1-L489)
 
@@ -371,8 +433,7 @@ API_PROF["backend/app/api/profiles.py"] --> REPO_PROF
 - PDF parsing and optional LLM cleanup add latency; consider client-side previews and caching of parsed content.
 - RLS policies and indexes (user_id, updated_at, name) support efficient listing and filtering.
 - Large resume content_md increases payload sizes; consider pagination or streaming where appropriate.
-
-[No sources needed since this section provides general guidance]
+- **Updated** Enhanced deletion performance: Proactive reference clearing reduces cascading effects and improves transaction performance.
 
 ## Troubleshooting Guide
 Common issues and resolutions:
@@ -382,17 +443,22 @@ Common issues and resolutions:
   - Only PDF files are accepted.
   - File size must not exceed the maximum.
   - LLM cleanup requires a configured API key; otherwise, raw parsing is returned.
-- Deletion conflicts: If a base resume is referenced by applications, use force=true to delete.
+- **Updated** Deletion conflicts:
+  - If a base resume is referenced by applications, use force=true to delete.
+  - Foreign key violations are now mapped to clearer PermissionError messages.
+  - Check application references before attempting deletion.
+- **Updated** Frontend behavior:
+  - deleteBaseResume() automatically uses force=true by default.
+  - Manual override available with deleteBaseResume(resumeId, force=false).
 
 **Section sources**
 - [backend/app/api/base_resumes.py:120-144](file://backend/app/api/base_resumes.py#L120-L144)
 - [backend/app/services/base_resumes.py:119-127](file://backend/app/services/base_resumes.py#L119-L127)
 - [backend/app/services/resume_parser.py:181-183](file://backend/app/services/resume_parser.py#L181-L183)
+- [backend/app/db/base_resumes.py:153-177](file://backend/app/db/base_resumes.py#L153-L177)
 
 ## Conclusion
-Base resume management provides a robust foundation for AI-driven job application workflows. The API ensures secure, user-scoped operations with clear defaults and flexible editing. Integrating base resumes with profile section preferences and application generation yields tailored, high-quality outputs while maintaining strict ownership and privacy controls.
-
-[No sources needed since this section summarizes without analyzing specific files]
+Base resume management provides a robust foundation for AI-driven job application workflows. The API ensures secure, user-scoped operations with clear defaults and flexible editing. The enhanced deletion functionality with proactive reference clearing and improved error handling makes the system more reliable and user-friendly. Integrating base resumes with profile section preferences and application generation yields tailored, high-quality outputs while maintaining strict ownership and privacy controls.
 
 ## Appendices
 
@@ -408,7 +474,7 @@ Base resume management provides a robust foundation for AI-driven job applicatio
 - PATCH /api/base-resumes/{resume_id}
   - Request: UpdateBaseResumeRequest
   - Response: BaseResumeDetail
-- DELETE /api/base-resumes/{resume_id}?force=false
+- DELETE /api/base-resumes/{resume_id}?force=true
   - Response: 204 No Content
 - POST /api/base-resumes/{resume_id}/set-default
   - Response: BaseResumeSummary
@@ -418,7 +484,7 @@ Base resume management provides a robust foundation for AI-driven job applicatio
   - Response: BaseResumeDetail
 
 **Section sources**
-- [backend/app/api/base_resumes.py:85-242](file://backend/app/api/base_resumes.py#L85-L242)
+- [backend/app/api/base_resumes.py:85-256](file://backend/app/api/base_resumes.py#L85-L256)
 
 ### Data Model Relationships
 
@@ -464,3 +530,30 @@ BASE_RESUMES ||--o{| APPLICATIONS : "referenced_by"
 - [docs/database_schema.md:48-113](file://docs/database_schema.md#L48-L113)
 - [docs/database_schema.md:114-144](file://docs/database_schema.md#L114-L144)
 - [docs/database_schema.md:169-199](file://docs/database_schema.md#L169-L199)
+
+### Enhanced Deletion Flow
+
+**Updated** Enhanced deletion flow with proactive reference clearing
+
+```mermaid
+sequenceDiagram
+participant UI as "Frontend UI"
+participant API as "Base Resumes API"
+participant SVC as "BaseResumeService"
+participant DB as "BaseResumeRepository"
+UI->>API : "DELETE /api/base-resumes/{id}?force=true"
+API->>SVC : "delete_resume(user_id, resume_id, force=true)"
+SVC->>DB : "is_referenced(resume_id, user_id)"
+DB-->>SVC : "True/False"
+SVC->>DB : "clear_profile_default(resume_id)"
+SVC->>DB : "clear_application_references(resume_id)"
+SVC->>DB : "delete_base_resumes(resume_id)"
+DB-->>SVC : "Deletion result"
+SVC-->>API : "Success/Failure"
+API-->>UI : "204 No Content or Error"
+```
+
+**Diagram sources**
+- [backend/app/api/base_resumes.py:225-239](file://backend/app/api/base_resumes.py#L225-L239)
+- [backend/app/services/base_resumes.py:109-136](file://backend/app/services/base_resumes.py#L109-L136)
+- [backend/app/db/base_resumes.py:153-177](file://backend/app/db/base_resumes.py#L153-L177)

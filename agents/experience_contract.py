@@ -398,19 +398,44 @@ def validate_professional_experience_contract(
     anchors: list[dict[str, Any]],
     aggressiveness: str,
 ) -> list[str]:
-    if not anchors:
-        return []
+    extracted_section = _extract_section(section_markdown, PROFESSIONAL_EXPERIENCE_HEADING)
+    if extracted_section:
+        section_markdown = extracted_section
 
-    blocks = extract_generated_experience_blocks(section_markdown)
+    parsed_blocks: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for index, block in enumerate(_section_blocks(section_markdown, PROFESSIONAL_EXPERIENCE_HEADING)):
+        try:
+            parsed = _parse_entry_block(block, section_kind="experience")
+        except ValueError as exc:
+            errors.append(f"Role {index + 1} entry must use the two-row experience format: {exc}")
+            continue
+        parsed_blocks.append(
+            {
+                "lines": block,
+                "header": {
+                    "company": parsed["row1_left"],
+                    "location": parsed["row1_right"] or "",
+                    "title": parsed["row2_left"],
+                    "date_range": parsed["row2_right"] or "",
+                },
+                "body_lines": parsed["body_lines"],
+            }
+        )
+
+    if not anchors:
+        return errors
+
+    blocks = parsed_blocks
     if len(blocks) != len(anchors):
-        return [
+        errors.append(
             (
                 "Professional Experience must preserve the same number of role blocks as the source "
                 f"({len(anchors)} required, got {len(blocks)})."
             )
-        ]
+        )
+        return errors
 
-    errors: list[str] = []
     for index, block in enumerate(blocks):
         header = block["header"]
         anchor = anchors[index]

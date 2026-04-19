@@ -17,9 +17,17 @@
 - [ExtensionPage.tsx](file://frontend/src/routes/ExtensionPage.tsx)
 - [ApplicationsDashboardPage.tsx](file://frontend/src/routes/ApplicationsDashboardPage.tsx)
 - [ApplicationDetailPage.tsx](file://frontend/src/routes/ApplicationDetailPage.tsx)
+- [BaseResumesPage.tsx](file://frontend/src/routes/BaseResumesPage.tsx)
+- [BaseResumeEditorPage.tsx](file://frontend/src/routes/BaseResumeEditorPage.tsx)
 - [package.json](file://frontend/package.json)
 - [main.tsx](file://frontend/src/main.tsx)
 </cite>
+
+## Update Summary
+**Changes Made**
+- Updated Base Resumes API section to reflect the modified deleteBaseResume function signature with force parameter defaults
+- Enhanced API reference documentation to include the new force parameter behavior
+- Updated user experience documentation for base resume deletion operations
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -278,7 +286,7 @@ Integration:
 ### Workflow Contract Types and Interfaces
 Typed workflow contract:
 - Defines visible statuses, internal states, failure reasons, workflow kinds, mapping rules, and progress schema
-- Exposes parsed contract and visible status identifiers
+- Exposes parsed contract object and visible status identifiers
 - Enables type-safe rendering and state transitions
 
 **Section sources**
@@ -367,6 +375,8 @@ G["ExtensionPage.tsx"] --> A
 H["LoginPage.tsx"] --> C
 I["button.tsx"] --> J["utils.ts"]
 K["card.tsx"] --> J
+L["BaseResumesPage.tsx"] --> A
+M["BaseResumeEditorPage.tsx"] --> A
 ```
 
 **Diagram sources**
@@ -381,6 +391,8 @@ K["card.tsx"] --> J
 - [button.tsx:1-23](file://frontend/src/components/ui/button.tsx#L1-L23)
 - [card.tsx:1-15](file://frontend/src/components/ui/card.tsx#L1-L15)
 - [utils.ts:1-4](file://frontend/src/lib/utils.ts#L1-L4)
+- [BaseResumesPage.tsx:1-192](file://frontend/src/routes/BaseResumesPage.tsx#L1-L192)
+- [BaseResumeEditorPage.tsx:1-355](file://frontend/src/routes/BaseResumeEditorPage.tsx#L1-L355)
 
 **Section sources**
 - [api.ts:1-489](file://frontend/src/lib/api.ts#L1-L489)
@@ -393,6 +405,8 @@ K["card.tsx"] --> J
 - [ApplicationsDashboardPage.tsx:1-264](file://frontend/src/routes/ApplicationsDashboardPage.tsx#L1-L264)
 - [ExtensionPage.tsx:1-200](file://frontend/src/routes/ExtensionPage.tsx#L1-L200)
 - [LoginPage.tsx:1-111](file://frontend/src/routes/LoginPage.tsx#L1-L111)
+- [BaseResumesPage.tsx:1-192](file://frontend/src/routes/BaseResumesPage.tsx#L1-L192)
+- [BaseResumeEditorPage.tsx:1-355](file://frontend/src/routes/BaseResumeEditorPage.tsx#L1-L355)
 
 ## Performance Considerations
 - Polling intervals: Progress polling runs at 2-second intervals; adjust based on UX requirements
@@ -430,7 +444,7 @@ The frontend API provides a robust, type-safe foundation for interacting with th
   - fetchApplicationProgress
   - recoverApplicationFromSource
 - Base resumes
-  - listBaseResumes, createBaseResume, fetchBaseResume, updateBaseResume, deleteBaseResume
+  - listBaseResumes, createBaseResume, fetchBaseResume, updateBaseResume, deleteBaseResume(**Updated**)
   - setDefaultBaseResume, uploadBaseResume
 - Generation and export
   - triggerGeneration, fetchDraft, saveDraft
@@ -439,5 +453,48 @@ The frontend API provides a robust, type-safe foundation for interacting with th
 - Extension
   - fetchExtensionStatus, issueExtensionToken, revokeExtensionToken
 
+**Updated** The deleteBaseResume function now includes a force parameter with a default value of true, improving user experience by simplifying the deletion process while maintaining backward compatibility.
+
 **Section sources**
 - [api.ts:240-489](file://frontend/src/lib/api.ts#L240-L489)
+- [api.ts:774-796](file://frontend/src/lib/api.ts#L774-L796)
+
+### Base Resumes API Reference
+The base resumes API provides comprehensive CRUD operations for managing resume templates:
+
+#### Base Resume Operations
+- **listBaseResumes**: Retrieve all base resumes with summary information
+- **createBaseResume**: Create a new base resume with name and content
+- **fetchBaseResume**: Retrieve detailed information for a specific base resume
+- **updateBaseResume**: Update name and/or content of an existing base resume
+- **deleteBaseResume**: Delete a base resume with optional force parameter (**Updated**)
+- **setDefaultBaseResume**: Set a base resume as the default template
+- **uploadBaseResume**: Upload and parse a PDF resume with optional AI cleanup
+
+#### Enhanced Delete Operation
+The deleteBaseResume function signature has been updated to include a force parameter:
+
+```typescript
+export async function deleteBaseResume(resumeId: string, force: boolean = true): Promise<void>
+```
+
+**Behavior Changes**:
+- **Default Force Parameter**: The force parameter defaults to `true`, meaning deletions will proceed even with dependencies by default
+- **Backward Compatibility**: Existing code continues to work without modification
+- **Explicit Control**: Developers can still pass `false` to disable forceful deletion when needed
+- **Improved User Experience**: Simplified deletion process reduces friction for users
+
+**Usage Examples**:
+```typescript
+// Default behavior (force = true)
+await deleteBaseResume(resumeId);
+
+// Explicit force parameter
+await deleteBaseResume(resumeId, true);
+await deleteBaseResume(resumeId, false);
+```
+
+**Section sources**
+- [api.ts:747-816](file://frontend/src/lib/api.ts#L747-L816)
+- [BaseResumesPage.tsx:51-66](file://frontend/src/routes/BaseResumesPage.tsx#L51-L66)
+- [BaseResumeEditorPage.tsx:122-135](file://frontend/src/routes/BaseResumeEditorPage.tsx#L122-L135)

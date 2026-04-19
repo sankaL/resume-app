@@ -2,15 +2,11 @@
 
 <cite>
 **Referenced Files in This Document**
-- [AGENTS.md](file://agents/AGENTS.md)
-- [assembly.py](file://agents/assembly.py)
+- [worker.py](file://agents/worker.py)
 - [generation.py](file://agents/generation.py)
 - [validation.py](file://agents/validation.py)
-- [worker.py](file://agents/worker.py)
 - [experience_contract.py](file://agents/experience_contract.py)
 - [resume_judge.py](file://agents/resume_judge.py)
-- [Dockerfile](file://agents/Dockerfile)
-- [pyproject.toml](file://agents/pyproject.toml)
 - [workflow-contract.json](file://shared/workflow-contract.json)
 - [workflow_contract.py](file://backend/app/core/workflow_contract.py)
 - [workflow.py](file://backend/app/services/workflow.py)
@@ -30,11 +26,12 @@
 
 ## Update Summary
 **Changes Made**
-- Added comprehensive documentation for the new Resume Judge Agent for automated resume scoring and evaluation
-- Enhanced Experience Contract Service documentation with comprehensive parsing logic for Professional Experience and Education sections
-- Improved Generation Agent documentation with reliability enhancements, diagnostics, and comprehensive timeout management
-- Expanded AI agent capabilities documentation with new scoring dimensions, reasoning efforts, and validation workflows
-- Updated architecture diagrams to include Resume Judge Agent integration and enhanced validation pipeline
+- Enhanced Redis caching documentation with comprehensive cache reconciliation mechanisms
+- Expanded Resume Judge Agent documentation with detailed scoring workflow and callback delivery
+- Improved error handling documentation with comprehensive timeout management and retry strategies
+- Updated callback delivery mechanisms with best-effort delivery and exponential backoff
+- Enhanced deterministic Professional Experience validation with strict role title constraints
+- Added comprehensive generation workflow system documentation with operation-specific timeouts
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -109,9 +106,7 @@ DB --> APP
 - [experience_contract.py:1-511](file://agents/experience_contract.py#L1-L511)
 - [assembly.py:1-86](file://agents/assembly.py#L1-L86)
 - [resume_judge.py:1-598](file://agents/resume_judge.py#L1-L598)
-- [pyproject.toml:1-26](file://agents/pyproject.toml#L1-L26)
-- [Dockerfile:1-14](file://agents/Dockerfile#L1-L14)
-- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
+- [workflow-contract.json:1-122](file://shared/workflow-contract.json#L1-L122)
 - [workflow_contract.py:1-40](file://backend/app/core/workflow_contract.py#L1-L40)
 - [workflow.py:1-32](file://backend/app/services/workflow.py#L1-L32)
 - [internal_worker.py:1-90](file://backend/app/api/internal_worker.py#L1-L90)
@@ -120,9 +115,7 @@ DB --> APP
 
 **Section sources**
 - [worker.py:1-2445](file://agents/worker.py#L1-L2445)
-- [pyproject.toml:1-26](file://agents/pyproject.toml#L1-L26)
-- [Dockerfile:1-14](file://agents/Dockerfile#L1-L14)
-- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
+- [workflow-contract.json:1-122](file://shared/workflow-contract.json#L1-L122)
 - [workflow_contract.py:1-40](file://backend/app/core/workflow_contract.py#L1-L40)
 - [workflow.py:1-32](file://backend/app/services/workflow.py#L1-L32)
 - [internal_worker.py:1-90](file://backend/app/api/internal_worker.py#L1-L90)
@@ -149,7 +142,7 @@ DB --> APP
 - [experience_contract.py:1-511](file://agents/experience_contract.py#L1-L511)
 - [assembly.py:12-86](file://agents/assembly.py#L12-L86)
 - [resume_judge.py:1-598](file://agents/resume_judge.py#L1-L598)
-- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
+- [workflow-contract.json:1-122](file://shared/workflow-contract.json#L1-L122)
 
 ## Architecture Overview
 The system integrates ARQ workers with Redis queues, LangChain ChatOpenAI via OpenRouter, Playwright for browser automation, and backend callbacks for progress and completion. The backend derives visible statuses from internal states using the shared workflow contract. Generation workflows include Redis caching for results with reconciliation capabilities. **NEW** Resume Judge Agent provides automated scoring and evaluation capabilities.
@@ -182,7 +175,7 @@ Backend-->>Client : "Poll progress/status"
 **Diagram sources**
 - [worker.py:2246-2399](file://agents/worker.py#L2246-L2399)
 - [internal_worker.py:74-90](file://backend/app/api/internal_worker.py#L74-L90)
-- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
+- [workflow-contract.json:1-122](file://shared/workflow-contract.json#L1-L122)
 - [application_manager.py:2030-2107](file://backend/app/services/application_manager.py#L2030-L2107)
 
 ## Detailed Component Analysis
@@ -596,12 +589,12 @@ Map --> Status["Visible Statuses"]
 ```
 
 **Diagram sources**
-- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
+- [workflow-contract.json:1-122](file://shared/workflow-contract.json#L1-L122)
 - [workflow_contract.py:32-39](file://backend/app/core/workflow_contract.py#L32-L39)
 - [workflow.py:11-32](file://backend/app/services/workflow.py#L11-L32)
 
 **Section sources**
-- [workflow-contract.json:1-114](file://shared/workflow-contract.json#L1-L114)
+- [workflow-contract.json:1-122](file://shared/workflow-contract.json#L1-L122)
 - [workflow_contract.py:32-39](file://backend/app/core/workflow_contract.py#L32-L39)
 - [workflow.py:11-32](file://backend/app/services/workflow.py#L11-L32)
 
@@ -833,8 +826,9 @@ The ARQ-based agent system provides a robust, asynchronous pipeline for extracti
   - OPENROUTER_API_KEY
   - EXTRACTION_AGENT_MODEL, EXTRACTION_AGENT_FALLBACK_MODEL
   - GENERATION_AGENT_MODEL, GENERATION_AGENT_FALLBACK_MODEL
+  - GENERATION_AGENT_REASONING_EFFORT
   - VALIDATION_AGENT_MODEL, VALIDATION_AGENT_FALLBACK_MODEL
-  - **NEW** RESUME_JUDGE_AGENT_MODEL, RESUME_JUDGE_AGENT_FALLBACK_MODEL
+  - **NEW** RESUME_JUDGE_AGENT_MODEL, RESUME_JUDGE_AGENT_FALLBACK_MODEL, RESUME_JUDGE_AGENT_REASONING_EFFORT
   - BACKEND_API_URL, WORKER_CALLBACK_SECRET
   - REDIS_URL
 - Example scheduling:
@@ -866,7 +860,7 @@ The ARQ-based agent system provides a robust, asynchronous pipeline for extracti
 **Updated** Enhanced with regeneration cap, deterministic validation, Redis caching, and Resume Judge monitoring
 
 **Section sources**
-- [workflow-contract.json:91-114](file://shared/workflow-contract.json#L91-L114)
+- [workflow-contract.json:91-122](file://shared/workflow-contract.json#L91-L122)
 - [workflow.py:11-32](file://backend/app/services/workflow.py#L11-L32)
 - [internal_worker.py:74-90](file://backend/app/api/internal_worker.py#L74-L90)
 

@@ -215,6 +215,23 @@ Backend Engineer | 2021 - Present
     assert any("same number of role blocks" in error for error in errors)
 
 
+def test_validate_professional_experience_contract_fails_without_anchors_when_headers_are_malformed():
+    section = """## Professional Experience
+Acme Corp
+Remote
+Backend Engineer | 2021 - Present
+- Built backend APIs.
+"""
+
+    errors = validate_professional_experience_contract(
+        section_markdown=section,
+        anchors=[],
+        aggressiveness="medium",
+    )
+
+    assert any("two-row experience format" in error for error in errors)
+
+
 @pytest.mark.asyncio
 async def test_validate_resume_fails_when_professional_experience_contract_is_unrecoverable():
     result = await validate_resume(

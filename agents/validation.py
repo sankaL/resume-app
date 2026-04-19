@@ -487,9 +487,7 @@ def _check_professional_experience_structure(
     generation_settings: Optional[dict[str, Any]],
     professional_experience_anchors: Optional[list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    if not professional_experience_anchors:
-        return []
-
+    anchors = professional_experience_anchors or []
     aggressiveness = (
         str(generation_settings.get("aggressiveness", "medium")).lower()
         if generation_settings
@@ -503,7 +501,7 @@ def _check_professional_experience_structure(
 
         contract_errors = validate_professional_experience_contract(
             section_markdown=str(section.get("content") or ""),
-            anchors=professional_experience_anchors,
+            anchors=anchors,
             aggressiveness=aggressiveness,
         )
         for detail in contract_errors:

@@ -946,6 +946,40 @@ async def test_validate_resume_rejects_contact_leakage_unsupported_dates_and_em_
 
 
 @pytest.mark.asyncio
+async def test_validate_resume_rejects_malformed_professional_experience_when_anchors_are_unavailable():
+    result = await validate_resume(
+        generated_sections=[
+            {
+                "name": "professional_experience",
+                "heading": "Professional Experience",
+                "content": (
+                    "## Professional Experience\n"
+                    "Acme Corp\n"
+                    "Remote\n"
+                    "Backend Engineer | 2021 - Present\n"
+                    "- Built backend systems.\n"
+                ),
+                "supporting_snippets": ["Built backend systems.", "Built backend systems."],
+            }
+        ],
+        base_resume_content=(
+            "## Professional Experience\n"
+            "Acme Corp\n"
+            "Remote\n"
+            "Backend Engineer | 2021 - Present\n"
+            "- Built backend systems.\n"
+        ),
+        section_preferences=[{"name": "professional_experience", "enabled": True, "order": 0}],
+        generation_settings={"page_length": "1_page", "aggressiveness": "medium"},
+        professional_experience_anchors=[],
+    )
+
+    error_types = {error["type"] for error in result["errors"]}
+    assert "experience_structure_violation" in error_types
+    assert result["valid"] is False
+
+
+@pytest.mark.asyncio
 async def test_validate_resume_accepts_grounded_list_style_skill_snippets():
     result = await validate_resume(
         generated_sections=[
